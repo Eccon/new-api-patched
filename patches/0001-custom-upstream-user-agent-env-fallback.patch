@@ -1,0 +1,131 @@
+diff --git a/common/constants.go b/common/constants.go
+index c7d5637..d81c17d 100644
+--- a/common/constants.go
++++ b/common/constants.go
+@@ -168,6 +168,10 @@ var SyncFrequency int // unit is second
+ var BatchUpdateEnabled = false
+ var BatchUpdateInterval int
+ 
++var UpstreamUserAgentOpenAI = ""
++var UpstreamUserAgentClaude = ""
++var UpstreamUserAgentGemini = ""
++
+ var RelayTimeout int // unit is second
+ 
+ var RelayMaxIdleConns int
+diff --git a/common/init.go b/common/init.go
+index 35b4c6b..c33f04f 100644
+--- a/common/init.go
++++ b/common/init.go
+@@ -108,6 +108,9 @@ func InitEnv() {
+ 	// Initialize string variables with GetEnvOrDefaultString
+ 	GeminiSafetySetting = GetEnvOrDefaultString("GEMINI_SAFETY_SETTING", "BLOCK_NONE")
+ 	CohereSafetySetting = GetEnvOrDefaultString("COHERE_SAFETY_SETTING", "NONE")
++	UpstreamUserAgentOpenAI = GetEnvOrDefaultString("UPSTREAM_USER_AGENT_OPENAI", "")
++	UpstreamUserAgentClaude = GetEnvOrDefaultString("UPSTREAM_USER_AGENT_CLAUDE", "")
++	UpstreamUserAgentGemini = GetEnvOrDefaultString("UPSTREAM_USER_AGENT_GEMINI", "")
+ 
+ 	// Initialize rate limit variables
+ 	GlobalApiRateLimitEnable = GetEnvOrDefaultBool("GLOBAL_API_RATE_LIMIT_ENABLE", true)
+diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
+index ac7e215..d8d52fa 100644
+--- a/relay/channel/api_request.go
++++ b/relay/channel/api_request.go
+@@ -12,6 +12,7 @@ import (
+ 	"time"
+ 
+ 	common2 "github.com/QuantumNous/new-api/common"
++	channelconstant "github.com/QuantumNous/new-api/constant"
+ 	"github.com/QuantumNous/new-api/logger"
+ 	"github.com/QuantumNous/new-api/relay/common"
+ 	"github.com/QuantumNous/new-api/relay/constant"
+@@ -39,6 +40,81 @@ func SetupApiRequestHeader(info *common.RelayInfo, c *gin.Context, req *http.Hea
+ 	}
+ }
+ 
++func configuredUpstreamUserAgent(info *common.RelayInfo) string {
++	if info == nil || info.ChannelMeta == nil {
++		return ""
++	}
++
++	switch info.ChannelType {
++	case channelconstant.ChannelTypeAnthropic:
++		return strings.TrimSpace(common2.UpstreamUserAgentClaude)
++	case channelconstant.ChannelTypeMoonshot:
++		if info.GetFinalRequestRelayFormat() == types.RelayFormatClaude {
++			return strings.TrimSpace(common2.UpstreamUserAgentClaude)
++		}
++		return strings.TrimSpace(common2.UpstreamUserAgentOpenAI)
++	case channelconstant.ChannelTypeGemini, channelconstant.ChannelTypeVertexAi, channelconstant.ChannelTypePaLM:
++		return strings.TrimSpace(common2.UpstreamUserAgentGemini)
++	}
++
++	if isOpenAIStyleChannelType(info.ChannelType) {
++		return strings.TrimSpace(common2.UpstreamUserAgentOpenAI)
++	}
++	return ""
++}
++
++func isOpenAIStyleChannelType(channelType int) bool {
++	switch channelType {
++	case channelconstant.ChannelTypeOpenAI,
++		channelconstant.ChannelTypeAzure,
++		channelconstant.ChannelTypeOpenAIMax,
++		channelconstant.ChannelTypeOhMyGPT,
++		channelconstant.ChannelTypeCustom,
++		channelconstant.ChannelTypeAILS,
++		channelconstant.ChannelTypeAIProxy,
++		channelconstant.ChannelTypeAPI2GPT,
++		channelconstant.ChannelTypeAIGC2D,
++		channelconstant.ChannelType360,
++		channelconstant.ChannelTypeOpenRouter,
++		channelconstant.ChannelTypeAIProxyLibrary,
++		channelconstant.ChannelTypeFastGPT,
++		channelconstant.ChannelTypePerplexity,
++		channelconstant.ChannelTypeLingYiWanWu,
++		channelconstant.ChannelTypeSiliconFlow,
++		channelconstant.ChannelTypeMistral,
++		channelconstant.ChannelTypeDeepSeek,
++		channelconstant.ChannelTypeMokaAI,
++		channelconstant.ChannelTypeVolcEngine,
++		channelconstant.ChannelTypeXinference,
++		channelconstant.ChannelTypeXai,
++		channelconstant.ChannelTypeSubmodel,
++		channelconstant.ChannelTypeSora,
++		channelconstant.ChannelTypeCodex:
++		return true
++	}
++	return false
++}
++
++func incomingRequestUserAgent(c *gin.Context) string {
++	if c == nil || c.Request == nil {
++		return ""
++	}
++	return strings.TrimSpace(c.Request.UserAgent())
++}
++
++func applyDefaultUpstreamUserAgent(c *gin.Context, req *http.Request, info *common.RelayInfo) {
++	if req == nil || req.Header.Get("User-Agent") != "" {
++		return
++	}
++	if userAgent := configuredUpstreamUserAgent(info); userAgent != "" {
++		req.Header.Set("User-Agent", userAgent)
++		return
++	}
++	if userAgent := incomingRequestUserAgent(c); userAgent != "" {
++		req.Header.Set("User-Agent", userAgent)
++	}
++}
++
+ const clientHeaderPlaceholderPrefix = "{client_header:"
+ 
+ const (
+@@ -515,6 +591,7 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+ 		}
+ 	}
+ 
++	applyDefaultUpstreamUserAgent(c, req, info)
+ 	resp, err := client.Do(req)
+ 	if err != nil {
+ 		logger.LogError(c, "do request failed: "+err.Error())
