@@ -1,0 +1,148 @@
+name: Build custom new-api
+
+on:
+  schedule:
+    # Runs daily at 00:00 UTC+8.
+    - cron: "0 16 * * *"
+  workflow_dispatch:
+    inputs:
+      upstream_tag:
+        description: "Official upstream tag to build. Leave empty on manual runs to use the latest upstream tag."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  UPSTREAM_REPOSITORY: QuantumNous/new-api
+
+jobs:
+  build:
+    name: Static binaries
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out builder repo
+        uses: actions/checkout@v4
+
+      - name: Resolve upstream tag
+        id: version
+        env:
+          INPUT_UPSTREAM_TAG: ${{ github.event.inputs.upstream_tag || '' }}
+        run: |
+          set -euo pipefail
+          if [ -n "${INPUT_UPSTREAM_TAG}" ]; then
+            TAG="${INPUT_UPSTREAM_TAG}"
+          else
+            TAG="$(git ls-remote --tags --refs "https://github.com/${UPSTREAM_REPOSITORY}.git" \
+              | awk -F/ '{print $3}' \
+              | grep -Ev '(^nightly|alpha)' \
+              | sort -V \
+              | tail -n 1)"
+          fi
+
+          if [ -z "${TAG}" ]; then
+            echo "::error::Unable to resolve upstream tag"
+            exit 1
+          fi
+
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+          echo "TAG=${TAG}" >> "${GITHUB_ENV}"
+          echo "Resolved upstream tag: ${TAG}"
+
+      - name: Check existing release
+        id: release_check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "skip=true" >> "${GITHUB_OUTPUT}"
+            echo "Release ${TAG} already exists. Skipping build."
+          else
+            echo "skip=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Check out upstream source
+        if: steps.release_check.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPOSITORY }}
+          ref: ${{ steps.version.outputs.tag }}
+          path: source
+          fetch-depth: 0
+
+      - name: Apply custom patches
+        if: steps.release_check.outputs.skip != 'true'
+        working-directory: source
+        run: |
+          git apply --check ../patches/*.patch
+          git apply ../patches/*.patch
+
+      - name: Set up Bun
+        if: steps.release_check.outputs.skip != 'true'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Build frontend
+        if: steps.release_check.outputs.skip != 'true'
+        working-directory: source
+        env:
+          CI: ""
+          NODE_OPTIONS: "--max-old-space-size=4096"
+          VITE_REACT_APP_VERSION: ${{ steps.version.outputs.tag }}
+        run: |
+          cd web/default
+          bun install
+          DISABLE_ESLINT_PLUGIN=true bun run build
+          cd ../classic
+          bun install
+          bun run build
+
+      - name: Set up Go
+        if: steps.release_check.outputs.skip != 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: source/go.mod
+          cache-dependency-path: source/go.sum
+
+      - name: Build static binaries
+        if: steps.release_check.outputs.skip != 'true'
+        working-directory: source
+        env:
+          VERSION: ${{ steps.version.outputs.tag }}
+          GOFLAGS: "-trimpath -buildvcs=false"
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p dist
+          go mod download
+
+          build() {
+            local goos="$1"
+            local goarch="$2"
+            local name="new-api-${goos}-${goarch}-${VERSION}"
+            GOOS="$goos" GOARCH="$goarch" go build \
+              -tags "netgo osusergo" \
+              -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=${VERSION}'" \
+              -o "dist/${name}"
+            tar -C dist -czf "dist/${name}.tar.gz" "${name}"
+            rm "dist/${name}"
+          }
+
+          build linux amd64
+          build linux arm64
+          build darwin arm64
+
+          sha256sum dist/*.tar.gz > dist/checksums.txt
+
+      - name: Publish GitHub Release
+        if: steps.release_check.outputs.skip != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          fail_on_unmatched_files: true
+          files: source/dist/*
