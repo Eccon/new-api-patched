@@ -1,25 +1,45 @@
 # Custom new-api Builder
 
-This repository is a small builder for official `QuantumNous/new-api` releases.
-It is not a fork of the upstream source tree.
+Builds official `QuantumNous/new-api` source with local patches and publishes
+static binary releases. This repository is not a fork of the upstream source
+tree.
 
-## What It Does
+## Build Modes
 
-The GitHub Action:
+- Stable
+  - Manual runs can specify an upstream tag or leave it empty to use the latest
+    stable upstream tag.
+  - Scheduled runs check the latest stable upstream tag, excluding `alpha` and
+    `nightly`.
+  - Release tag, release name, and runtime version all use the upstream tag.
+  - The build is skipped when the matching Release already exists.
+  - Manual runs can enable force rebuild to update an existing Release.
 
-1. Resolves an official upstream tag from `QuantumNous/new-api`.
-   - Manual runs can specify a tag.
-   - Scheduled runs use the latest upstream tag, excluding `alpha` and `nightly`.
-2. Skips the build if this repository already has a Release with the same tag.
-3. Checks out the upstream source.
-4. Applies the two local patches in `patches/`.
-5. Builds frontend assets.
-6. Builds three pure-Go binaries with `CGO_ENABLED=0`:
+- Alpha
+  - Manual runs can enter `alpha`.
+  - Scheduled runs also check `alpha` daily.
+  - Builds the latest upstream default-branch commit.
+  - Release tag is fixed to `alpha`.
+  - Release name and runtime version use `alpha-<upstream commit short hash>`.
+  - The build is skipped when the existing `alpha` Release already has the same
+    release name.
+  - Before updating `alpha`, all uploaded assets in that Release are deleted.
+    The Release and tag are kept.
+  - Manual runs can enable force rebuild to rebuild the current alpha source.
+
+## Workflow
+
+1. Resolve the upstream source.
+2. Check out upstream source.
+3. Apply `patches/*.patch`.
+4. Print the patched source diff summary.
+5. Build default and classic frontend assets.
+6. Build pure-Go binaries with `CGO_ENABLED=0`:
    - `linux/amd64`
    - `linux/arm64`
    - `darwin/arm64`
-7. Publishes the built binary assets and `checksums.txt` to a GitHub Release named
-   with the official upstream tag you entered.
+7. Publish binaries and `checksums.txt` to a GitHub Release with a short build
+   summary in the Release body.
 
 No Docker image is built.
 
@@ -36,21 +56,25 @@ No Docker image is built.
 - `0002-custom-request-user-agent-log-display.patch`
   - Stores the incoming request User-Agent once in `logs.other.request_user_agent`.
   - Shows it in the default web usage-log detail dialog for all users.
+  - Shows it as the last row in the classic web usage-log expanded details.
+  - Does not add or migrate any database columns.
+
+- `0003-show-cache-read-rate-in-usage-logs.patch`
+  - Shows cache read token rate beside the usage-log list cache read value in both frontends.
+  - Uses `cache_tokens / prompt_tokens` for OpenAI-style usage.
+  - Uses `cache_tokens / (prompt_tokens + cache_tokens)` for Claude/Anthropic usage.
   - Does not add or migrate any database columns.
 
 ## Version Handling
 
-The workflow sets the runtime version to the official upstream tag that you enter
-when starting the action.
-
-It uses the full Go module path:
+The workflow sets `common.Version` through the full upstream module path:
 
 ```text
 github.com/QuantumNous/new-api/common.Version
 ```
 
-This matches the module path in upstream `go.mod` and avoids the empty-version
-problem caused by using a short import path in linker flags.
+- Stable: upstream tag.
+- Alpha: `alpha-<upstream commit short hash>`.
 
 ## Static Build Notes
 
@@ -67,10 +91,9 @@ servers.
 
 ## Triggers
 
-- Manual: run the workflow from the GitHub Actions page. You can enter an
-  upstream tag, or leave it empty to use the latest upstream tag.
-- Scheduled: runs daily at `00:00 UTC+8` (`16:00 UTC`) and builds only when the
-  matching Release does not already exist in this repository.
+- Manual: enter an upstream tag, enter `alpha`, or leave empty for the latest
+  stable upstream tag. Enable force rebuild to update an existing Release.
+- Scheduled: runs daily at `00:00 UTC+8` (`16:00 UTC`) for stable and alpha.
 
 ## How To Run Manually
 
@@ -84,8 +107,8 @@ servers.
 v1.0.0
 ```
 
-You can also leave the tag empty to build the latest upstream tag detected by
-the workflow.
+Leave the tag empty for the latest stable upstream tag, or enter `alpha` for the
+latest upstream source commit.
 
 6. Download the generated files from the GitHub Release with the same tag name.
 
