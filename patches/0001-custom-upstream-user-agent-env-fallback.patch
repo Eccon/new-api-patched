@@ -28,74 +28,57 @@ index 35b4c6b..c33f04f 100644
  	// Initialize rate limit variables
  	GlobalApiRateLimitEnable = GetEnvOrDefaultBool("GLOBAL_API_RATE_LIMIT_ENABLE", true)
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index ac7e215..d8d52fa 100644
+index ac7e215..8a469ef 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
-@@ -12,6 +12,7 @@ import (
- 	"time"
- 
- 	common2 "github.com/QuantumNous/new-api/common"
-+	channelconstant "github.com/QuantumNous/new-api/constant"
- 	"github.com/QuantumNous/new-api/logger"
- 	"github.com/QuantumNous/new-api/relay/common"
- 	"github.com/QuantumNous/new-api/relay/constant"
-@@ -39,6 +40,81 @@ func SetupApiRequestHeader(info *common.RelayInfo, c *gin.Context, req *http.Hea
+@@ -515,6 +515,8 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+ 		}
  	}
- }
  
-+func configuredUpstreamUserAgent(info *common.RelayInfo) string {
-+	if info == nil || info.ChannelMeta == nil {
++	applyDefaultUpstreamUserAgent(c, req, info)
++	logUpstreamUserAgent(c, req)
+ 	resp, err := client.Do(req)
+ 	if err != nil {
+ 		logger.LogError(c, "do request failed: "+err.Error())
+diff --git a/relay/channel/upstream_user_agent.go b/relay/channel/upstream_user_agent.go
+new file mode 100644
+index 0000000..9481a0b
+--- /dev/null
++++ b/relay/channel/upstream_user_agent.go
+@@ -0,0 +1,77 @@
++package channel
++
++import (
++	"fmt"
++	"net/http"
++	"strings"
++
++	"github.com/QuantumNous/new-api/common"
++	"github.com/QuantumNous/new-api/logger"
++	relaycommon "github.com/QuantumNous/new-api/relay/common"
++	"github.com/QuantumNous/new-api/types"
++
++	"github.com/gin-gonic/gin"
++)
++
++const netHTTPDefaultUserAgent = "Go-http-client/2.0"
++
++func configuredUpstreamUserAgent(info *relaycommon.RelayInfo) string {
++	if info == nil {
 +		return ""
 +	}
 +
-+	switch info.ChannelType {
-+	case channelconstant.ChannelTypeAnthropic:
-+		return strings.TrimSpace(common2.UpstreamUserAgentClaude)
-+	case channelconstant.ChannelTypeMoonshot:
-+		if info.GetFinalRequestRelayFormat() == types.RelayFormatClaude {
-+			return strings.TrimSpace(common2.UpstreamUserAgentClaude)
-+		}
-+		return strings.TrimSpace(common2.UpstreamUserAgentOpenAI)
-+	case channelconstant.ChannelTypeGemini, channelconstant.ChannelTypeVertexAi, channelconstant.ChannelTypePaLM:
-+		return strings.TrimSpace(common2.UpstreamUserAgentGemini)
-+	}
-+
-+	if isOpenAIStyleChannelType(info.ChannelType) {
-+		return strings.TrimSpace(common2.UpstreamUserAgentOpenAI)
++	switch info.GetFinalRequestRelayFormat() {
++	case types.RelayFormatClaude:
++		return strings.TrimSpace(common.UpstreamUserAgentClaude)
++	case types.RelayFormatGemini:
++		return strings.TrimSpace(common.UpstreamUserAgentGemini)
++	case types.RelayFormatOpenAI,
++		types.RelayFormatOpenAIResponses,
++		types.RelayFormatOpenAIResponsesCompaction:
++		return strings.TrimSpace(common.UpstreamUserAgentOpenAI)
 +	}
 +	return ""
-+}
-+
-+func isOpenAIStyleChannelType(channelType int) bool {
-+	switch channelType {
-+	case channelconstant.ChannelTypeOpenAI,
-+		channelconstant.ChannelTypeAzure,
-+		channelconstant.ChannelTypeOpenAIMax,
-+		channelconstant.ChannelTypeOhMyGPT,
-+		channelconstant.ChannelTypeCustom,
-+		channelconstant.ChannelTypeAILS,
-+		channelconstant.ChannelTypeAIProxy,
-+		channelconstant.ChannelTypeAPI2GPT,
-+		channelconstant.ChannelTypeAIGC2D,
-+		channelconstant.ChannelType360,
-+		channelconstant.ChannelTypeOpenRouter,
-+		channelconstant.ChannelTypeAIProxyLibrary,
-+		channelconstant.ChannelTypeFastGPT,
-+		channelconstant.ChannelTypePerplexity,
-+		channelconstant.ChannelTypeLingYiWanWu,
-+		channelconstant.ChannelTypeSiliconFlow,
-+		channelconstant.ChannelTypeMistral,
-+		channelconstant.ChannelTypeDeepSeek,
-+		channelconstant.ChannelTypeMokaAI,
-+		channelconstant.ChannelTypeVolcEngine,
-+		channelconstant.ChannelTypeXinference,
-+		channelconstant.ChannelTypeXai,
-+		channelconstant.ChannelTypeSubmodel,
-+		channelconstant.ChannelTypeSora,
-+		channelconstant.ChannelTypeCodex:
-+		return true
-+	}
-+	return false
 +}
 +
 +func incomingRequestUserAgent(c *gin.Context) string {
@@ -105,7 +88,7 @@ index ac7e215..d8d52fa 100644
 +	return strings.TrimSpace(c.Request.UserAgent())
 +}
 +
-+func applyDefaultUpstreamUserAgent(c *gin.Context, req *http.Request, info *common.RelayInfo) {
++func applyDefaultUpstreamUserAgent(c *gin.Context, req *http.Request, info *relaycommon.RelayInfo) {
 +	if req == nil || req.Header.Get("User-Agent") != "" {
 +		return
 +	}
@@ -118,14 +101,25 @@ index ac7e215..d8d52fa 100644
 +	}
 +}
 +
- const clientHeaderPlaceholderPrefix = "{client_header:"
- 
- const (
-@@ -515,6 +591,7 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
- 		}
- 	}
- 
-+	applyDefaultUpstreamUserAgent(c, req, info)
- 	resp, err := client.Do(req)
- 	if err != nil {
- 		logger.LogError(c, "do request failed: "+err.Error())
++func effectiveUpstreamUserAgent(req *http.Request) string {
++	if req == nil {
++		return ""
++	}
++	if _, ok := req.Header["User-Agent"]; ok {
++		return strings.TrimSpace(req.Header.Get("User-Agent"))
++	}
++	return netHTTPDefaultUserAgent
++}
++
++func logUpstreamUserAgent(c *gin.Context, req *http.Request) {
++	if req == nil {
++		return
++	}
++	requestUA := incomingRequestUserAgent(c)
++	upstreamUA := effectiveUpstreamUserAgent(req)
++	if requestUA != upstreamUA {
++		logger.LogInfo(c, fmt.Sprintf("user-agent rewrite: request=%q -> upstream=%q", requestUA, upstreamUA))
++		return
++	}
++	logger.LogInfo(c, fmt.Sprintf("user-agent passthrough: upstream=%q (same as request)", upstreamUA))
++}
