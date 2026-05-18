@@ -42,10 +42,10 @@ index ac7e215..8a469ef 100644
  		logger.LogError(c, "do request failed: "+err.Error())
 diff --git a/relay/channel/upstream_user_agent.go b/relay/channel/upstream_user_agent.go
 new file mode 100644
-index 0000000..9481a0b
+index 0000000..b034eb9
 --- /dev/null
 +++ b/relay/channel/upstream_user_agent.go
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,84 @@
 +package channel
 +
 +import (
@@ -89,15 +89,22 @@ index 0000000..9481a0b
 +}
 +
 +func applyDefaultUpstreamUserAgent(c *gin.Context, req *http.Request, info *relaycommon.RelayInfo) {
-+	if req == nil || req.Header.Get("User-Agent") != "" {
++	if req == nil {
 +		return
 +	}
++	requestUA := incomingRequestUserAgent(c)
++	upstreamUA := strings.TrimSpace(req.Header.Get("User-Agent"))
 +	if userAgent := configuredUpstreamUserAgent(info); userAgent != "" {
-+		req.Header.Set("User-Agent", userAgent)
++		if upstreamUA == "" || upstreamUA == requestUA {
++			req.Header.Set("User-Agent", userAgent)
++		}
 +		return
 +	}
-+	if userAgent := incomingRequestUserAgent(c); userAgent != "" {
-+		req.Header.Set("User-Agent", userAgent)
++	if upstreamUA != "" {
++		return
++	}
++	if requestUA != "" {
++		req.Header.Set("User-Agent", requestUA)
 +	}
 +}
 +
