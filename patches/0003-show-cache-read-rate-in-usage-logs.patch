@@ -1,0 +1,100 @@
+diff --git a/web/classic/src/components/table/usage-logs/UsageLogsColumnDefs.jsx b/web/classic/src/components/table/usage-logs/UsageLogsColumnDefs.jsx
+index 07e6fbb..baf9ba2 100644
+--- a/web/classic/src/components/table/usage-logs/UsageLogsColumnDefs.jsx
++++ b/web/classic/src/components/table/usage-logs/UsageLogsColumnDefs.jsx
+@@ -344,6 +344,23 @@ function formatTokenCount(value) {
+   return toTokenNumber(value).toLocaleString();
+ }
+ 
++function formatCacheRate(cacheTokens, promptTokens, other) {
++  const cacheReadTokens = toTokenNumber(cacheTokens);
++  const inputTokens = toTokenNumber(promptTokens);
++  const isClaudeSemantic =
++    other?.claude === true || other?.usage_semantic === 'anthropic';
++  const denominator = isClaudeSemantic
++    ? inputTokens + cacheReadTokens
++    : inputTokens;
++  if (cacheReadTokens <= 0 || denominator <= 0) {
++    return '';
++  }
++
++  const rate = (cacheReadTokens / denominator) * 100;
++  const fixed = rate.toFixed(1);
++  return fixed.endsWith('.0') ? `${Math.round(rate)}%` : `${fixed}%`;
++}
++
+ function getPromptCacheSummary(other) {
+   if (!other || typeof other !== 'object') {
+     return null;
+@@ -745,11 +762,15 @@ export const getLogsColumns = ({
+         const cacheSummary = getPromptCacheSummary(other);
+         const hasCacheRead = (cacheSummary?.cacheReadTokens || 0) > 0;
+         const hasCacheWrite = (cacheSummary?.cacheWriteTokens || 0) > 0;
++        const cacheReadRate = hasCacheRead
++          ? formatCacheRate(cacheSummary.cacheReadTokens, text, other)
++          : '';
++        const cacheReadRateText = cacheReadRate ? ` (${cacheReadRate})` : '';
+         let cacheText = '';
+         if (hasCacheRead && hasCacheWrite) {
+-          cacheText = `${t('缓存读')} ${formatTokenCount(cacheSummary.cacheReadTokens)} · ${t('写')} ${formatTokenCount(cacheSummary.cacheWriteTokens)}`;
++          cacheText = `${t('缓存读')} ${formatTokenCount(cacheSummary.cacheReadTokens)}${cacheReadRateText} · ${t('写')} ${formatTokenCount(cacheSummary.cacheWriteTokens)}`;
+         } else if (hasCacheRead) {
+-          cacheText = `${t('缓存读')} ${formatTokenCount(cacheSummary.cacheReadTokens)}`;
++          cacheText = `${t('缓存读')} ${formatTokenCount(cacheSummary.cacheReadTokens)}${cacheReadRateText}`;
+         } else if (hasCacheWrite) {
+           cacheText = `${t('缓存写')} ${formatTokenCount(cacheSummary.cacheWriteTokens)}`;
+         }
+diff --git a/web/default/src/features/usage-logs/components/columns/common-logs-columns.tsx b/web/default/src/features/usage-logs/components/columns/common-logs-columns.tsx
+index d512f79..d4d9b60 100644
+--- a/web/default/src/features/usage-logs/components/columns/common-logs-columns.tsx
++++ b/web/default/src/features/usage-logs/components/columns/common-logs-columns.tsx
+@@ -89,6 +89,29 @@ function getGroupRatioText(other: LogOtherData | null): string | null {
+   return null
+ }
+ 
++function formatCacheReadRate(
++  cacheTokens: number,
++  promptTokens: number,
++  other: LogOtherData | null
++): string {
++  const cacheReadTokens = Number(cacheTokens)
++  const inputTokens = Number(promptTokens)
++  const denominator =
++    other?.claude === true ? inputTokens + cacheReadTokens : inputTokens
++  if (
++    !Number.isFinite(cacheReadTokens) ||
++    !Number.isFinite(denominator) ||
++    cacheReadTokens <= 0 ||
++    denominator <= 0
++  ) {
++    return ''
++  }
++
++  const rate = (cacheReadTokens / denominator) * 100
++  const fixed = rate.toFixed(1)
++  return fixed.endsWith('.0') ? `${Math.round(rate)}%` : `${fixed}%`
++}
++
+ function buildDetailSegments(
+   log: UsageLog,
+   other: LogOtherData | null,
+@@ -684,6 +707,11 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
+         const cacheWriteTokens = hasSplitCache
+           ? cacheWrite5m + cacheWrite1h
+           : other?.cache_creation_tokens || 0
++        const cacheReadRate =
++          cacheReadTokens > 0
++            ? formatCacheReadRate(cacheReadTokens, promptTokens, other)
++            : ''
++        const cacheReadRateText = cacheReadRate ? ` (${cacheReadRate})` : ''
+ 
+         return (
+           <div className='flex flex-col gap-0.5'>
+@@ -696,6 +724,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
+                 {cacheReadTokens > 0 && (
+                   <span className='text-muted-foreground/60'>
+                     {t('Cache')}↓ {cacheReadTokens.toLocaleString()}
++                    {cacheReadRateText}
+                   </span>
+                 )}
+                 {cacheWriteTokens > 0 && (
