@@ -18,7 +18,7 @@ The GitHub Action:
    - `linux/amd64`
    - `linux/arm64`
    - `darwin/arm64`
-7. Publishes `.tar.gz` packages and `checksums.txt` to a GitHub Release named
+7. Publishes the built binary assets and `checksums.txt` to a GitHub Release named
    with the official upstream tag you entered.
 
 No Docker image is built.

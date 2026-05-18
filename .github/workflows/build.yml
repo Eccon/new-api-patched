@@ -127,15 +127,13 @@ jobs:
               -tags "netgo osusergo" \
               -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=${VERSION}'" \
               -o "dist/${name}"
-            tar -C dist -czf "dist/${name}.tar.gz" "${name}"
-            rm "dist/${name}"
           }
 
           build linux amd64
           build linux arm64
           build darwin arm64
 
-          sha256sum dist/*.tar.gz > dist/checksums.txt
+          sha256sum dist/new-api-* > dist/checksums.txt
 
       - name: Publish GitHub Release
         if: steps.release_check.outputs.skip != 'true'
