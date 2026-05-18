@@ -1,18 +1,16 @@
 diff --git a/model/log.go b/model/log.go
-index 7edf24b..8f834b6 100644
+index 8ec7807..040a1de 100644
 --- a/model/log.go
 +++ b/model/log.go
-@@ -4,7 +4,9 @@ import (
- 	"context"
- 	"errors"
+@@ -6,6 +6,7 @@ import (
  	"fmt"
-+	"strings"
+ 	"strings"
  	"time"
 +	"unicode/utf8"
  
  	"github.com/QuantumNous/new-api/common"
  	"github.com/QuantumNous/new-api/logger"
-@@ -16,6 +18,8 @@ import (
+@@ -17,6 +18,8 @@ import (
  	"gorm.io/gorm"
  )
  
@@ -21,7 +19,7 @@ index 7edf24b..8f834b6 100644
  type Log struct {
  	Id               int    `json:"id" gorm:"index:idx_created_at_id,priority:1;index:idx_user_id_id,priority:2"`
  	UserId           int    `json:"user_id" gorm:"index;index:idx_user_id_id,priority:1"`
-@@ -149,6 +153,7 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
+@@ -150,6 +153,7 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
  	username := c.GetString("username")
  	requestId := c.GetString(common.RequestIdKey)
  	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
@@ -29,7 +27,7 @@ index 7edf24b..8f834b6 100644
  	otherStr := common.MapToJsonStr(other)
  	// 判断是否需要记录 IP
  	needRecordIp := false
-@@ -204,6 +209,33 @@ type RecordConsumeLogParams struct {
+@@ -205,6 +209,36 @@ type RecordConsumeLogParams struct {
  	Other            map[string]interface{} `json:"other"`
  }
  
@@ -42,6 +40,9 @@ index 7edf24b..8f834b6 100644
 +		return other
 +	}
 +	userAgent = truncateUserAgent(userAgent)
++	if userAgent == "" {
++		return other
++	}
 +	if other == nil {
 +		other = make(map[string]interface{})
 +	}
@@ -54,7 +55,7 @@ index 7edf24b..8f834b6 100644
 +		return userAgent
 +	}
 +	userAgent = userAgent[:maxLoggedUserAgentLength]
-+	for !utf8.ValidString(userAgent) {
++	for len(userAgent) > 0 && !utf8.ValidString(userAgent) {
 +		userAgent = userAgent[:len(userAgent)-1]
 +	}
 +	return userAgent
@@ -63,7 +64,7 @@ index 7edf24b..8f834b6 100644
  func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
  	if !common.LogConsumeEnabled {
  		return
-@@ -212,6 +244,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
+@@ -213,6 +247,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
  	username := c.GetString("username")
  	requestId := c.GetString(common.RequestIdKey)
  	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
@@ -71,18 +72,79 @@ index 7edf24b..8f834b6 100644
  	otherStr := common.MapToJsonStr(params.Other)
  	// 判断是否需要记录 IP
  	needRecordIp := false
+diff --git a/web/classic/src/hooks/usage-logs/useUsageLogsData.jsx b/web/classic/src/hooks/usage-logs/useUsageLogsData.jsx
+index 78975dd..419b95b 100644
+--- a/web/classic/src/hooks/usage-logs/useUsageLogsData.jsx
++++ b/web/classic/src/hooks/usage-logs/useUsageLogsData.jsx
+@@ -381,6 +381,10 @@ export const useLogsData = () => {
+       logs[i].timestamp2string = timestamp2string(logs[i].created_at);
+       logs[i].key = logs[i].id;
+       let other = getLogOther(logs[i].other);
++      const requestUserAgent =
++        typeof other?.request_user_agent === 'string'
++          ? other.request_user_agent.trim()
++          : '';
+       let expandDataLocal = [];
+ 
+       if (isAdminUser && (logs[i].type === 0 || logs[i].type === 2 || logs[i].type === 6)) {
+@@ -718,6 +722,26 @@ export const useLogsData = () => {
+           });
+         }
+       }
++      if (requestUserAgent) {
++        expandDataLocal.push({
++          key: 'User-Agent',
++          value: (
++            <span
++              style={{
++                display: 'inline-block',
++                maxWidth: 900,
++                whiteSpace: 'normal',
++                wordBreak: 'break-all',
++                cursor: 'pointer',
++                fontFamily: 'monospace',
++              }}
++              onClick={(event) => copyText(event, requestUserAgent)}
++            >
++              {requestUserAgent}
++            </span>
++          ),
++        });
++      }
+       expandDatesLocal[logs[i].key] = expandDataLocal;
+     }
+ 
 diff --git a/web/default/src/features/usage-logs/components/dialogs/details-dialog.tsx b/web/default/src/features/usage-logs/components/dialogs/details-dialog.tsx
-index 2785a55..f36dd30 100644
+index 2785a55..825ba10 100644
 --- a/web/default/src/features/usage-logs/components/dialogs/details-dialog.tsx
 +++ b/web/default/src/features/usage-logs/components/dialogs/details-dialog.tsx
-@@ -581,6 +581,14 @@ export function DetailsDialog(props: DetailsDialogProps) {
+@@ -420,6 +420,10 @@ export function DetailsDialog(props: DetailsDialogProps) {
+   const showTiming = isTimingLogType(props.log.type)
+   const showAdminIp =
+     !!props.log.ip && (showTiming || (props.isAdmin && isTopup))
++  const requestUserAgent =
++    typeof other?.request_user_agent === 'string'
++      ? other.request_user_agent.trim()
++      : ''
+   const adminInfo = other?.admin_info
+   const topupAuditFields =
+     isTopup && props.isAdmin && adminInfo
+@@ -581,6 +585,22 @@ export function DetailsDialog(props: DetailsDialogProps) {
                  />
                )}
  
-+              {other?.request_user_agent && (
++              {requestUserAgent && (
 +                <DetailRow
 +                  label={t('User-Agent')}
-+                  value={other.request_user_agent}
++                  value={
++                    <button
++                      type='button'
++                      className='max-w-full cursor-pointer break-all text-left hover:underline'
++                      onClick={() => copyToClipboard(requestUserAgent)}
++                    >
++                      {requestUserAgent}
++                    </button>
++                  }
 +                  mono
 +                />
 +              )}
@@ -103,10 +165,10 @@ index 8db88c4..f629371 100644
    request_conversion?: string[]
    ws?: boolean
 diff --git a/web/default/src/i18n/locales/en.json b/web/default/src/i18n/locales/en.json
-index 7e34ec0..3fbcbe5 100644
+index 4f8ae55..16456ab 100644
 --- a/web/default/src/i18n/locales/en.json
 +++ b/web/default/src/i18n/locales/en.json
-@@ -4216,6 +4216,7 @@
+@@ -4263,6 +4263,7 @@
      "User Subscription Management": "User Subscription Management",
      "User updated successfully": "User updated successfully",
      "User Verification": "User Verification",
@@ -115,10 +177,10 @@ index 7e34ec0..3fbcbe5 100644
      "Username": "Username",
      "Username confirmation does not match": "Username confirmation does not match",
 diff --git a/web/default/src/i18n/locales/fr.json b/web/default/src/i18n/locales/fr.json
-index 0a682cc..1227c31 100644
+index 850f836..1e3ac90 100644
 --- a/web/default/src/i18n/locales/fr.json
 +++ b/web/default/src/i18n/locales/fr.json
-@@ -4216,6 +4216,7 @@
+@@ -4263,6 +4263,7 @@
      "User Subscription Management": "Gestion des abonnements utilisateur",
      "User updated successfully": "Utilisateur mis à jour avec succès",
      "User Verification": "Vérification de l'utilisateur",
@@ -127,10 +189,10 @@ index 0a682cc..1227c31 100644
      "Username": "Nom d'utilisateur",
      "Username confirmation does not match": "La confirmation du nom d'utilisateur ne correspond pas",
 diff --git a/web/default/src/i18n/locales/ja.json b/web/default/src/i18n/locales/ja.json
-index bbacbda..7ae74d5 100644
+index cb5743b..1de66d7 100644
 --- a/web/default/src/i18n/locales/ja.json
 +++ b/web/default/src/i18n/locales/ja.json
-@@ -4216,6 +4216,7 @@
+@@ -4263,6 +4263,7 @@
      "User Subscription Management": "ユーザーサブスクリプション管理",
      "User updated successfully": "ユーザーの更新に成功しました",
      "User Verification": "ユーザー認証",
@@ -139,10 +201,10 @@ index bbacbda..7ae74d5 100644
      "Username": "ユーザー名",
      "Username confirmation does not match": "ユーザー名の確認が一致しません",
 diff --git a/web/default/src/i18n/locales/ru.json b/web/default/src/i18n/locales/ru.json
-index 2022e56..371d7d4 100644
+index 91b6d6d..0ad4f99 100644
 --- a/web/default/src/i18n/locales/ru.json
 +++ b/web/default/src/i18n/locales/ru.json
-@@ -4216,6 +4216,7 @@
+@@ -4263,6 +4263,7 @@
      "User Subscription Management": "Управление подписками пользователя",
      "User updated successfully": "Пользователь успешно обновлен",
      "User Verification": "Проверка пользователя",
@@ -151,10 +213,10 @@ index 2022e56..371d7d4 100644
      "Username": "Имя пользователя",
      "Username confirmation does not match": "Подтверждение имени пользователя не совпадает",
 diff --git a/web/default/src/i18n/locales/vi.json b/web/default/src/i18n/locales/vi.json
-index 66f458f..c46d001 100644
+index ed2764d..71478c2 100644
 --- a/web/default/src/i18n/locales/vi.json
 +++ b/web/default/src/i18n/locales/vi.json
-@@ -4216,6 +4216,7 @@
+@@ -4263,6 +4263,7 @@
      "User Subscription Management": "Quản lý đăng ký người dùng",
      "User updated successfully": "Cập nhật người dùng thành công",
      "User Verification": "Xác minh người dùng",
@@ -163,10 +225,10 @@ index 66f458f..c46d001 100644
      "Username": "Tên người dùng",
      "Username confirmation does not match": "Xác nhận tên người dùng không khớp",
 diff --git a/web/default/src/i18n/locales/zh.json b/web/default/src/i18n/locales/zh.json
-index 1d2e867..3c614ba 100644
+index fbfd6d7..5443fbf 100644
 --- a/web/default/src/i18n/locales/zh.json
 +++ b/web/default/src/i18n/locales/zh.json
-@@ -4216,6 +4216,7 @@
+@@ -4263,6 +4263,7 @@
      "User Subscription Management": "用户订阅管理",
      "User updated successfully": "用户更新成功",
      "User Verification": "用户验证",
