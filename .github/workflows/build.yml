@@ -249,6 +249,12 @@ jobs:
             gh release delete-asset "${RELEASE_TAG}" "${asset}" --yes
           done
 
+      - name: Resolve build time
+        id: build_time
+        if: steps.release_check.outputs.skip != 'true'
+        run: |
+          echo "value=$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S UTC+8')" >> "${GITHUB_OUTPUT}"
+
       - name: Publish GitHub Release
         if: steps.release_check.outputs.skip != 'true'
         uses: softprops/action-gh-release@v2
@@ -260,6 +266,7 @@ jobs:
             Version: ${{ steps.version.outputs.version }}
             Upstream: ${{ env.UPSTREAM_REPOSITORY }}@${{ steps.version.outputs.source_ref }}
             Builder: ${{ github.repository }}@${{ github.sha }}
+            Build Time: ${{ steps.build_time.outputs.value }}
           target_commitish: ${{ github.sha }}
           fail_on_unmatched_files: true
           files: source/dist/*
