@@ -1,6 +1,11 @@
 name: Build custom new-api
 
 on:
+  push:
+    branches:
+      - master
+    paths:
+      - "patches/**"
   schedule:
     # Runs daily at 00:00 UTC+8.
     - cron: "0 16 * * *"
@@ -29,7 +34,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build_target: ${{ fromJSON(github.event_name == 'schedule' && '["stable","alpha"]' || '["manual"]') }}
+        build_target: ${{ fromJSON(github.event_name == 'schedule' && '["stable","alpha"]' || github.event_name == 'push' && '["alpha"]' || '["manual"]') }}
 
     steps:
       - name: Check out builder repo
@@ -39,7 +44,7 @@ jobs:
         id: version
         env:
           INPUT_UPSTREAM_TAG: ${{ github.event.inputs.upstream_tag || '' }}
-          INPUT_FORCE_REBUILD: ${{ github.event.inputs.force_rebuild || 'false' }}
+          INPUT_FORCE_REBUILD: ${{ github.event_name == 'push' && 'true' || github.event.inputs.force_rebuild || 'false' }}
           BUILD_TARGET: ${{ matrix.build_target }}
         run: |
           set -euo pipefail
