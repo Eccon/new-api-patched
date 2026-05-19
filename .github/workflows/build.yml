@@ -204,13 +204,12 @@ jobs:
           go-version-file: source/go.mod
           cache-dependency-path: source/go.sum
 
-      - name: Build static binaries
+      - name: Build binaries
         if: steps.release_check.outputs.skip != 'true'
         working-directory: source
         env:
           VERSION: ${{ steps.version.outputs.version }}
           GOFLAGS: "-trimpath -buildvcs=false"
-          CGO_ENABLED: "0"
         run: |
           mkdir -p dist
           go mod download
@@ -219,8 +218,15 @@ jobs:
             local goos="$1"
             local goarch="$2"
             local name="new-api-${goos}-${goarch}-${VERSION}"
-            GOOS="$goos" GOARCH="$goarch" go build \
-              -tags "netgo osusergo" \
+
+            if [[ "$goos" == "linux" && "$goarch" == "amd64" ]]; then
+              CGO_ENABLED=1 GOOS="$goos" GOARCH="$goarch" go build \
+                -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=${VERSION}' -extldflags '-static'" \
+                -o "dist/${name}"
+              return
+            fi
+
+            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build \
               -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=${VERSION}'" \
               -o "dist/${name}"
           }
