@@ -27,11 +27,171 @@ index 35b4c6b..c33f04f 100644
  
  	// Initialize rate limit variables
  	GlobalApiRateLimitEnable = GetEnvOrDefaultBool("GLOBAL_API_RATE_LIMIT_ENABLE", true)
+diff --git a/relay/channel/api_request_test.go b/relay/channel/api_request_test.go
+index 531214d..f2ee1f3 100644
+--- a/relay/channel/api_request_test.go
++++ b/relay/channel/api_request_test.go
+@@ -5,7 +5,9 @@ import (
+ 	"net/http/httptest"
+ 	"testing"
+ 
++	"github.com/QuantumNous/new-api/common"
+ 	relaycommon "github.com/QuantumNous/new-api/relay/common"
++	"github.com/QuantumNous/new-api/types"
+ 	"github.com/gin-gonic/gin"
+ 	"github.com/stretchr/testify/require"
+ )
+@@ -195,3 +197,119 @@ func TestProcessHeaderOverride_PassHeadersTemplateSetsRuntimeHeaders(t *testing.
+ 	require.Equal(t, "sess-123", upstreamReq.Header.Get("Session_id"))
+ 	require.Empty(t, upstreamReq.Header.Get("X-Codex-Beta-Features"))
+ }
++
++func TestProcessHeaderOverrideSyncsUserAgentOverrideState(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	recorder := httptest.NewRecorder()
++	ctx, _ := gin.CreateTestContext(recorder)
++	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
++	ctx.Request.Header.Set("User-Agent", "client-ua")
++
++	withUserAgent := &relaycommon.RelayInfo{
++		ChannelMeta: &relaycommon.ChannelMeta{
++			HeadersOverride: map[string]any{
++				"User-Agent": "channel-a-ua",
++			},
++		},
++	}
++	headers, err := processHeaderOverride(withUserAgent, ctx)
++	require.NoError(t, err)
++	require.Equal(t, "channel-a-ua", headers["user-agent"])
++	require.True(t, upstreamUserAgentOverridden(ctx))
++
++	withoutUserAgent := &relaycommon.RelayInfo{
++		ChannelMeta: &relaycommon.ChannelMeta{
++			HeadersOverride: map[string]any{
++				"X-Test": "channel-b",
++			},
++		},
++	}
++	headers, err = processHeaderOverride(withoutUserAgent, ctx)
++	require.NoError(t, err)
++	require.Equal(t, "channel-b", headers["x-test"])
++	require.False(t, upstreamUserAgentOverridden(ctx))
++
++	passthroughUserAgent := &relaycommon.RelayInfo{
++		ChannelMeta: &relaycommon.ChannelMeta{
++			HeadersOverride: map[string]any{
++				"*": "",
++			},
++		},
++	}
++	headers, err = processHeaderOverride(passthroughUserAgent, ctx)
++	require.NoError(t, err)
++	require.Equal(t, "client-ua", headers["user-agent"])
++	require.True(t, upstreamUserAgentOverridden(ctx))
++
++	headers, err = processHeaderOverride(nil, ctx)
++	require.NoError(t, err)
++	require.Empty(t, headers)
++	require.False(t, upstreamUserAgentOverridden(ctx))
++}
++
++func TestApplyDefaultUpstreamUserAgentPriorityAfterStateSync(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	recorder := httptest.NewRecorder()
++	ctx, _ := gin.CreateTestContext(recorder)
++	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
++	ctx.Request.Header.Set("User-Agent", "client-ua")
++
++	previousOpenAIUserAgent := common.UpstreamUserAgentOpenAI
++	common.UpstreamUserAgentOpenAI = "env-ua"
++	t.Cleanup(func() {
++		common.UpstreamUserAgentOpenAI = previousOpenAIUserAgent
++	})
++
++	info := &relaycommon.RelayInfo{RelayFormat: types.RelayFormatOpenAI}
++
++	syncUpstreamUserAgentOverrideState(ctx, map[string]string{
++		"User-Agent": "channel-b-ua",
++	})
++	req := httptest.NewRequest(http.MethodPost, "https://example.com/v1/chat/completions", nil)
++	req.Header.Set("User-Agent", "channel-b-ua")
++	applyDefaultUpstreamUserAgent(ctx, req, info)
++	require.Equal(t, "channel-b-ua", req.Header.Get("User-Agent"))
++
++	syncUpstreamUserAgentOverrideState(ctx, map[string]string{})
++	req = httptest.NewRequest(http.MethodPost, "https://example.com/v1/chat/completions", nil)
++	applyDefaultUpstreamUserAgent(ctx, req, info)
++	require.Equal(t, "env-ua", req.Header.Get("User-Agent"))
++
++	req = httptest.NewRequest(http.MethodPost, "https://example.com/v1/chat/completions", nil)
++	req.Header.Set("User-Agent", "client-ua")
++	applyDefaultUpstreamUserAgent(ctx, req, info)
++	require.Equal(t, "env-ua", req.Header.Get("User-Agent"))
++
++	req = httptest.NewRequest(http.MethodPost, "https://example.com/v1/chat/completions", nil)
++	req.Header.Set("User-Agent", "adapter-ua")
++	applyDefaultUpstreamUserAgent(ctx, req, info)
++	require.Equal(t, "adapter-ua", req.Header.Get("User-Agent"))
++
++	common.UpstreamUserAgentOpenAI = ""
++	req = httptest.NewRequest(http.MethodPost, "https://example.com/v1/chat/completions", nil)
++	applyDefaultUpstreamUserAgent(ctx, req, info)
++	require.Equal(t, "client-ua", req.Header.Get("User-Agent"))
++}
++
++func TestConfiguredUpstreamUserAgentOpenAIFormats(t *testing.T) {
++	previousOpenAIUserAgent := common.UpstreamUserAgentOpenAI
++	common.UpstreamUserAgentOpenAI = "env-openai"
++	t.Cleanup(func() {
++		common.UpstreamUserAgentOpenAI = previousOpenAIUserAgent
++	})
++
++	formats := []types.RelayFormat{
++		types.RelayFormatOpenAI,
++		types.RelayFormatOpenAIResponses,
++		types.RelayFormatOpenAIResponsesCompaction,
++		types.RelayFormatOpenAIAudio,
++		types.RelayFormatOpenAIImage,
++		types.RelayFormatOpenAIRealtime,
++	}
++	for _, format := range formats {
++		t.Run(string(format), func(t *testing.T) {
++			info := &relaycommon.RelayInfo{RelayFormat: format}
++			require.Equal(t, "env-openai", configuredUpstreamUserAgent(info))
++		})
++	}
++}
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index ac7e215..8a469ef 100644
+index ac7e215..c79e776 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
-@@ -515,6 +515,8 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -174,5 +174,6 @@ func processHeaderOverride(info *common.RelayInfo, c *gin.Context) (map[string]s
+ 	headerOverride := make(map[string]string)
+ 	if info == nil {
++		syncUpstreamUserAgentOverrideState(c, headerOverride)
+ 		return headerOverride, nil
+ 	}
+ 
+@@ -267,6 +267,7 @@ func processHeaderOverride(info *common.RelayInfo, c *gin.Context) (map[string]s
+ 
+ 		headerOverride[key] = value
+ 	}
++	syncUpstreamUserAgentOverrideState(c, headerOverride)
+ 	return headerOverride, nil
+ }
+ 
+@@ -370,7 +372,10 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
+ 		targetHeader.Set(key, value)
+ 	}
+ 	targetHeader.Set("Content-Type", c.Request.Header.Get("Content-Type"))
++	targetReq := &http.Request{Header: targetHeader}
++	applyDefaultUpstreamUserAgent(c, targetReq, info)
++	logUpstreamUserAgent(c, targetReq)
+ 	targetConn, _, err := websocket.DefaultDialer.Dial(fullRequestURL, targetHeader)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("dial failed to %s: %w", fullRequestURL, err)
+ 	}
+@@ -515,6 +516,8 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  		}
  	}
  
@@ -42,10 +202,10 @@ index ac7e215..8a469ef 100644
  		logger.LogError(c, "do request failed: "+err.Error())
 diff --git a/relay/channel/upstream_user_agent.go b/relay/channel/upstream_user_agent.go
 new file mode 100644
-index 0000000..b034eb9
+index 0000000..0ad1442
 --- /dev/null
 +++ b/relay/channel/upstream_user_agent.go
-@@ -0,0 +1,84 @@
+@@ -0,0 +1,117 @@
 +package channel
 +
 +import (
@@ -62,6 +222,7 @@ index 0000000..b034eb9
 +)
 +
 +const netHTTPDefaultUserAgent = "Go-http-client/2.0"
++const upstreamUserAgentOverriddenContextKey = "upstream_user_agent_overridden"
 +
 +func configuredUpstreamUserAgent(info *relaycommon.RelayInfo) string {
 +	if info == nil {
@@ -75,7 +236,10 @@ index 0000000..b034eb9
 +		return strings.TrimSpace(common.UpstreamUserAgentGemini)
 +	case types.RelayFormatOpenAI,
 +		types.RelayFormatOpenAIResponses,
-+		types.RelayFormatOpenAIResponsesCompaction:
++		types.RelayFormatOpenAIResponsesCompaction,
++		types.RelayFormatOpenAIAudio,
++		types.RelayFormatOpenAIImage,
++		types.RelayFormatOpenAIRealtime:
 +		return strings.TrimSpace(common.UpstreamUserAgentOpenAI)
 +	}
 +	return ""
@@ -88,8 +252,37 @@ index 0000000..b034eb9
 +	return strings.TrimSpace(c.Request.UserAgent())
 +}
 +
++func syncUpstreamUserAgentOverrideState(c *gin.Context, headers map[string]string) {
++	if c == nil {
++		return
++	}
++	overridden := false
++	for key := range headers {
++		if strings.EqualFold(key, "User-Agent") {
++			overridden = true
++			break
++		}
++	}
++	c.Set(upstreamUserAgentOverriddenContextKey, overridden)
++}
++
++func upstreamUserAgentOverridden(c *gin.Context) bool {
++	if c == nil {
++		return false
++	}
++	value, exists := c.Get(upstreamUserAgentOverriddenContextKey)
++	if !exists {
++		return false
++	}
++	overridden, ok := value.(bool)
++	return ok && overridden
++}
++
 +func applyDefaultUpstreamUserAgent(c *gin.Context, req *http.Request, info *relaycommon.RelayInfo) {
 +	if req == nil {
++		return
++	}
++	if upstreamUserAgentOverridden(c) {
 +		return
 +	}
 +	requestUA := incomingRequestUserAgent(c)
