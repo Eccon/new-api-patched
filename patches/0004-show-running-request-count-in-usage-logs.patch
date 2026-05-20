@@ -1,0 +1,186 @@
+diff --git a/controller/log.go b/controller/log.go
+index a43f7b7..c21acc5 100644
+--- a/controller/log.go
++++ b/controller/log.go
+@@ -5,6 +5,7 @@ import (
+ 	"strconv"
+ 
+ 	"github.com/QuantumNous/new-api/common"
++	"github.com/QuantumNous/new-api/middleware"
+ 	"github.com/QuantumNous/new-api/model"
+ 
+ 	"github.com/gin-gonic/gin"
+@@ -114,9 +115,10 @@ func GetLogsStat(c *gin.Context) {
+ 		"success": true,
+ 		"message": "",
+ 		"data": gin.H{
+-			"quota": stat.Quota,
+-			"rpm":   stat.Rpm,
+-			"tpm":   stat.Tpm,
++			"quota":              stat.Quota,
++			"rpm":                stat.Rpm,
++			"active_connections": middleware.GetStats().ActiveConnections,
++			"tpm":                stat.Tpm,
+ 		},
+ 	})
+ 	return
+@@ -141,9 +143,10 @@ func GetLogsSelfStat(c *gin.Context) {
+ 		"success": true,
+ 		"message": "",
+ 		"data": gin.H{
+-			"quota": quotaNum.Quota,
+-			"rpm":   quotaNum.Rpm,
+-			"tpm":   quotaNum.Tpm,
++			"quota":              quotaNum.Quota,
++			"rpm":                quotaNum.Rpm,
++			"active_connections": middleware.GetStats().ActiveConnections,
++			"tpm":                quotaNum.Tpm,
+ 			//"token": tokenNum,
+ 		},
+ 	})
+diff --git a/web/classic/src/components/table/usage-logs/UsageLogsActions.jsx b/web/classic/src/components/table/usage-logs/UsageLogsActions.jsx
+index d921483..049e57c 100644
+--- a/web/classic/src/components/table/usage-logs/UsageLogsActions.jsx
++++ b/web/classic/src/components/table/usage-logs/UsageLogsActions.jsx
+@@ -57,6 +57,17 @@ const LogsActions = ({
+           >
+             {t('消耗额度')}: {renderQuota(stat.quota)}
+           </Tag>
++          <Tag
++            color='green'
++            style={{
++              fontWeight: 500,
++              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
++              padding: 13,
++            }}
++            className='!rounded-lg'
++          >
++            RUN: {stat.active_connections || 0}
++          </Tag>
+           <Tag
+             color='pink'
+             style={{
+diff --git a/web/classic/src/hooks/usage-logs/useUsageLogsData.jsx b/web/classic/src/hooks/usage-logs/useUsageLogsData.jsx
+index 78975dd..9d098db 100644
+--- a/web/classic/src/hooks/usage-logs/useUsageLogsData.jsx
++++ b/web/classic/src/hooks/usage-logs/useUsageLogsData.jsx
+@@ -93,7 +93,8 @@ export const useLogsData = () => {
+ 
+   // Form state
+   const [formApi, setFormApi] = useState(null);
+-  let now = new Date();
++  let todayEnd = new Date();
++  todayEnd.setHours(23, 59, 59, 999);
+   const formInitValues = {
+     username: '',
+     token_name: '',
+@@ -103,7 +104,7 @@ export const useLogsData = () => {
+     request_id: '',
+     dateRange: [
+       timestamp2string(getTodayStartTimestamp()),
+-      timestamp2string(now.getTime() / 1000 + 3600),
++      timestamp2string(todayEnd.getTime() / 1000),
+     ],
+     logType: '0',
+   };
+@@ -237,7 +238,7 @@ export const useLogsData = () => {
+     const formValues = formApi ? formApi.getValues() : {};
+ 
+     let start_timestamp = timestamp2string(getTodayStartTimestamp());
+-    let end_timestamp = timestamp2string(now.getTime() / 1000 + 3600);
++    let end_timestamp = timestamp2string(todayEnd.getTime() / 1000);
+ 
+     if (
+       formValues.dateRange &&
+@@ -825,6 +826,22 @@ export const useLogsData = () => {
+     }
+   }, [formApi]);
+ 
++  useEffect(() => {
++    if (!formApi) {
++      return;
++    }
++
++    const timer = setInterval(() => {
++      if (isAdminUser) {
++        getLogStat().catch(() => {});
++      } else {
++        getLogSelfStat().catch(() => {});
++      }
++    }, 5000);
++
++    return () => clearInterval(timer);
++  }, [formApi, isAdminUser]);
++
+   // Check if any record has expandable content
+   const hasExpandableRows = () => {
+     return logs.some(
+diff --git a/web/default/src/features/usage-logs/components/common-logs-stats.tsx b/web/default/src/features/usage-logs/components/common-logs-stats.tsx
+index 9e51b97..4a31bd9 100644
+--- a/web/default/src/features/usage-logs/components/common-logs-stats.tsx
++++ b/web/default/src/features/usage-logs/components/common-logs-stats.tsx
+@@ -72,6 +72,7 @@ export function CommonLogsStats() {
+         : DEFAULT_LOG_STATS
+     },
+     placeholderData: (previousData) => previousData,
++    refetchInterval: 5000,
+   })
+ 
+   if (isLoading) {
+@@ -91,6 +92,11 @@ export function CommonLogsStats() {
+         value={sensitiveVisible ? formatLogQuota(stats?.quota || 0) : '••••'}
+         accent='bg-sky-500/70'
+       />
++      <StatBadge
++        label='RUN'
++        value={stats?.active_connections || 0}
++        accent='bg-emerald-500/70'
++      />
+       <StatBadge
+         label={t('RPM')}
+         value={stats?.rpm || 0}
+diff --git a/web/default/src/features/usage-logs/constants.ts b/web/default/src/features/usage-logs/constants.ts
+index 2473894..fb12845 100644
+--- a/web/default/src/features/usage-logs/constants.ts
++++ b/web/default/src/features/usage-logs/constants.ts
+@@ -32,6 +32,7 @@ import type { LogStatistics, LogCategory } from './types'
+ export const DEFAULT_LOG_STATS: LogStatistics = {
+   quota: 0,
+   rpm: 0,
++  active_connections: 0,
+   tpm: 0,
+ }
+ 
+diff --git a/web/default/src/features/usage-logs/lib/utils.ts b/web/default/src/features/usage-logs/lib/utils.ts
+index 78246d4..11b2a6f 100644
+--- a/web/default/src/features/usage-logs/lib/utils.ts
++++ b/web/default/src/features/usage-logs/lib/utils.ts
+@@ -73,13 +73,14 @@ export function isPerCallBilling(modelPrice?: number): boolean {
+ }
+ 
+ /**
+- * Get default time range (today 00:00:00 to now + 1 hour)
++ * Get default time range (today 00:00:00 to today 23:59:59)
+  */
+ export function getDefaultTimeRange(): { start: Date; end: Date } {
+   const now = new Date()
+   const start = new Date(now)
+   start.setHours(0, 0, 0, 0)
+-  const end = new Date(now.getTime() + 3600 * 1000) // +1 hour
++  const end = new Date(now)
++  end.setHours(23, 59, 59, 999)
+ 
+   return { start, end }
+ }
+diff --git a/web/default/src/features/usage-logs/types.ts b/web/default/src/features/usage-logs/types.ts
+index 8db88c4..dcd12dc 100644
+--- a/web/default/src/features/usage-logs/types.ts
++++ b/web/default/src/features/usage-logs/types.ts
+@@ -197,6 +197,7 @@ export interface LogOtherData {
+ export interface LogStatistics {
+   quota: number
+   rpm: number
++  active_connections: number
+   tpm: number
+ }
+ 
