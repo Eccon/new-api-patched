@@ -2,10 +2,12 @@ diff --git a/model/log.go b/model/log.go
 index 8ec7807..040a1de 100644
 --- a/model/log.go
 +++ b/model/log.go
-@@ -6,6 +6,7 @@ import (
+@@ -4,7 +4,9 @@ import (
+ 	"context"
+ 	"errors"
  	"fmt"
- 	"strings"
  	"time"
++	"strings"
 +	"unicode/utf8"
  
  	"github.com/QuantumNous/new-api/common"
