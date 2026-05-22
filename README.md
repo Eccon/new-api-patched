@@ -83,6 +83,11 @@ No Docker image is built.
   - Applies the timeout to the default relay client, HTTP/HTTPS proxy client, and SOCKS5 proxy client.
   - Keeps `RELAY_TIMEOUT` semantics unchanged.
 
+- `0007-skip-retry-after-client-disconnect.patch`
+  - Skips relay retry when the downstream request context is already done.
+  - Prevents extra channel switches after the client has already disconnected.
+  - Keeps the current upstream request construction unchanged.
+
 ## Version Handling
 
 The workflow sets `common.Version` through the full upstream module path:

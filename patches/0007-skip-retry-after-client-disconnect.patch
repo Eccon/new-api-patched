@@ -1,0 +1,24 @@
+diff --git a/controller/relay.go b/controller/relay.go
+index 5e2db44..d8b30f2 100644
+--- a/controller/relay.go
++++ b/controller/relay.go
+@@ -325,6 +325,9 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
+ 	if openaiErr == nil {
+ 		return false
+ 	}
++	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
++		return false
++	}
+ 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
+ 		return false
+ 	}
+@@ -614,6 +617,9 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError,
+ 	if taskErr == nil {
+ 		return false
+ 	}
++	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
++		return false
++	}
+ 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
+ 		return false
+ 	}
