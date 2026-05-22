@@ -65,6 +65,24 @@ No Docker image is built.
   - Uses `cache_tokens / (prompt_tokens + cache_tokens)` for Claude/Anthropic usage.
   - Does not add or migrate any database columns.
 
+- `0004-show-running-request-count-in-usage-logs.patch`
+  - Adds current running relay request count to `/api/log/stat` and `/api/log/self/stat`.
+  - Shows the value as `RUN` beside usage-log statistics in both frontends.
+  - Refreshes usage-log statistics every 5 seconds in both frontends.
+  - Changes the default usage-log end time to the end of the current day.
+  - Does not add or migrate any database columns.
+
+- `0005-force-default-relay-ipv4.patch`
+  - Forces the default relay HTTP client to dial upstream hosts through IPv4.
+  - Keeps HTTP/HTTPS and SOCKS proxy clients on their existing proxy-specific dialing behavior.
+  - Does not add any runtime environment variable.
+
+- `0006-response-header-timeout.patch`
+  - Adds `RELAY_RESPONSE_HEADER_TIMEOUT` for bounding upstream response-header wait time.
+  - Uses Go's native `http.Transport.ResponseHeaderTimeout`.
+  - Applies the timeout to the default relay client, HTTP/HTTPS proxy client, and SOCKS5 proxy client.
+  - Keeps `RELAY_TIMEOUT` semantics unchanged.
+
 ## Version Handling
 
 The workflow sets `common.Version` through the full upstream module path:
