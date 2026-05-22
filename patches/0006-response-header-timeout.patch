@@ -1,0 +1,75 @@
+diff --git a/common/constants.go b/common/constants.go
+index 55e705b..f4c83dc 100644
+--- a/common/constants.go
++++ b/common/constants.go
+@@ -172,6 +172,7 @@ var UpstreamUserAgentOpenAI = ""
+ var UpstreamUserAgentClaude = ""
+ var UpstreamUserAgentGemini = ""
+ 
+ var RelayTimeout int // unit is second
++var RelayResponseHeaderTimeout int // unit is second
+ 
+ var RelayMaxIdleConns int
+ var RelayMaxIdleConnsPerHost int
+diff --git a/common/init.go b/common/init.go
+index fdfb438..6672a9e 100644
+--- a/common/init.go
++++ b/common/init.go
+@@ -102,6 +102,7 @@ func InitEnv() {
+ 	SyncFrequency = GetEnvOrDefault("SYNC_FREQUENCY", 60)
+ 	BatchUpdateInterval = GetEnvOrDefault("BATCH_UPDATE_INTERVAL", 5)
+ 	RelayTimeout = GetEnvOrDefault("RELAY_TIMEOUT", 0)
++	RelayResponseHeaderTimeout = GetEnvOrDefault("RELAY_RESPONSE_HEADER_TIMEOUT", 0)
+ 	RelayMaxIdleConns = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS", 500)
+ 	RelayMaxIdleConnsPerHost = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS_PER_HOST", 100)
+ 
+diff --git a/service/http_client.go b/service/http_client.go
+index 2f75de2..dbd22be 100644
+--- a/service/http_client.go
++++ b/service/http_client.go
+@@ -36,10 +36,11 @@ func checkRedirect(req *http.Request, via []*http.Request) error {
+ func InitHttpClient() {
+ 	dialer := &net.Dialer{}
+ 	transport := &http.Transport{
+-		MaxIdleConns:        common.RelayMaxIdleConns,
+-		MaxIdleConnsPerHost: common.RelayMaxIdleConnsPerHost,
+-		ForceAttemptHTTP2:   true,
+-		Proxy:               http.ProxyFromEnvironment, // Support HTTP_PROXY, HTTPS_PROXY, NO_PROXY env vars
++		MaxIdleConns:          common.RelayMaxIdleConns,
++		MaxIdleConnsPerHost:   common.RelayMaxIdleConnsPerHost,
++		ForceAttemptHTTP2:     true,
++		Proxy:                 http.ProxyFromEnvironment, // Support HTTP_PROXY, HTTPS_PROXY, NO_PROXY env vars
++		ResponseHeaderTimeout: time.Duration(common.RelayResponseHeaderTimeout) * time.Second,
+ 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+ 			return dialer.DialContext(ctx, "tcp4", addr)
+ 		},
+@@ -110,10 +111,11 @@ func NewProxyHttpClient(proxyURL string) (*http.Client, error) {
+ 	switch parsedURL.Scheme {
+ 	case "http", "https":
+ 		transport := &http.Transport{
+-			MaxIdleConns:        common.RelayMaxIdleConns,
+-			MaxIdleConnsPerHost: common.RelayMaxIdleConnsPerHost,
+-			ForceAttemptHTTP2:   true,
+-			Proxy:               http.ProxyURL(parsedURL),
++			MaxIdleConns:          common.RelayMaxIdleConns,
++			MaxIdleConnsPerHost:   common.RelayMaxIdleConnsPerHost,
++			ForceAttemptHTTP2:     true,
++			Proxy:                 http.ProxyURL(parsedURL),
++			ResponseHeaderTimeout: time.Duration(common.RelayResponseHeaderTimeout) * time.Second,
+ 		}
+ 		if common.TLSInsecureSkipVerify {
+ 			transport.TLSClientConfig = common.InsecureTLSConfig
+@@ -150,9 +152,10 @@ func NewProxyHttpClient(proxyURL string) (*http.Client, error) {
+ 
+ 		transport := &http.Transport{
+-			MaxIdleConns:        common.RelayMaxIdleConns,
+-			MaxIdleConnsPerHost: common.RelayMaxIdleConnsPerHost,
+-			ForceAttemptHTTP2:   true,
++			MaxIdleConns:          common.RelayMaxIdleConns,
++			MaxIdleConnsPerHost:   common.RelayMaxIdleConnsPerHost,
++			ForceAttemptHTTP2:     true,
++			ResponseHeaderTimeout: time.Duration(common.RelayResponseHeaderTimeout) * time.Second,
+ 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+ 				return dialer.Dial(network, addr)
+ 			},
+ 		}
