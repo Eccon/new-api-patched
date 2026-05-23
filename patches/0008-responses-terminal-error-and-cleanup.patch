@@ -1,8 +1,8 @@
 diff --git a/relay/channel/openai/helper.go b/relay/channel/openai/helper.go
-index 08811a7..fb4488f 100644
+index 08811a7..deb587c 100644
 --- a/relay/channel/openai/helper.go
 +++ b/relay/channel/openai/helper.go
-@@ -259,3 +259,34 @@ func sendResponsesStreamData(c *gin.Context, streamResponse dto.ResponsesStreamR
+@@ -259,3 +259,42 @@ func sendResponsesStreamData(c *gin.Context, streamResponse dto.ResponsesStreamR
  	}
  	helper.ResponseChunkData(c, streamResponse, data)
  }
@@ -30,7 +30,15 @@ index 08811a7..fb4488f 100644
 +		return
 +	}
 +
-+	if err := helper.StringData(c, string(jsonData)); err != nil {
++	if c == nil || c.Writer == nil {
++		return
++	}
++	if c.Request != nil && c.Request.Context().Err() != nil {
++		return
++	}
++	c.Render(-1, common.CustomEvent{Data: "event: error\n"})
++	c.Render(-1, common.CustomEvent{Data: "data: " + string(jsonData)})
++	if err := helper.FlushWriter(c); err != nil {
 +		if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
 +			return
 +		}

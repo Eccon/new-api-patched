@@ -92,8 +92,13 @@ No Docker image is built.
 
 - `0008-responses-terminal-error-and-cleanup.patch`
   - Closes upstream response bodies before waiting for scanner goroutines to exit.
-  - Emits a Responses-style synthetic error data event only when a stream ends without any terminal event.
+  - Emits a Responses-style synthetic `event: error` SSE event only when a stream ends without any terminal event.
   - Leaves `response.completed` streams without `[DONE]` unchanged.
+
+- `0009-response-header-timeout-log-reason.patch`
+  - Classifies Go/http2 response-header wait timeouts in relay logs.
+  - Keeps the existing `do_request_failed` error code so retry and auto-disable behavior stay unchanged.
+  - Changes the hidden upstream error message to `upstream error: response header timeout` for easier log diagnosis.
 
 ## Version Handling
 
