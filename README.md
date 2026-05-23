@@ -100,6 +100,11 @@ No Docker image is built.
   - Keeps the existing `do_request_failed` error code so retry and auto-disable behavior stay unchanged.
   - Changes the hidden upstream error message to `upstream error: response header timeout` for easier log diagnosis.
 
+- `0010-release-memory-body-storage-buffers.patch`
+  - Clears in-memory request-body buffer references when `memoryStorage.Close()` runs.
+  - Helps large request bodies become garbage-collectable after request cleanup.
+  - Does not change disk-backed body storage behavior or request replay semantics before close.
+
 ## Version Handling
 
 The workflow sets `common.Version` through the full upstream module path:

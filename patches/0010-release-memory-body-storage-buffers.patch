@@ -1,0 +1,13 @@
+diff --git a/common/body_storage.go b/common/body_storage.go
+index 094dbda..653299d 100644
+--- a/common/body_storage.go
++++ b/common/body_storage.go
+@@ -67,6 +67,8 @@ func (m *memoryStorage) Close() error {
+ 	defer m.mu.Unlock()
+ 	if atomic.CompareAndSwapInt32(&m.closed, 0, 1) {
+ 		DecrementMemoryBuffers(m.size)
++		m.data = nil
++		m.reader = nil
+ 	}
+ 	return nil
+ }
