@@ -80,7 +80,9 @@ No Docker image is built.
 - `0006-response-header-timeout.patch`
   - Adds `RELAY_RESPONSE_HEADER_TIMEOUT` for bounding upstream response-header wait time.
   - Uses Go's native `http.Transport.ResponseHeaderTimeout`.
-  - Applies the timeout to the default relay client, HTTP/HTTPS proxy client, and SOCKS5 proxy client.
+  - Applies the timeout only to relay requests already known to be streaming.
+  - Keeps normal non-stream relay clients without a response-header timeout.
+  - Uses separate cached clients for stream proxy requests so proxy traffic keeps connection pooling without mutating shared transports.
   - Keeps `RELAY_TIMEOUT` semantics unchanged.
 
 - `0007-skip-retry-after-client-disconnect.patch`
