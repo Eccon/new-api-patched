@@ -90,6 +90,11 @@ No Docker image is built.
   - Prevents extra channel switches after the client has already disconnected.
   - Keeps the current upstream request construction unchanged.
 
+- `0008-responses-terminal-error-and-cleanup.patch`
+  - Closes upstream response bodies before waiting for scanner goroutines to exit.
+  - Emits a Responses-style synthetic error data event only when a stream ends without any terminal event.
+  - Leaves `response.completed` streams without `[DONE]` unchanged.
+
 ## Version Handling
 
 The workflow sets `common.Version` through the full upstream module path:

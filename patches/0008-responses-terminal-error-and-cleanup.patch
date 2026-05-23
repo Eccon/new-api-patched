@@ -1,0 +1,114 @@
+diff --git a/relay/channel/openai/helper.go b/relay/channel/openai/helper.go
+index 08811a7..fb4488f 100644
+--- a/relay/channel/openai/helper.go
++++ b/relay/channel/openai/helper.go
+@@ -259,3 +259,34 @@ func sendResponsesStreamData(c *gin.Context, streamResponse dto.ResponsesStreamR
+ 	}
+ 	helper.ResponseChunkData(c, streamResponse, data)
+ }
++
++func sendResponsesErrorEvent(c *gin.Context, reason string) {
++	payload := struct {
++		Type           string `json:"type"`
++		SequenceNumber int    `json:"sequence_number"`
++		Error          struct {
++			Type    string `json:"type"`
++			Message string `json:"message"`
++			Code    string `json:"code"`
++		} `json:"error"`
++	}{
++		Type:           "error",
++		SequenceNumber: 0,
++	}
++	payload.Error.Type = "upstream_error"
++	payload.Error.Message = reason
++	payload.Error.Code = reason
++
++	jsonData, err := common.Marshal(payload)
++	if err != nil {
++		logger.LogError(c, "failed to marshal responses error event: "+err.Error())
++		return
++	}
++
++	if err := helper.StringData(c, string(jsonData)); err != nil {
++		if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
++			return
++		}
++		logger.LogError(c, "failed to send responses error event: "+err.Error())
++	}
++}
+diff --git a/relay/channel/openai/relay_responses.go b/relay/channel/openai/relay_responses.go
+index 2665b8d..5dc65a0 100644
+--- a/relay/channel/openai/relay_responses.go
++++ b/relay/channel/openai/relay_responses.go
+@@ -78,6 +78,8 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+ 
+ 	var usage = &dto.Usage{}
+ 	var responseTextBuilder strings.Builder
++	sawTerminalEvent := false
++	sawErrorEvent := false
+ 
+ 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
+ 
+@@ -91,6 +93,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+ 		sendResponsesStreamData(c, streamResponse, data)
+ 		switch streamResponse.Type {
+ 		case "response.completed":
++			sawTerminalEvent = true
+ 			if streamResponse.Response != nil {
+ 				if streamResponse.Response.Usage != nil {
+ 					if streamResponse.Response.Usage.InputTokens != 0 {
+@@ -112,6 +115,8 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+ 					c.Set("image_generation_call_size", streamResponse.Response.GetSize())
+ 				}
+ 			}
++		case "response.error", "response.failed", "response.incomplete", "response.cancelled", "response.canceled":
++			sawErrorEvent = true
+ 		case "response.output_text.delta":
+ 			// 处理输出文本
+ 			responseTextBuilder.WriteString(streamResponse.Delta)
+@@ -130,6 +135,15 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+ 		}
+ 	})
+ 
++	if info != nil && info.StreamStatus != nil && !sawTerminalEvent && !sawErrorEvent {
++		switch info.StreamStatus.EndReason {
++		case relaycommon.StreamEndReasonTimeout:
++			sendResponsesErrorEvent(c, "stream_timeout")
++		case relaycommon.StreamEndReasonScannerErr:
++			sendResponsesErrorEvent(c, "stream_read_error")
++		}
++	}
++
+ 	if usage.CompletionTokens == 0 {
+ 		// 计算输出文本的 token 数量
+ 		tempStr := responseTextBuilder.String()
+diff --git a/relay/helper/stream_scanner.go b/relay/helper/stream_scanner.go
+index a9bc5e1..d6f1919 100644
+--- a/relay/helper/stream_scanner.go
++++ b/relay/helper/stream_scanner.go
+@@ -43,13 +43,6 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+ 	// 无条件新建 StreamStatus
+ 	info.StreamStatus = relaycommon.NewStreamStatus()
+ 
+-	// 确保响应体总是被关闭
+-	defer func() {
+-		if resp.Body != nil {
+-			resp.Body.Close()
+-		}
+-	}()
+-
+ 	streamingTimeout := time.Duration(constant.StreamingTimeout) * time.Second
+ 
+ 	var (
+@@ -83,6 +76,10 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+ 
+ 	// 改进资源清理，确保所有 goroutine 正确退出
+ 	defer func() {
++		if resp.Body != nil {
++			resp.Body.Close()
++		}
++
+ 		// 通知所有 goroutine 停止
+ 		common.SafeSendBool(stopChan, true)
+ 
