@@ -77,12 +77,13 @@ No Docker image is built.
   - Keeps HTTP/HTTPS and SOCKS proxy clients on their existing proxy-specific dialing behavior.
   - Does not add any runtime environment variable.
 
-- `0006-response-header-timeout.patch`
+- `0006-response-header-timeout-and-error-body-cleanup.patch`
   - Adds `RELAY_RESPONSE_HEADER_TIMEOUT` for bounding upstream response-header wait time.
   - Uses Go's native `http.Transport.ResponseHeaderTimeout`.
   - Applies the timeout only to relay requests already known to be streaming.
   - Keeps normal non-stream relay clients without a response-header timeout.
   - Uses separate cached clients for stream proxy requests so proxy traffic keeps connection pooling without mutating shared transports.
+  - Closes error-response bodies even when `io.ReadAll(resp.Body)` fails in `RelayErrorHandler`.
   - Keeps `RELAY_TIMEOUT` semantics unchanged.
 
 - `0007-skip-retry-after-client-disconnect.patch`

@@ -62,7 +62,7 @@ diff --git a/relay/common/stream_status_test.go b/relay/common/stream_status_tes
 index 6fc755a..3bf877e 100644
 --- a/relay/common/stream_status_test.go
 +++ b/relay/common/stream_status_test.go
-@@ -171,7 +171,7 @@ func TestStreamStatus_Summary(t *testing.T) {
+@@ -171,6 +171,6 @@ func TestStreamStatus_Summary(t *testing.T) {
  	s2.RecordError("bad json")
  	s2.RecordError("write failed")
  	summary2 := s2.Summary()
