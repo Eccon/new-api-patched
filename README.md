@@ -79,12 +79,18 @@ No Docker image is built.
 
 - `0006-response-header-timeout-and-error-body-cleanup.patch`
   - Adds `RELAY_RESPONSE_HEADER_TIMEOUT` for bounding upstream response-header wait time.
+  - Adds `RELAY_NON_STREAM_TIMEOUT` for bounding total non-stream relay request time.
   - Uses Go's native `http.Transport.ResponseHeaderTimeout`.
   - Applies the timeout only to relay requests already known to be streaming.
   - Keeps normal non-stream relay clients without a response-header timeout.
+  - Applies non-stream total timeout through request context and cancels it when the returned response body is closed.
+  - Keeps stream requests out of `RELAY_NON_STREAM_TIMEOUT`; stream total timeout still follows `RELAY_TIMEOUT`.
+  - Uses `RELAY_TIMEOUT` as the non-stream fallback when `RELAY_NON_STREAM_TIMEOUT` is unset, and as the hard cap when both are set.
+  - Binds upstream relay requests to the downstream request context, so client disconnects cancel the active upstream attempt.
+  - Applies the same relay timeout/client selection to AWS Bedrock relay paths.
   - Uses separate cached clients for stream proxy requests so proxy traffic keeps connection pooling without mutating shared transports.
   - Closes error-response bodies even when `io.ReadAll(resp.Body)` fails in `RelayErrorHandler`.
-  - Keeps `RELAY_TIMEOUT` semantics unchanged.
+  - Keeps existing `RELAY_TIMEOUT` global-cap semantics intact.
 
 - `0007-skip-retry-after-client-disconnect.patch`
   - Skips relay retry when the downstream request context is already done.

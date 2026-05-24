@@ -1,33 +1,53 @@
 diff --git a/common/constants.go b/common/constants.go
-index d81c17d..d8583fd 100644
+index d81c17d..7f94ff0 100644
 --- a/common/constants.go
 +++ b/common/constants.go
-@@ -172,7 +172,8 @@ var UpstreamUserAgentOpenAI = ""
+@@ -172,7 +172,9 @@ var UpstreamUserAgentOpenAI = ""
  var UpstreamUserAgentClaude = ""
  var UpstreamUserAgentGemini = ""
  
 -var RelayTimeout int // unit is second
 +var RelayTimeout int               // unit is second
 +var RelayResponseHeaderTimeout int // unit is second
++var RelayNonStreamTimeout int      // unit is second
  
  var RelayMaxIdleConns int
  var RelayMaxIdleConnsPerHost int
 diff --git a/common/init.go b/common/init.go
-index c33f04f..8a2d45c 100644
+index c33f04f..a110979 100644
 --- a/common/init.go
 +++ b/common/init.go
-@@ -102,6 +102,7 @@ func InitEnv() {
+@@ -102,6 +102,8 @@ func InitEnv() {
  	SyncFrequency = GetEnvOrDefault("SYNC_FREQUENCY", 60)
  	BatchUpdateInterval = GetEnvOrDefault("BATCH_UPDATE_INTERVAL", 5)
  	RelayTimeout = GetEnvOrDefault("RELAY_TIMEOUT", 0)
 +	RelayResponseHeaderTimeout = GetEnvOrDefault("RELAY_RESPONSE_HEADER_TIMEOUT", 0)
++	RelayNonStreamTimeout = GetEnvOrDefault("RELAY_NON_STREAM_TIMEOUT", -1)
  	RelayMaxIdleConns = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS", 500)
  	RelayMaxIdleConnsPerHost = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS_PER_HOST", 100)
  
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index f3fc526..1949e22 100644
+index f3fc526..cdbe908 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
+@@ -312,7 +312,7 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
+ 		return nil, fmt.Errorf("get request url failed: %w", err)
+ 	}
+ 	logger.LogDebug(c, "fullRequestURL: %s", fullRequestURL)
+-	req, err := http.NewRequest(c.Request.Method, fullRequestURL, requestBody)
++	req, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, fullRequestURL, requestBody)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("new request failed: %w", err)
+ 	}
+@@ -342,7 +342,7 @@ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBod
+ 		return nil, fmt.Errorf("get request url failed: %w", err)
+ 	}
+ 	logger.LogDebug(c, "fullRequestURL: %s", fullRequestURL)
+-	req, err := http.NewRequest(c.Request.Method, fullRequestURL, requestBody)
++	req, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, fullRequestURL, requestBody)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("new request failed: %w", err)
+ 	}
 @@ -493,12 +493,12 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  	var client *http.Client
  	var err error
@@ -43,6 +63,151 @@ index f3fc526..1949e22 100644
  	}
  
  	var stopPinger context.CancelFunc
+@@ -521,30 +521,73 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+ 
+ 	applyDefaultUpstreamUserAgent(c, req, info)
+ 	logUpstreamUserAgent(c, req)
++	reqCtx, cancel := service.WithRelayRequestTimeout(c.Request.Context(), info.IsStream)
++	req = req.WithContext(reqCtx)
++	closeRequestBodies := func() {
++		if req != nil && req.Body != nil {
++			_ = req.Body.Close()
++		}
++		if c != nil && c.Request != nil && c.Request.Body != nil {
++			_ = c.Request.Body.Close()
++		}
++	}
++
+ 	resp, err := client.Do(req)
+ 	if err != nil {
++		if resp != nil && resp.Body != nil {
++			_ = resp.Body.Close()
++		}
++		closeRequestBodies()
++		cancel()
+ 		logger.LogError(c, "do request failed: "+err.Error())
+ 		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
+ 	}
+ 	if resp == nil {
++		closeRequestBodies()
++		cancel()
+ 		return nil, errors.New("resp is nil")
+ 	}
++	if resp.Body == nil {
++		closeRequestBodies()
++		cancel()
++		return nil, errors.New("resp body is nil")
++	}
++	resp.Body = &cancelOnCloseReadCloser{
++		ReadCloser: resp.Body,
++		cancel:     cancel,
++	}
+ 
+ 	if upID := resp.Header.Get(common2.RequestIdKey); upID != "" {
+ 		c.Set(common2.UpstreamRequestIdKey, upID)
+ 	}
+ 
+-	_ = req.Body.Close()
+-	_ = c.Request.Body.Close()
++	closeRequestBodies()
+ 	return resp, nil
+ }
+ 
++type cancelOnCloseReadCloser struct {
++	io.ReadCloser
++	cancel context.CancelFunc
++	once   sync.Once
++}
++
++func (r *cancelOnCloseReadCloser) Close() error {
++	var err error
++	if r.ReadCloser != nil {
++		err = r.ReadCloser.Close()
++	}
++	if r.cancel != nil {
++		r.once.Do(r.cancel)
++	}
++	return err
++}
++
+ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+ 	fullRequestURL, err := a.BuildRequestURL(info)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	req, err := http.NewRequest(c.Request.Method, fullRequestURL, requestBody)
++	req, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, fullRequestURL, requestBody)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("new request failed: %w", err)
+ 	}
+diff --git a/relay/channel/aws/relay-aws.go b/relay/channel/aws/relay-aws.go
+index 1f6ff7e..edc8f8e 100644
+--- a/relay/channel/aws/relay-aws.go
++++ b/relay/channel/aws/relay-aws.go
+@@ -7,7 +7,6 @@ import (
+ 	"io"
+ 	"net/http"
+ 	"strings"
+-	"time"
+ 
+ 	"github.com/QuantumNous/new-api/common"
+ 	"github.com/QuantumNous/new-api/dto"
+@@ -40,11 +39,8 @@ func getAwsErrorStatusCode(err error) int {
+ 	return http.StatusInternalServerError
+ }
+ 
+-func newAwsInvokeContext() (context.Context, context.CancelFunc) {
+-	if common.RelayTimeout <= 0 {
+-		return context.Background(), func() {}
+-	}
+-	return context.WithTimeout(context.Background(), time.Duration(common.RelayTimeout)*time.Second)
++func newAwsInvokeContext(parent context.Context, stream bool) (context.Context, context.CancelFunc) {
++	return service.WithRelayRequestTimeout(parent, stream)
+ }
+ 
+ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.Client, error) {
+@@ -53,12 +49,12 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
+ 		err        error
+ 	)
+ 	if info.ChannelSetting.Proxy != "" {
+-		httpClient, err = service.NewProxyHttpClient(info.ChannelSetting.Proxy)
++		httpClient, err = service.NewProxyHttpClientForRelay(info.ChannelSetting.Proxy, info.IsStream)
+ 		if err != nil {
+ 			return nil, fmt.Errorf("new proxy http client failed: %w", err)
+ 		}
+ 	} else {
+-		httpClient = service.GetHttpClient()
++		httpClient = service.GetHttpClientForRelay(info.IsStream)
+ 	}
+ 
+ 	awsSecret := strings.Split(info.ApiKey, "|")
+@@ -223,7 +219,7 @@ func getAwsModelID(requestModel string) string {
+ 
+ func awsHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (*types.NewAPIError, *dto.Usage) {
+ 
+-	ctx, cancel := newAwsInvokeContext()
++	ctx, cancel := newAwsInvokeContext(c.Request.Context(), false)
+ 	defer cancel()
+ 
+ 	awsResp, err := a.AwsClient.InvokeModel(ctx, a.AwsReq.(*bedrockruntime.InvokeModelInput))
+@@ -253,7 +249,7 @@ func awsHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (*types
+ }
+ 
+ func awsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (*types.NewAPIError, *dto.Usage) {
+-	ctx, cancel := newAwsInvokeContext()
++	ctx, cancel := newAwsInvokeContext(c.Request.Context(), true)
+ 	defer cancel()
+ 
+ 	awsResp, err := a.AwsClient.InvokeModelWithResponseStream(ctx, a.AwsReq.(*bedrockruntime.InvokeModelWithResponseStreamInput))
+@@ -296,7 +292,7 @@ func awsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (
+ // Nova模型处理函数
+ func handleNovaRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (*types.NewAPIError, *dto.Usage) {
+ 
+-	ctx, cancel := newAwsInvokeContext()
++	ctx, cancel := newAwsInvokeContext(c.Request.Context(), false)
+ 	defer cancel()
+ 
+ 	awsResp, err := a.AwsClient.InvokeModel(ctx, a.AwsReq.(*bedrockruntime.InvokeModelInput))
 diff --git a/service/error.go b/service/error.go
 index a2ff0aa..7be802a 100644
 --- a/service/error.go
@@ -62,7 +227,7 @@ index a2ff0aa..7be802a 100644
  	buildErrWithBody := func(message string) error {
  		if message == "" {
 diff --git a/service/http_client.go b/service/http_client.go
-index 2f75de2..060d4d3 100644
+index 2f75de2..400f767 100644
 --- a/service/http_client.go
 +++ b/service/http_client.go
 @@ -16,9 +16,10 @@ import (
@@ -100,9 +265,9 @@ index 2f75de2..060d4d3 100644
 +		streamTransport := transport.Clone()
 +		applyResponseHeaderTimeout(streamTransport, true)
 +		streamHttpClient = newRelayHTTPClient(streamTransport)
-+	}
-+}
-+
+ 	}
+ }
+ 
 +func newRelayHTTPClient(transport http.RoundTripper) *http.Client {
 +	client := &http.Client{
 +		Transport:     transport,
@@ -110,10 +275,10 @@ index 2f75de2..060d4d3 100644
 +	}
 +	if common.RelayTimeout > 0 {
 +		client.Timeout = time.Duration(common.RelayTimeout) * time.Second
- 	}
++	}
 +	return client
- }
- 
++}
++
  func GetHttpClient() *http.Client {
  	return httpClient
  }
@@ -128,7 +293,7 @@ index 2f75de2..060d4d3 100644
  // GetHttpClientWithProxy returns the default client or a proxy-enabled one when proxyURL is provided.
  func GetHttpClientWithProxy(proxyURL string) (*http.Client, error) {
  	if proxyURL == "" {
-@@ -74,6 +88,16 @@ func GetHttpClientWithProxy(proxyURL string) (*http.Client, error) {
+@@ -74,6 +88,49 @@ func GetHttpClientWithProxy(proxyURL string) (*http.Client, error) {
  	return NewProxyHttpClient(proxyURL)
  }
  
@@ -142,10 +307,43 @@ index 2f75de2..060d4d3 100644
 +	}
 +}
 +
++func relayRequestTimeout(stream bool) time.Duration {
++	if stream {
++		if common.RelayTimeout <= 0 {
++			return 0
++		}
++		return time.Duration(common.RelayTimeout) * time.Second
++	}
++
++	if common.RelayNonStreamTimeout > 0 {
++		timeout := common.RelayNonStreamTimeout
++		if common.RelayTimeout > 0 && timeout > common.RelayTimeout {
++			timeout = common.RelayTimeout
++		}
++		return time.Duration(timeout) * time.Second
++	}
++
++	if common.RelayTimeout <= 0 {
++		return 0
++	}
++	return time.Duration(common.RelayTimeout) * time.Second
++}
++
++func WithRelayRequestTimeout(ctx context.Context, stream bool) (context.Context, context.CancelFunc) {
++	if ctx == nil {
++		ctx = context.Background()
++	}
++	timeout := relayRequestTimeout(stream)
++	if timeout <= 0 {
++		return ctx, func() {}
++	}
++	return context.WithTimeout(ctx, timeout)
++}
++
  // ResetProxyClientCache 清空代理客户端缓存，确保下次使用时重新初始化
  func ResetProxyClientCache() {
  	proxyClientLock.Lock()
-@@ -88,15 +112,24 @@ func ResetProxyClientCache() {
+@@ -88,15 +145,24 @@ func ResetProxyClientCache() {
  
  // NewProxyHttpClient 创建支持代理的 HTTP 客户端
  func NewProxyHttpClient(proxyURL string) (*http.Client, error) {
@@ -172,7 +370,7 @@ index 2f75de2..060d4d3 100644
  		proxyClientLock.Unlock()
  		return client, nil
  	}
-@@ -115,16 +148,13 @@ func NewProxyHttpClient(proxyURL string) (*http.Client, error) {
+@@ -115,16 +181,13 @@ func NewProxyHttpClient(proxyURL string) (*http.Client, error) {
  			ForceAttemptHTTP2:   true,
  			Proxy:               http.ProxyURL(parsedURL),
  		}
@@ -192,7 +390,7 @@ index 2f75de2..060d4d3 100644
  		proxyClientLock.Unlock()
  		return client, nil
  
-@@ -156,14 +186,14 @@ func NewProxyHttpClient(proxyURL string) (*http.Client, error) {
+@@ -156,14 +219,14 @@ func NewProxyHttpClient(proxyURL string) (*http.Client, error) {
  				return dialer.Dial(network, addr)
  			},
  		}
