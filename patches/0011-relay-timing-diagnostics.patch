@@ -2,10 +2,11 @@ diff --git a/common/constants.go b/common/constants.go
 index d8583fd7..fa59b819 100644
 --- a/common/constants.go
 +++ b/common/constants.go
-@@ -174,6 +174,8 @@ var UpstreamUserAgentGemini = ""
+@@ -174,7 +174,9 @@ var UpstreamUserAgentGemini = ""
  
  var RelayTimeout int               // unit is second
  var RelayResponseHeaderTimeout int // unit is second
+ var RelayNonStreamTimeout int      // unit is second
 +var RelayTimingLogEnabled bool
 +var RelayTimingLogStreamProbeCount int
  
@@ -15,10 +16,11 @@ diff --git a/common/init.go b/common/init.go
 index 8a2d45c2..0adf19f1 100644
 --- a/common/init.go
 +++ b/common/init.go
-@@ -103,6 +103,8 @@ func InitEnv() {
+@@ -103,7 +103,9 @@ func InitEnv() {
  	BatchUpdateInterval = GetEnvOrDefault("BATCH_UPDATE_INTERVAL", 5)
  	RelayTimeout = GetEnvOrDefault("RELAY_TIMEOUT", 0)
  	RelayResponseHeaderTimeout = GetEnvOrDefault("RELAY_RESPONSE_HEADER_TIMEOUT", 0)
+ 	RelayNonStreamTimeout = GetEnvOrDefault("RELAY_NON_STREAM_TIMEOUT", -1)
 +	RelayTimingLogEnabled = GetEnvOrDefaultBool("RELAY_TIMING_LOG_ENABLED", false)
 +	RelayTimingLogStreamProbeCount = GetEnvOrDefault("RELAY_TIMING_LOG_STREAM_PROBE_COUNT", 0)
  	RelayMaxIdleConns = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS", 500)
