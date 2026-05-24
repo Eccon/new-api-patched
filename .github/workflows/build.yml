@@ -234,6 +234,12 @@ jobs:
 
           sha256sum dist/new-api-* > dist/checksums.txt
 
+      - name: Move alpha release tag
+        if: steps.release_check.outputs.skip != 'true' && steps.version.outputs.mode == 'alpha'
+        run: |
+          git tag -f "${RELEASE_TAG}" "${GITHUB_SHA}"
+          git push -f origin "refs/tags/${RELEASE_TAG}"
+
       - name: Clean existing release assets
         if: steps.release_check.outputs.skip != 'true' && (steps.version.outputs.mode == 'alpha' || steps.version.outputs.force_rebuild == 'true')
         env:
