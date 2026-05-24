@@ -1,0 +1,870 @@
+diff --git a/common/constants.go b/common/constants.go
+index d8583fd7..fa59b819 100644
+--- a/common/constants.go
++++ b/common/constants.go
+@@ -174,6 +174,8 @@ var UpstreamUserAgentGemini = ""
+ 
+ var RelayTimeout int               // unit is second
+ var RelayResponseHeaderTimeout int // unit is second
++var RelayTimingLogEnabled bool
++var RelayTimingLogStreamProbeCount int
+ 
+ var RelayMaxIdleConns int
+ var RelayMaxIdleConnsPerHost int
+diff --git a/common/init.go b/common/init.go
+index 8a2d45c2..0adf19f1 100644
+--- a/common/init.go
++++ b/common/init.go
+@@ -103,6 +103,8 @@ func InitEnv() {
+ 	BatchUpdateInterval = GetEnvOrDefault("BATCH_UPDATE_INTERVAL", 5)
+ 	RelayTimeout = GetEnvOrDefault("RELAY_TIMEOUT", 0)
+ 	RelayResponseHeaderTimeout = GetEnvOrDefault("RELAY_RESPONSE_HEADER_TIMEOUT", 0)
++	RelayTimingLogEnabled = GetEnvOrDefaultBool("RELAY_TIMING_LOG_ENABLED", false)
++	RelayTimingLogStreamProbeCount = GetEnvOrDefault("RELAY_TIMING_LOG_STREAM_PROBE_COUNT", 0)
+ 	RelayMaxIdleConns = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS", 500)
+ 	RelayMaxIdleConnsPerHost = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS_PER_HOST", 100)
+ 
+diff --git a/common/sys_log.go b/common/sys_log.go
+index 6e5b3622..9e70d21d 100644
+--- a/common/sys_log.go
++++ b/common/sys_log.go
+@@ -17,21 +17,21 @@ var LogWriterMu sync.RWMutex
+ func SysLog(s string) {
+ 	t := time.Now()
+ 	LogWriterMu.RLock()
+-	_, _ = fmt.Fprintf(gin.DefaultWriter, "[SYS] %v | %s \n", t.Format("2006/01/02 - 15:04:05"), s)
++	_, _ = fmt.Fprintf(gin.DefaultWriter, "[SYS] %v | %s \n", t.Format("2006/01/02 - 15:04:05.000"), s)
+ 	LogWriterMu.RUnlock()
+ }
+ 
+ func SysError(s string) {
+ 	t := time.Now()
+ 	LogWriterMu.RLock()
+-	_, _ = fmt.Fprintf(gin.DefaultErrorWriter, "[SYS] %v | %s \n", t.Format("2006/01/02 - 15:04:05"), s)
++	_, _ = fmt.Fprintf(gin.DefaultErrorWriter, "[SYS] %v | %s \n", t.Format("2006/01/02 - 15:04:05.000"), s)
+ 	LogWriterMu.RUnlock()
+ }
+ 
+ func FatalLog(v ...any) {
+ 	t := time.Now()
+ 	LogWriterMu.RLock()
+-	_, _ = fmt.Fprintf(gin.DefaultErrorWriter, "[FATAL] %v | %v \n", t.Format("2006/01/02 - 15:04:05"), v)
++	_, _ = fmt.Fprintf(gin.DefaultErrorWriter, "[FATAL] %v | %v \n", t.Format("2006/01/02 - 15:04:05.000"), v)
+ 	LogWriterMu.RUnlock()
+ 	os.Exit(1)
+ }
+diff --git a/controller/relay.go b/controller/relay.go
+index d8b30f21..aa09011a 100644
+--- a/controller/relay.go
++++ b/controller/relay.go
+@@ -65,8 +65,104 @@ func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewA
+ 	return err
+ }
+ 
+-func Relay(c *gin.Context, relayFormat types.RelayFormat) {
++func getGinContextTime(c *gin.Context, key string) time.Time {
++	if c == nil {
++		return time.Time{}
++	}
++	if value, exists := c.Get(key); exists {
++		if t, ok := value.(time.Time); ok {
++			return t
++		}
++	}
++	return time.Time{}
++}
+ 
++func relayTimingSince(start, value time.Time) string {
++	if start.IsZero() || value.IsZero() {
++		return "-"
++	}
++	return fmt.Sprintf("%dms", value.Sub(start).Milliseconds())
++}
++
++func relayTimingDuration(start, end time.Time) string {
++	if start.IsZero() || end.IsZero() {
++		return "-"
++	}
++	return fmt.Sprintf("%dms", end.Sub(start).Milliseconds())
++}
++
++func relayPreflightEnd(t relaycommon.RelayTimingInfo) time.Time {
++	if !t.BillingReady.IsZero() {
++		return t.BillingReady
++	}
++	if !t.PriceReady.IsZero() {
++		return t.PriceReady
++	}
++	if !t.TokensEstimated.IsZero() {
++		return t.TokensEstimated
++	}
++	if !t.SensitiveChecked.IsZero() {
++		return t.SensitiveChecked
++	}
++	if !t.TokenMetaReady.IsZero() {
++		return t.TokenMetaReady
++	}
++	if !t.RelayInfoReady.IsZero() {
++		return t.RelayInfoReady
++	}
++	if !t.RequestValidated.IsZero() {
++		return t.RequestValidated
++	}
++	return t.RelayEnter
++}
++
++func logRelayPreflightTiming(c *gin.Context, relayFormat types.RelayFormat, relayInfo *relaycommon.RelayInfo) {
++	if !common.RelayTimingLogEnabled || relayInfo == nil {
++		return
++	}
++	t := relayInfo.Timing
++	start := t.RequestReceivedAt
++	if start.IsZero() {
++		start = t.RelayEnter
++	}
++	end := relayPreflightEnd(t)
++	logger.LogInfo(c, fmt.Sprintf(
++		"relay preflight timing: format=%s channel=%d model=%s since_received{distribute_start=%s model_request=%s channel_selected=%s relay_enter=%s request_validated=%s relay_info=%s token_meta=%s sensitive_check=%s tokens=%s price=%s billing=%s} duration{before_distribute=%s distribute_total=%s model_request=%s channel_select=%s setup_to_relay=%s request_validate=%s relay_info=%s token_meta=%s sensitive_check=%s token_estimate=%s price=%s billing=%s preflight_total=%s}",
++		relayFormat,
++		common.GetContextKeyInt(c, constant.ContextKeyChannelId),
++		relayInfo.OriginModelName,
++		relayTimingSince(start, t.DistributeStart),
++		relayTimingSince(start, t.ModelRequestDone),
++		relayTimingSince(start, t.ChannelSelected),
++		relayTimingSince(start, t.RelayEnter),
++		relayTimingSince(start, t.RequestValidated),
++		relayTimingSince(start, t.RelayInfoReady),
++		relayTimingSince(start, t.TokenMetaReady),
++		relayTimingSince(start, t.SensitiveChecked),
++		relayTimingSince(start, t.TokensEstimated),
++		relayTimingSince(start, t.PriceReady),
++		relayTimingSince(start, t.BillingReady),
++		relayTimingDuration(start, t.DistributeStart),
++		relayTimingDuration(t.DistributeStart, t.ChannelSelected),
++		relayTimingDuration(t.DistributeStart, t.ModelRequestDone),
++		relayTimingDuration(t.ModelRequestDone, t.ChannelSelected),
++		relayTimingDuration(t.ChannelSelected, t.RelayEnter),
++		relayTimingDuration(t.RelayEnter, t.RequestValidated),
++		relayTimingDuration(t.RequestValidated, t.RelayInfoReady),
++		relayTimingDuration(t.RelayInfoReady, t.TokenMetaReady),
++		relayTimingDuration(t.TokenMetaReady, t.SensitiveChecked),
++		relayTimingDuration(t.SensitiveChecked, t.TokensEstimated),
++		relayTimingDuration(t.TokensEstimated, t.PriceReady),
++		relayTimingDuration(t.PriceReady, t.BillingReady),
++		relayTimingDuration(start, end),
++	))
++}
++
++func Relay(c *gin.Context, relayFormat types.RelayFormat) {
++	var relayEnter time.Time
++	if common.RelayTimingLogEnabled {
++		relayEnter = time.Now()
++	}
+ 	requestId := c.GetString(common.RequestIdKey)
+ 	//group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+ 	//originalModel := common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
+@@ -107,6 +203,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+ 	}()
+ 
+ 	request, err := helper.GetAndValidateRequest(c, relayFormat)
++	var requestValidated time.Time
++	if common.RelayTimingLogEnabled {
++		requestValidated = time.Now()
++	}
+ 	if err != nil {
+ 		// Map "request body too large" to 413 so clients can handle it correctly
+ 		if common.IsRequestBodyTooLargeError(err) || errors.Is(err, common.ErrRequestBodyTooLarge) {
+@@ -122,6 +222,15 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+ 		newAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
+ 		return
+ 	}
++	if common.RelayTimingLogEnabled {
++		relayInfo.Timing.RequestReceivedAt = getGinContextTime(c, "relay_timing_request_received_at")
++		relayInfo.Timing.DistributeStart = getGinContextTime(c, "relay_timing_distribute_start_at")
++		relayInfo.Timing.ModelRequestDone = getGinContextTime(c, "relay_timing_model_request_done_at")
++		relayInfo.Timing.ChannelSelected = getGinContextTime(c, "relay_timing_channel_selected_at")
++		relayInfo.Timing.RelayEnter = relayEnter
++		relayInfo.Timing.RequestValidated = requestValidated
++		relayInfo.Timing.RelayInfoReady = time.Now()
++	}
+ 
+ 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
+ 	needCountToken := constant.CountToken
+@@ -132,6 +241,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+ 	} else {
+ 		meta = fastTokenCountMetaForPricing(request)
+ 	}
++	if common.RelayTimingLogEnabled {
++		relayInfo.Timing.TokenMetaReady = time.Now()
++	}
+ 
+ 	if needSensitiveCheck && meta != nil {
+ 		contains, words := service.CheckSensitiveText(meta.CombineText)
+@@ -141,6 +253,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+ 			return
+ 		}
+ 	}
++	if common.RelayTimingLogEnabled {
++		relayInfo.Timing.SensitiveChecked = time.Now()
++	}
+ 
+ 	tokens, err := service.EstimateRequestToken(c, meta, relayInfo)
+ 	if err != nil {
+@@ -149,12 +264,18 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+ 	}
+ 
+ 	relayInfo.SetEstimatePromptTokens(tokens)
++	if common.RelayTimingLogEnabled {
++		relayInfo.Timing.TokensEstimated = time.Now()
++	}
+ 
+ 	priceData, err := helper.ModelPriceHelper(c, relayInfo, tokens, meta)
+ 	if err != nil {
+ 		newAPIError = types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest))
+ 		return
+ 	}
++	if common.RelayTimingLogEnabled {
++		relayInfo.Timing.PriceReady = time.Now()
++	}
+ 
+ 	// common.SetContextKey(c, constant.ContextKeyTokenCountMeta, meta)
+ 
+@@ -166,6 +287,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+ 			return
+ 		}
+ 	}
++	if common.RelayTimingLogEnabled {
++		relayInfo.Timing.BillingReady = time.Now()
++		logRelayPreflightTiming(c, relayFormat, relayInfo)
++	}
+ 
+ 	defer func() {
+ 		// Only return quota if downstream failed and quota was actually pre-consumed
+diff --git a/logger/logger.go b/logger/logger.go
+index 867d8832..39e12fc3 100644
+--- a/logger/logger.go
++++ b/logger/logger.go
+@@ -107,7 +107,7 @@ func logHelper(ctx context.Context, level string, msg string) {
+ 	if level == loggerINFO {
+ 		writer = gin.DefaultWriter
+ 	}
+-	_, _ = fmt.Fprintf(writer, "[%s] %v | %s | %s \n", level, now.Format("2006/01/02 - 15:04:05"), id, msg)
++	_, _ = fmt.Fprintf(writer, "[%s] %v | %s | %s \n", level, now.Format("2006/01/02 - 15:04:05.000"), id, msg)
+ 	common.LogWriterMu.RUnlock()
+ 	logCount++ // we don't need accurate count, so no lock here
+ 	if logCount > maxLogCount && !setupLogWorking {
+diff --git a/middleware/distributor.go b/middleware/distributor.go
+index 771719b9..2e8e53a5 100644
+--- a/middleware/distributor.go
++++ b/middleware/distributor.go
+@@ -31,9 +31,15 @@ type ModelRequest struct {
+ 
+ func Distribute() func(c *gin.Context) {
+ 	return func(c *gin.Context) {
++		if common.RelayTimingLogEnabled {
++			c.Set("relay_timing_distribute_start_at", time.Now())
++		}
+ 		var channel *model.Channel
+ 		channelId, ok := common.GetContextKey(c, constant.ContextKeyTokenSpecificChannelId)
+ 		modelRequest, shouldSelectChannel, err := getModelRequest(c)
++		if common.RelayTimingLogEnabled {
++			c.Set("relay_timing_model_request_done_at", time.Now())
++		}
+ 		if err != nil {
+ 			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
+ 			return
+@@ -158,6 +164,9 @@ func Distribute() func(c *gin.Context) {
+ 			}
+ 		}
+ 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
++		if common.RelayTimingLogEnabled {
++			c.Set("relay_timing_channel_selected_at", time.Now())
++		}
+ 		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+ 		c.Next()
+ 		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
+diff --git a/middleware/logger.go b/middleware/logger.go
+index 151008d9..2e92b122 100644
+--- a/middleware/logger.go
++++ b/middleware/logger.go
+@@ -1,9 +1,12 @@
+ package middleware
+ 
+ import (
++	"context"
+ 	"fmt"
++	"strings"
+ 
+ 	"github.com/QuantumNous/new-api/common"
++	"github.com/QuantumNous/new-api/logger"
+ 	"github.com/gin-gonic/gin"
+ )
+ 
+@@ -12,10 +15,54 @@ const RouteTagKey = "route_tag"
+ func RouteTag(tag string) gin.HandlerFunc {
+ 	return func(c *gin.Context) {
+ 		c.Set(RouteTagKey, tag)
++		if tag == "relay" && shouldLogRelayRequestReceived(c) {
++			logRelayRequestReceived(c)
++		}
+ 		c.Next()
+ 	}
+ }
+ 
++func shouldLogRelayRequestReceived(c *gin.Context) bool {
++	if c == nil || c.Request == nil || c.Request.URL == nil {
++		return false
++	}
++	return isLLMRelayRequestPath(c.Request.URL.Path)
++}
++
++func isLLMRelayRequestPath(path string) bool {
++	return strings.HasPrefix(path, "/v1/chat/completions") ||
++		strings.HasPrefix(path, "/pg/chat/completions") ||
++		strings.HasPrefix(path, "/v1/completions") ||
++		strings.HasPrefix(path, "/v1/messages") ||
++		strings.HasPrefix(path, "/v1/responses") ||
++		isGeminiGenerateRequestPath(path)
++}
++
++func isGeminiGenerateRequestPath(path string) bool {
++	if !strings.HasPrefix(path, "/v1beta/models/") && !strings.HasPrefix(path, "/v1/models/") {
++		return false
++	}
++	return strings.Contains(path, ":generateContent") || strings.Contains(path, ":streamGenerateContent")
++}
++
++func logRelayRequestReceived(c *gin.Context) {
++	ctx := context.Background()
++	path := ""
++	ip := ""
++	if c != nil {
++		if c.Request != nil {
++			ip = c.ClientIP()
++			ctx = c.Request.Context()
++			if c.Request.URL != nil {
++				path = c.Request.URL.Path
++			} else {
++				path = c.Request.RequestURI
++			}
++		}
++	}
++	logger.LogInfo(ctx, fmt.Sprintf("relay request received: path=%s ip=%s", path, ip))
++}
++
+ func SetUpLogger(server *gin.Engine) {
+ 	server.Use(gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
+ 		var requestID string
+diff --git a/middleware/request-id.go b/middleware/request-id.go
+index 241c2a86..49ab2cf7 100644
+--- a/middleware/request-id.go
++++ b/middleware/request-id.go
+@@ -5,6 +5,7 @@ import (
+ 	"crypto/sha256"
+ 	"encoding/hex"
+ 	"runtime/debug"
++	"time"
+ 
+ 	"github.com/QuantumNous/new-api/common"
+ 	"github.com/gin-gonic/gin"
+@@ -22,6 +23,9 @@ func RequestId() func(c *gin.Context) {
+ 	return func(c *gin.Context) {
+ 		id := common.GetTimeString() + _bp + common.GetRandomString(8)
+ 		c.Set(common.RequestIdKey, id)
++		if common.RelayTimingLogEnabled {
++			c.Set("relay_timing_request_received_at", time.Now())
++		}
+ 		ctx := context.WithValue(c.Request.Context(), common.RequestIdKey, id)
+ 		c.Request = c.Request.WithContext(ctx)
+ 		c.Header(common.RequestIdKey, id)
+diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
+index 0b5c855e..1d30494f 100644
+--- a/relay/channel/api_request.go
++++ b/relay/channel/api_request.go
+@@ -2,10 +2,12 @@ package channel
+ 
+ import (
+ 	"context"
++	"crypto/tls"
+ 	"errors"
+ 	"fmt"
+ 	"io"
+ 	"net/http"
++	"net/http/httptrace"
+ 	"regexp"
+ 	"strings"
+ 	"sync"
+@@ -521,8 +523,97 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+ 
+ 	applyDefaultUpstreamUserAgent(c, req, info)
+ 	logUpstreamUserAgent(c, req)
++	var attemptTiming *common.RelayTimingInfo
++	var attemptTimingMu sync.Mutex
++	if common2.RelayTimingLogEnabled && info != nil && req != nil {
++		attemptTiming = &common.RelayTimingInfo{
++			DoStart: time.Now(),
++		}
++		setAttemptTiming := func(update func(*common.RelayTimingInfo)) {
++			attemptTimingMu.Lock()
++			defer attemptTimingMu.Unlock()
++			update(attemptTiming)
++		}
++		req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{
++			GotConn: func(connInfo httptrace.GotConnInfo) {
++				setAttemptTiming(func(t *common.RelayTimingInfo) {
++					t.GotConn = time.Now()
++					t.ReusedConn = connInfo.Reused
++					t.WasIdleConn = connInfo.WasIdle
++					t.IdleTime = connInfo.IdleTime
++				})
++			},
++			DNSStart: func(_ httptrace.DNSStartInfo) {
++				setAttemptTiming(func(t *common.RelayTimingInfo) {
++					t.DNSStart = time.Now()
++				})
++			},
++			DNSDone: func(_ httptrace.DNSDoneInfo) {
++				setAttemptTiming(func(t *common.RelayTimingInfo) {
++					t.DNSDone = time.Now()
++				})
++			},
++			ConnectStart: func(_, _ string) {
++				setAttemptTiming(func(t *common.RelayTimingInfo) {
++					t.ConnectStart = time.Now()
++				})
++			},
++			ConnectDone: func(_, _ string, _ error) {
++				setAttemptTiming(func(t *common.RelayTimingInfo) {
++					t.ConnectDone = time.Now()
++				})
++			},
++			TLSHandshakeStart: func() {
++				setAttemptTiming(func(t *common.RelayTimingInfo) {
++					t.TLSStart = time.Now()
++				})
++			},
++			TLSHandshakeDone: func(_ tls.ConnectionState, _ error) {
++				setAttemptTiming(func(t *common.RelayTimingInfo) {
++					t.TLSDone = time.Now()
++				})
++			},
++			WroteRequest: func(writeInfo httptrace.WroteRequestInfo) {
++				setAttemptTiming(func(t *common.RelayTimingInfo) {
++					t.WroteRequest = time.Now()
++					if writeInfo.Err != nil {
++						t.WriteErr = writeInfo.Err.Error()
++					}
++				})
++			},
++			GotFirstResponseByte: func() {
++				setAttemptTiming(func(t *common.RelayTimingInfo) {
++					t.FirstByte = time.Now()
++				})
++			},
++		}))
++	}
+ 	resp, err := client.Do(req)
++	var attempt common.RelayTimingInfo
++	hasAttemptTiming := false
++	if common2.RelayTimingLogEnabled && info != nil {
++		doReturn := time.Now()
++		if attemptTiming != nil {
++			attemptTimingMu.Lock()
++			attemptTiming.DoReturn = doReturn
++			if resp != nil {
++				attemptTiming.UpstreamStatus = resp.StatusCode
++			}
++			attempt = *attemptTiming
++			hasAttemptTiming = true
++			attemptTimingMu.Unlock()
++			info.Timing.SetAttempt(attempt)
++		} else {
++			info.Timing.DoReturn = doReturn
++		}
++		if resp != nil {
++			info.Timing.UpstreamStatus = resp.StatusCode
++		}
++	}
+ 	if err != nil {
++		if hasAttemptTiming {
++			logRelayFailedAttemptTiming(c, info, attempt, err)
++		}
+ 		if isResponseHeaderTimeout(err) {
+ 			logger.LogError(c, "do request failed: response header timeout: "+err.Error())
+ 			return nil, types.NewError(
+@@ -547,6 +638,53 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+ 	return resp, nil
+ }
+ 
++func relayAttemptTimingSince(start, value time.Time) string {
++	if start.IsZero() || value.IsZero() {
++		return "-"
++	}
++	return fmt.Sprintf("%dms", value.Sub(start).Milliseconds())
++}
++
++func relayAttemptTimingDuration(start, end time.Time) string {
++	if start.IsZero() || end.IsZero() {
++		return "-"
++	}
++	return fmt.Sprintf("%dms", end.Sub(start).Milliseconds())
++}
++
++func logRelayFailedAttemptTiming(c *gin.Context, info *common.RelayInfo, attempt common.RelayTimingInfo, err error) {
++	if !common2.RelayTimingLogEnabled || info == nil || err == nil {
++		return
++	}
++	idle := "-"
++	if attempt.WasIdleConn {
++		idle = fmt.Sprintf("%dms", attempt.IdleTime.Milliseconds())
++	}
++	writeErr := common2.MaskSensitiveInfo(attempt.WriteErr)
++	errText := common2.MaskSensitiveInfo(err.Error())
++	logger.LogInfo(c, fmt.Sprintf(
++		"relay failed attempt timing: channel=%d model=%s stream=%t upstream_status=%d reused=%t was_idle=%t idle=%s write_err=%q error=%q since_attempt{got_conn=%s wrote_req=%s first_byte=%s do_return=%s} duration{dns=%s connect=%s tls=%s write_to_first_byte=%s do_total=%s}",
++		info.ChannelId,
++		info.OriginModelName,
++		info.IsStream,
++		attempt.UpstreamStatus,
++		attempt.ReusedConn,
++		attempt.WasIdleConn,
++		idle,
++		writeErr,
++		errText,
++		relayAttemptTimingSince(attempt.DoStart, attempt.GotConn),
++		relayAttemptTimingSince(attempt.DoStart, attempt.WroteRequest),
++		relayAttemptTimingSince(attempt.DoStart, attempt.FirstByte),
++		relayAttemptTimingSince(attempt.DoStart, attempt.DoReturn),
++		relayAttemptTimingDuration(attempt.DNSStart, attempt.DNSDone),
++		relayAttemptTimingDuration(attempt.ConnectStart, attempt.ConnectDone),
++		relayAttemptTimingDuration(attempt.TLSStart, attempt.TLSDone),
++		relayAttemptTimingDuration(attempt.WroteRequest, attempt.FirstByte),
++		relayAttemptTimingDuration(attempt.DoStart, attempt.DoReturn),
++	))
++}
++
+ func isResponseHeaderTimeout(err error) bool {
+ 	if err == nil {
+ 		return false
+diff --git a/relay/common/relay_info.go b/relay/common/relay_info.go
+index 2f7afd39..d235a7a1 100644
+--- a/relay/common/relay_info.go
++++ b/relay/common/relay_info.go
+@@ -85,6 +85,79 @@ type TokenCountMeta struct {
+ 	estimatePromptTokens int
+ }
+ 
++type RelayTimingInfo struct {
++	RequestReceivedAt time.Time
++	DistributeStart   time.Time
++	ModelRequestDone  time.Time
++	ChannelSelected   time.Time
++	RelayEnter        time.Time
++	RequestValidated  time.Time
++	RelayInfoReady    time.Time
++	TokenMetaReady    time.Time
++	SensitiveChecked  time.Time
++	TokensEstimated   time.Time
++	PriceReady        time.Time
++	BillingReady      time.Time
++	DoStart           time.Time
++	DNSStart          time.Time
++	DNSDone           time.Time
++	ConnectStart      time.Time
++	ConnectDone       time.Time
++	TLSStart          time.Time
++	TLSDone           time.Time
++	GotConn           time.Time
++	WroteRequest      time.Time
++	FirstByte         time.Time
++	DoReturn          time.Time
++	FirstData         time.Time
++	StreamEnd         time.Time
++	QuotaLogStart     time.Time
++	ReusedConn        bool
++	WasIdleConn       bool
++	IdleTime          time.Duration
++	WriteErr          string
++	UpstreamStatus    int
++}
++
++func (t *RelayTimingInfo) ResetAttempt() {
++	t.DoStart = time.Time{}
++	t.DNSStart = time.Time{}
++	t.DNSDone = time.Time{}
++	t.ConnectStart = time.Time{}
++	t.ConnectDone = time.Time{}
++	t.TLSStart = time.Time{}
++	t.TLSDone = time.Time{}
++	t.GotConn = time.Time{}
++	t.WroteRequest = time.Time{}
++	t.FirstByte = time.Time{}
++	t.DoReturn = time.Time{}
++	t.ReusedConn = false
++	t.WasIdleConn = false
++	t.IdleTime = 0
++	t.WriteErr = ""
++	t.UpstreamStatus = 0
++}
++
++func (t *RelayTimingInfo) SetAttempt(attempt RelayTimingInfo) {
++	t.ResetAttempt()
++	t.DoStart = attempt.DoStart
++	t.DNSStart = attempt.DNSStart
++	t.DNSDone = attempt.DNSDone
++	t.ConnectStart = attempt.ConnectStart
++	t.ConnectDone = attempt.ConnectDone
++	t.TLSStart = attempt.TLSStart
++	t.TLSDone = attempt.TLSDone
++	t.GotConn = attempt.GotConn
++	t.WroteRequest = attempt.WroteRequest
++	t.FirstByte = attempt.FirstByte
++	t.DoReturn = attempt.DoReturn
++	t.ReusedConn = attempt.ReusedConn
++	t.WasIdleConn = attempt.WasIdleConn
++	t.IdleTime = attempt.IdleTime
++	t.WriteErr = attempt.WriteErr
++	t.UpstreamStatus = attempt.UpstreamStatus
++}
++
+ type RelayInfo struct {
+ 	TokenId           int
+ 	TokenKey          string
+@@ -169,6 +242,7 @@ type RelayInfo struct {
+ 	BillingRequestInput   *billingexpr.RequestInput
+ 
+ 	Request dto.Request
++	Timing  RelayTimingInfo
+ 
+ 	// RequestConversionChain records request format conversions in order, e.g.
+ 	// ["openai", "openai_responses"] or ["openai", "claude"].
+@@ -656,8 +730,12 @@ func (info *RelayInfo) GetEstimatePromptTokens() int {
+ }
+ 
+ func (info *RelayInfo) SetFirstResponseTime() {
++	info.SetFirstResponseTimeAt(time.Now())
++}
++
++func (info *RelayInfo) SetFirstResponseTimeAt(t time.Time) {
+ 	if info.isFirstResponse {
+-		info.FirstResponseTime = time.Now()
++		info.FirstResponseTime = t
+ 		info.isFirstResponse = false
+ 	}
+ }
+diff --git a/relay/helper/stream_scanner.go b/relay/helper/stream_scanner.go
+index 46b99a49..d1712167 100644
+--- a/relay/helper/stream_scanner.go
++++ b/relay/helper/stream_scanner.go
+@@ -27,6 +27,45 @@ const (
+ 	DefaultPingInterval         = 10 * time.Second
+ )
+ 
++func streamProbeKind(line string) string {
++	switch {
++	case line == "":
++		return "empty"
++	case strings.HasPrefix(line, "event:"):
++		return "event"
++	case strings.HasPrefix(line, "data:"):
++		return "data"
++	default:
++		return "other"
++	}
++}
++
++func logStreamProbe(c *gin.Context, info *relaycommon.RelayInfo, index int, line string, receivedAt time.Time) {
++	if common.RelayTimingLogStreamProbeCount <= 0 || info == nil {
++		return
++	}
++	start := info.Timing.DoStart
++	if start.IsZero() {
++		start = info.StartTime
++	}
++	sinceStart := "-"
++	if !start.IsZero() {
++		sinceStart = fmt.Sprintf("%dms", receivedAt.Sub(start).Milliseconds())
++	}
++	sinceFirstByte := "-"
++	if !info.Timing.FirstByte.IsZero() {
++		sinceFirstByte = fmt.Sprintf("%dms", receivedAt.Sub(info.Timing.FirstByte).Milliseconds())
++	}
++	logger.LogInfo(c, fmt.Sprintf(
++		"stream probe: index=%d since_start=%s since_first_byte=%s kind=%s len=%d",
++		index,
++		sinceStart,
++		sinceFirstByte,
++		streamProbeKind(line),
++		len(line),
++	))
++}
++
+ func getScannerBufferSize() int {
+ 	if constant.StreamScannerMaxBufferMB > 0 {
+ 		return constant.StreamScannerMaxBufferMB << 20
+@@ -36,7 +75,10 @@ func getScannerBufferSize() int {
+ 
+ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo, dataHandler func(data string, sr *StreamResult)) {
+ 
+-	if resp == nil || dataHandler == nil {
++	if resp == nil || dataHandler == nil || info == nil {
++		if resp != nil && resp.Body != nil {
++			resp.Body.Close()
++		}
+ 		return
+ 	}
+ 
+@@ -210,7 +252,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+ 			logger.LogDebug(c, "scanner goroutine exited")
+ 		}()
+ 
++		probeIndex := 0
+ 		for scanner.Scan() {
++			var receivedAt time.Time
+ 			// 检查是否需要停止
+ 			select {
+ 			case <-stopChan:
+@@ -225,6 +269,15 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+ 
+ 			ticker.Reset(streamingTimeout)
+ 			data := scanner.Text()
++			shouldLogProbe := common.RelayTimingLogStreamProbeCount > 0 && probeIndex < common.RelayTimingLogStreamProbeCount
++			shouldCaptureFirstData := common.RelayTimingLogEnabled && info.Timing.FirstData.IsZero()
++			if shouldLogProbe || shouldCaptureFirstData {
++				receivedAt = time.Now()
++			}
++			if shouldLogProbe {
++				probeIndex++
++				logStreamProbe(c, info, probeIndex, data, receivedAt)
++			}
+ 			logger.LogDebug(c, "stream scanner data: %s", data)
+ 
+ 			if len(data) < 6 {
+@@ -239,7 +292,14 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+ 				continue
+ 			}
+ 			if !strings.HasPrefix(data, "[DONE]") {
+-				info.SetFirstResponseTime()
++				if shouldCaptureFirstData {
++					info.Timing.FirstData = receivedAt
++				}
++				if receivedAt.IsZero() {
++					info.SetFirstResponseTime()
++				} else {
++					info.SetFirstResponseTimeAt(receivedAt)
++				}
+ 				info.ReceivedResponseCount++
+ 
+ 				select {
+@@ -252,6 +312,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+ 			} else {
+ 				info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
+ 				logger.LogDebug(c, "received [DONE], stopping scanner")
++				if common.RelayTimingLogEnabled {
++					info.Timing.StreamEnd = time.Now()
++				}
+ 				return
+ 			}
+ 		}
+@@ -280,4 +343,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+ 	} else {
+ 		logger.LogError(c, fmt.Sprintf("stream ended: %s, received=%d", info.StreamStatus.Summary(), info.ReceivedResponseCount))
+ 	}
++	if common.RelayTimingLogEnabled && info != nil && info.Timing.StreamEnd.IsZero() {
++		info.Timing.StreamEnd = time.Now()
++	}
+ }
+diff --git a/service/text_quota.go b/service/text_quota.go
+index 3f344dc3..562c5af4 100644
+--- a/service/text_quota.go
++++ b/service/text_quota.go
+@@ -319,6 +319,78 @@ func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage)
+ 	return "openai"
+ }
+ 
++func relayTimingSince(start, value time.Time) string {
++	if start.IsZero() || value.IsZero() {
++		return "-"
++	}
++	return fmt.Sprintf("%dms", value.Sub(start).Milliseconds())
++}
++
++func relayTimingDuration(start, end time.Time) string {
++	if start.IsZero() || end.IsZero() {
++		return "-"
++	}
++	return fmt.Sprintf("%dms", end.Sub(start).Milliseconds())
++}
++
++func logRelayTiming(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) {
++	if !common.RelayTimingLogEnabled || relayInfo == nil {
++		return
++	}
++	t := relayInfo.Timing
++	start := t.RequestReceivedAt
++	if start.IsZero() {
++		start = t.RelayEnter
++	}
++	if start.IsZero() {
++		start = relayInfo.StartTime
++	}
++	streamEnd := time.Time{}
++	if relayInfo.IsStream {
++		streamEnd = t.StreamEnd
++	}
++	if relayInfo.IsStream && streamEnd.IsZero() {
++		streamEnd = t.QuotaLogStart
++	}
++	quotaLog := t.QuotaLogStart
++	if quotaLog.IsZero() {
++		quotaLog = time.Now()
++	}
++	idle := "-"
++	if t.WasIdleConn {
++		idle = fmt.Sprintf("%dms", t.IdleTime.Milliseconds())
++	}
++	logger.LogInfo(ctx, fmt.Sprintf(
++		"relay timing: channel=%d model=%s stream=%t upstream_status=%d reused=%t was_idle=%t idle=%s write_err=%q since_start{do_start=%s got_conn=%s wrote_req=%s first_byte=%s do_return=%s first_data=%s stream_end=%s quota_log=%s} duration{pre_do=%s dns=%s connect=%s tls=%s write_to_first_byte=%s do_total=%s do_return_to_first_data=%s first_byte_to_first_data=%s first_data_to_stream_end=%s total=%s}",
++		relayInfo.ChannelId,
++		relayInfo.OriginModelName,
++		relayInfo.IsStream,
++		t.UpstreamStatus,
++		t.ReusedConn,
++		t.WasIdleConn,
++		idle,
++		t.WriteErr,
++		relayTimingSince(start, t.DoStart),
++		relayTimingSince(start, t.GotConn),
++		relayTimingSince(start, t.WroteRequest),
++		relayTimingSince(start, t.FirstByte),
++		relayTimingSince(start, t.DoReturn),
++		relayTimingSince(start, t.FirstData),
++		relayTimingSince(start, streamEnd),
++		relayTimingSince(start, quotaLog),
++		relayTimingDuration(start, t.DoStart),
++		relayTimingDuration(t.DNSStart, t.DNSDone),
++		relayTimingDuration(t.ConnectStart, t.ConnectDone),
++		relayTimingDuration(t.TLSStart, t.TLSDone),
++		relayTimingDuration(t.WroteRequest, t.FirstByte),
++		relayTimingDuration(t.DoStart, t.DoReturn),
++		relayTimingDuration(t.DoReturn, t.FirstData),
++		relayTimingDuration(t.FirstByte, t.FirstData),
++		relayTimingDuration(t.FirstData, streamEnd),
++		relayTimingDuration(start, quotaLog),
++	))
++}
++
+ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []string) {
+ 	originUsage := usage
+ 	if usage == nil {
+@@ -458,6 +530,10 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
+ 	if tieredBillingApplied {
+ 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
+ 	}
++	if common.RelayTimingLogEnabled {
++		relayInfo.Timing.QuotaLogStart = time.Now()
++		logRelayTiming(ctx, relayInfo)
++	}
+ 
+ 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
+ 		ChannelId:        relayInfo.ChannelId,
