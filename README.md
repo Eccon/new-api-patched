@@ -93,6 +93,7 @@ No Docker image is built.
 - `0008-responses-terminal-error-and-cleanup.patch`
   - Closes upstream response bodies before waiting for scanner goroutines to exit.
   - Emits a Responses-style synthetic `event: error` SSE event only when a stream ends without any terminal event.
+  - Records stream inactivity timeout as `stream_inactivity_timeout` instead of the generic `timeout`.
   - Leaves `response.completed` streams without `[DONE]` unchanged.
 
 - `0009-response-header-timeout-log-reason.patch`

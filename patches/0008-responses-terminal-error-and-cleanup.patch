@@ -45,6 +45,31 @@ index 08811a7..deb587c 100644
 +		logger.LogError(c, "failed to send responses error event: "+err.Error())
 +	}
 +}
+diff --git a/relay/common/stream_status.go b/relay/common/stream_status.go
+index 7e1caaa..8afdd04 100644
+--- a/relay/common/stream_status.go
++++ b/relay/common/stream_status.go
+@@ -12,7 +12,7 @@ type StreamEndReason string
+ const (
+ 	StreamEndReasonNone        StreamEndReason = ""
+ 	StreamEndReasonDone        StreamEndReason = "done"
+-	StreamEndReasonTimeout     StreamEndReason = "timeout"
++	StreamEndReasonTimeout     StreamEndReason = "stream_inactivity_timeout"
+ 	StreamEndReasonClientGone  StreamEndReason = "client_gone"
+ 	StreamEndReasonScannerErr  StreamEndReason = "scanner_error"
+ 	StreamEndReasonHandlerStop StreamEndReason = "handler_stop"
+diff --git a/relay/common/stream_status_test.go b/relay/common/stream_status_test.go
+index 6fc755a..3bf877e 100644
+--- a/relay/common/stream_status_test.go
++++ b/relay/common/stream_status_test.go
+@@ -171,7 +171,7 @@ func TestStreamStatus_Summary(t *testing.T) {
+ 	s2.RecordError("bad json")
+ 	s2.RecordError("write failed")
+ 	summary2 := s2.Summary()
+-	assert.Contains(t, summary2, "reason=timeout")
++	assert.Contains(t, summary2, "reason=stream_inactivity_timeout")
+ 	assert.Contains(t, summary2, "soft_errors=2")
+ }
 diff --git a/relay/channel/openai/relay_responses.go b/relay/channel/openai/relay_responses.go
 index 2665b8d..5dc65a0 100644
 --- a/relay/channel/openai/relay_responses.go
