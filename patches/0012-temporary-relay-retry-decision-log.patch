@@ -1,0 +1,126 @@
+diff --git a/controller/relay.go b/controller/relay.go
+index ba610aa..0bec7c2 100644
+--- a/controller/relay.go
++++ b/controller/relay.go
+@@ -481,38 +481,77 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
+ }
+ 
+ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) bool {
++	logRetryDecision := func(allowed bool, reason string) {
++		statusCode := 0
++		errorCode := types.ErrorCode("")
++		useChannel := []string(nil)
++		if openaiErr != nil {
++			statusCode = openaiErr.StatusCode
++			errorCode = openaiErr.GetErrorCode()
++		}
++		if c != nil {
++			useChannel = c.GetStringSlice("use_channel")
++		}
++		logger.LogInfo(c, fmt.Sprintf(
++			"relay retry decision: allowed=%t reason=%s status_code=%d error_code=%s retry_left=%d use_channel=%v %s",
++			allowed,
++			reason,
++			statusCode,
++			errorCode,
++			retryTimes,
++			useChannel,
++			service.ChannelAffinityRetryDebugString(c),
++		))
++	}
++
+ 	if openaiErr == nil {
++		logRetryDecision(false, "nil_error")
+ 		return false
+ 	}
+ 	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
++		logRetryDecision(false, "client_disconnected")
+ 		return false
+ 	}
+ 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
++		logRetryDecision(false, "affinity_skip_retry")
+ 		return false
+ 	}
+ 	if types.IsChannelError(openaiErr) {
++		logRetryDecision(true, "channel_error")
+ 		return true
+ 	}
+ 	if types.IsSkipRetryError(openaiErr) {
++		logRetryDecision(false, "skip_retry_error")
+ 		return false
+ 	}
+ 	if retryTimes <= 0 {
++		logRetryDecision(false, "retry_times_exhausted")
+ 		return false
+ 	}
+ 	if _, ok := c.Get("specific_channel_id"); ok {
++		logRetryDecision(false, "specific_channel")
+ 		return false
+ 	}
+ 	code := openaiErr.StatusCode
+ 	if code >= 200 && code < 300 {
++		logRetryDecision(false, "success_status")
+ 		return false
+ 	}
+ 	if code < 100 || code > 599 {
++		logRetryDecision(true, "invalid_status_retry")
+ 		return true
+ 	}
+ 	if operation_setting.IsAlwaysSkipRetryCode(openaiErr.GetErrorCode()) {
++		logRetryDecision(false, "always_skip_error_code")
+ 		return false
+ 	}
+-	return operation_setting.ShouldRetryByStatusCode(code)
++	shouldRetryStatus := operation_setting.ShouldRetryByStatusCode(code)
++	if shouldRetryStatus {
++		logRetryDecision(true, "status_code_retry")
++	} else {
++		logRetryDecision(false, "status_code_not_retryable")
++	}
++	return shouldRetryStatus
+ }
+ 
+ func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {
+diff --git a/service/channel_affinity.go b/service/channel_affinity.go
+index f16c350..0f6c397 100644
+--- a/service/channel_affinity.go
++++ b/service/channel_affinity.go
+@@ -641,6 +641,38 @@ func ShouldSkipRetryAfterChannelAffinityFailure(c *gin.Context) bool {
+ 	return meta.SkipRetry
+ }
+ 
++func ChannelAffinityRetryDebugString(c *gin.Context) string {
++	if c == nil {
++		return "affinity=none"
++	}
++
++	parts := make([]string, 0, 6)
++	if v, ok := c.Get(ginKeyChannelAffinitySkipRetry); ok {
++		if b, ok := v.(bool); ok {
++			parts = append(parts, fmt.Sprintf("affinity_context_skip=%t", b))
++		} else {
++			parts = append(parts, "affinity_context_skip=invalid")
++		}
++	} else {
++		parts = append(parts, "affinity_context_skip=unset")
++	}
++
++	meta, ok := getChannelAffinityMeta(c)
++	if !ok {
++		parts = append(parts, "affinity_meta=none")
++		return strings.Join(parts, " ")
++	}
++
++	parts = append(parts,
++		fmt.Sprintf("affinity_rule=%q", meta.RuleName),
++		fmt.Sprintf("affinity_meta_skip=%t", meta.SkipRetry),
++		fmt.Sprintf("affinity_group=%q", meta.UsingGroup),
++		fmt.Sprintf("affinity_model=%q", meta.ModelName),
++		fmt.Sprintf("affinity_key_fp=%q", meta.KeyFingerprint),
++	)
++	return strings.Join(parts, " ")
++}
++
+ func MarkChannelAffinityUsed(c *gin.Context, selectedGroup string, channelID int) {
+ 	if c == nil || channelID <= 0 {
+ 		return
