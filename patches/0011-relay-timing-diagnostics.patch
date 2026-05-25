@@ -1,9 +1,8 @@
 diff --git a/common/constants.go b/common/constants.go
-index d8583fd7..fa59b819 100644
+index 7f94ff0..dc22219 100644
 --- a/common/constants.go
 +++ b/common/constants.go
-@@ -174,7 +174,9 @@ var UpstreamUserAgentGemini = ""
- 
+@@ -175,6 +175,8 @@ var UpstreamUserAgentGemini = ""
  var RelayTimeout int               // unit is second
  var RelayResponseHeaderTimeout int // unit is second
  var RelayNonStreamTimeout int      // unit is second
@@ -12,12 +11,133 @@ index d8583fd7..fa59b819 100644
  
  var RelayMaxIdleConns int
  var RelayMaxIdleConnsPerHost int
+diff --git a/common/gin.go b/common/gin.go
+index 315e866..bc6979d 100644
+--- a/common/gin.go
++++ b/common/gin.go
+@@ -22,6 +22,46 @@ const KeyBodyStorage = "key_body_storage"
+ 
+ var ErrRequestBodyTooLarge = errors.New("request body too large")
+ 
++func setRelayTimingTimeOnce(c *gin.Context, key string) {
++	if !RelayTimingLogEnabled || c == nil {
++		return
++	}
++	if _, exists := c.Get(key); !exists {
++		c.Set(key, time.Now())
++	}
++}
++
++func setRelayTimingInt64Once(c *gin.Context, key string, value int64) {
++	if !RelayTimingLogEnabled || c == nil {
++		return
++	}
++	if _, exists := c.Get(key); !exists {
++		c.Set(key, value)
++	}
++}
++
++func setRelayTimingStringOnce(c *gin.Context, key string, value string) {
++	if !RelayTimingLogEnabled || c == nil {
++		return
++	}
++	if _, exists := c.Get(key); !exists {
++		c.Set(key, value)
++	}
++}
++
++func setRelayTimingBodyStorageReady(c *gin.Context, storage BodyStorage) {
++	if !RelayTimingLogEnabled || c == nil || storage == nil {
++		return
++	}
++	setRelayTimingTimeOnce(c, "relay_timing_body_storage_ready_at")
++	setRelayTimingInt64Once(c, "relay_timing_body_size_bytes", storage.Size())
++	if storage.IsDisk() {
++		setRelayTimingStringOnce(c, "relay_timing_body_storage_type", "disk")
++	} else {
++		setRelayTimingStringOnce(c, "relay_timing_body_storage_type", "memory")
++	}
++}
++
+ func IsRequestBodyTooLargeError(err error) bool {
+ 	if err == nil {
+ 		return false
+@@ -37,9 +77,11 @@ func GetRequestBody(c *gin.Context) (io.Seeker, error) {
+ 	// 首先检查是否有 BodyStorage 缓存
+ 	if storage, exists := c.Get(KeyBodyStorage); exists && storage != nil {
+ 		if bs, ok := storage.(BodyStorage); ok {
++			setRelayTimingTimeOnce(c, "relay_timing_body_storage_start_at")
+ 			if _, err := bs.Seek(0, io.SeekStart); err != nil {
+ 				return nil, fmt.Errorf("failed to seek body storage: %w", err)
+ 			}
++			setRelayTimingBodyStorageReady(c, bs)
+ 			return bs, nil
+ 		}
+ 	}
+@@ -53,6 +95,8 @@ func GetRequestBody(c *gin.Context) (io.Seeker, error) {
+ 				return nil, err
+ 			}
+ 			c.Set(KeyBodyStorage, bs)
++			setRelayTimingTimeOnce(c, "relay_timing_body_storage_start_at")
++			setRelayTimingBodyStorageReady(c, bs)
+ 			return bs, nil
+ 		}
+ 	}
+@@ -66,6 +110,7 @@ func GetRequestBody(c *gin.Context) (io.Seeker, error) {
+ 	contentLength := c.Request.ContentLength
+ 
+ 	// 使用新的存储系统
++	setRelayTimingTimeOnce(c, "relay_timing_body_storage_start_at")
+ 	storage, err := CreateBodyStorageFromReader(c.Request.Body, contentLength, maxBytes)
+ 	_ = c.Request.Body.Close()
+ 
+@@ -78,6 +123,7 @@ func GetRequestBody(c *gin.Context) (io.Seeker, error) {
+ 
+ 	// 缓存存储对象
+ 	c.Set(KeyBodyStorage, storage)
++	setRelayTimingBodyStorageReady(c, storage)
+ 
+ 	return storage, nil
+ }
+@@ -122,9 +168,11 @@ func UnmarshalBodyReusable(c *gin.Context, v any) error {
+ 		if err := DecodeJson(storage, v); err != nil {
+ 			return err
+ 		}
++		setRelayTimingTimeOnce(c, "relay_timing_body_decode_done_at")
+ 		if _, seekErr := storage.Seek(0, io.SeekStart); seekErr != nil {
+ 			return seekErr
+ 		}
++		setRelayTimingTimeOnce(c, "relay_timing_body_reset_done_at")
+ 		c.Request.Body = io.NopCloser(storage)
+ 		return nil
+ 	}
+@@ -133,6 +181,8 @@ func UnmarshalBodyReusable(c *gin.Context, v any) error {
+ 	if err != nil {
+ 		return err
+ 	}
++	setRelayTimingTimeOnce(c, "relay_timing_body_bytes_ready_at")
++	setRelayTimingInt64Once(c, "relay_timing_body_size_bytes", int64(len(requestBody)))
+ 	if strings.HasPrefix(contentType, "application/json") {
+ 		err = Unmarshal(requestBody, v)
+ 	} else if strings.Contains(contentType, gin.MIMEPOSTForm) {
+@@ -146,10 +196,12 @@ func UnmarshalBodyReusable(c *gin.Context, v any) error {
+ 	if err != nil {
+ 		return err
+ 	}
++	setRelayTimingTimeOnce(c, "relay_timing_body_decode_done_at")
+ 	// Reset request body
+ 	if _, seekErr := storage.Seek(0, io.SeekStart); seekErr != nil {
+ 		return seekErr
+ 	}
++	setRelayTimingTimeOnce(c, "relay_timing_body_reset_done_at")
+ 	c.Request.Body = io.NopCloser(storage)
+ 	return nil
+ }
 diff --git a/common/init.go b/common/init.go
-index 8a2d45c2..0adf19f1 100644
+index a110979..2bad871 100644
 --- a/common/init.go
 +++ b/common/init.go
-@@ -103,7 +103,9 @@ func InitEnv() {
- 	BatchUpdateInterval = GetEnvOrDefault("BATCH_UPDATE_INTERVAL", 5)
+@@ -104,6 +104,8 @@ func InitEnv() {
  	RelayTimeout = GetEnvOrDefault("RELAY_TIMEOUT", 0)
  	RelayResponseHeaderTimeout = GetEnvOrDefault("RELAY_RESPONSE_HEADER_TIMEOUT", 0)
  	RelayNonStreamTimeout = GetEnvOrDefault("RELAY_NON_STREAM_TIMEOUT", -1)
@@ -56,10 +176,10 @@ index 6e5b362..9e70d21 100644
  	os.Exit(1)
  }
 diff --git a/controller/relay.go b/controller/relay.go
-index d8b30f2..508f6d0 100644
+index d8b30f2..ba610aa 100644
 --- a/controller/relay.go
 +++ b/controller/relay.go
-@@ -65,7 +65,104 @@ func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewA
+@@ -65,7 +65,130 @@ func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewA
  	return err
  }
  
@@ -87,6 +207,15 @@ index d8b30f2..508f6d0 100644
 +		return "-"
 +	}
 +	return fmt.Sprintf("%dms", end.Sub(start).Milliseconds())
++}
++
++func relayTimingFirstSet(values ...time.Time) time.Time {
++	for _, value := range values {
++		if !value.IsZero() {
++			return value
++		}
++	}
++	return time.Time{}
 +}
 +
 +func relayPreflightEnd(t relaycommon.RelayTimingInfo) time.Time {
@@ -124,12 +253,21 @@ index d8b30f2..508f6d0 100644
 +		start = t.RelayEnter
 +	}
 +	end := relayPreflightEnd(t)
++	bodyStorageType := t.BodyStorageType
++	if bodyStorageType == "" {
++		bodyStorageType = "-"
++	}
 +	logger.LogInfo(c, fmt.Sprintf(
-+		"relay preflight timing: format=%s channel=%d model=%s since_received{distribute_start=%s model_request=%s channel_selected=%s relay_enter=%s request_validated=%s relay_info=%s token_meta=%s sensitive_check=%s tokens=%s price=%s billing=%s} duration{before_distribute=%s distribute_total=%s model_request=%s channel_select=%s setup_to_relay=%s request_validate=%s relay_info=%s token_meta=%s sensitive_check=%s token_estimate=%s price=%s billing=%s preflight_total=%s}",
++		"relay preflight timing: format=%s channel=%d model=%s since_received{distribute_start=%s body_storage_start=%s body_storage=%s body_bytes=%s body_decode=%s body_reset=%s model_request=%s channel_selected=%s relay_enter=%s request_validated=%s relay_info=%s token_meta=%s sensitive_check=%s tokens=%s price=%s billing=%s} duration{before_distribute=%s model_prep=%s body_storage=%s body_bytes=%s body_decode=%s body_reset=%s model_extra=%s distribute_total=%s model_request=%s channel_select=%s setup_to_relay=%s request_validate=%s relay_info=%s token_meta=%s sensitive_check=%s token_estimate=%s price=%s billing=%s preflight_total=%s} body{size=%d storage=%s}",
 +		relayFormat,
 +		common.GetContextKeyInt(c, constant.ContextKeyChannelId),
 +		relayInfo.OriginModelName,
 +		relayTimingSince(start, t.DistributeStart),
++		relayTimingSince(start, t.BodyStorageStart),
++		relayTimingSince(start, t.BodyStorageReady),
++		relayTimingSince(start, t.BodyBytesReady),
++		relayTimingSince(start, t.BodyDecodeDone),
++		relayTimingSince(start, t.BodyResetDone),
 +		relayTimingSince(start, t.ModelRequestDone),
 +		relayTimingSince(start, t.ChannelSelected),
 +		relayTimingSince(start, t.RelayEnter),
@@ -141,6 +279,12 @@ index d8b30f2..508f6d0 100644
 +		relayTimingSince(start, t.PriceReady),
 +		relayTimingSince(start, t.BillingReady),
 +		relayTimingDuration(start, t.DistributeStart),
++		relayTimingDuration(t.DistributeStart, t.BodyStorageStart),
++		relayTimingDuration(t.BodyStorageStart, t.BodyStorageReady),
++		relayTimingDuration(t.BodyStorageReady, t.BodyBytesReady),
++		relayTimingDuration(relayTimingFirstSet(t.BodyBytesReady, t.BodyStorageReady), t.BodyDecodeDone),
++		relayTimingDuration(t.BodyDecodeDone, t.BodyResetDone),
++		relayTimingDuration(t.BodyResetDone, t.ModelRequestDone),
 +		relayTimingDuration(t.DistributeStart, t.ChannelSelected),
 +		relayTimingDuration(t.DistributeStart, t.ModelRequestDone),
 +		relayTimingDuration(t.ModelRequestDone, t.ChannelSelected),
@@ -153,6 +297,8 @@ index d8b30f2..508f6d0 100644
 +		relayTimingDuration(t.TokensEstimated, t.PriceReady),
 +		relayTimingDuration(t.PriceReady, t.BillingReady),
 +		relayTimingDuration(start, end),
++		t.BodySizeBytes,
++		bodyStorageType,
 +	))
 +}
 +
@@ -164,7 +310,7 @@ index d8b30f2..508f6d0 100644
  
  	requestId := c.GetString(common.RequestIdKey)
  	//group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
-@@ -107,6 +204,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+@@ -107,6 +230,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
  	}()
  
  	request, err := helper.GetAndValidateRequest(c, relayFormat)
@@ -175,23 +321,30 @@ index d8b30f2..508f6d0 100644
  	if err != nil {
  		// Map "request body too large" to 413 so clients can handle it correctly
  		if common.IsRequestBodyTooLargeError(err) || errors.Is(err, common.ErrRequestBodyTooLarge) {
-@@ -122,6 +223,15 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+@@ -122,6 +249,22 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
  		newAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
  		return
  	}
 +	if common.RelayTimingLogEnabled {
 +		relayInfo.Timing.RequestReceivedAt = getGinContextTime(c, "relay_timing_request_received_at")
 +		relayInfo.Timing.DistributeStart = getGinContextTime(c, "relay_timing_distribute_start_at")
++		relayInfo.Timing.BodyStorageStart = getGinContextTime(c, "relay_timing_body_storage_start_at")
++		relayInfo.Timing.BodyStorageReady = getGinContextTime(c, "relay_timing_body_storage_ready_at")
++		relayInfo.Timing.BodyBytesReady = getGinContextTime(c, "relay_timing_body_bytes_ready_at")
++		relayInfo.Timing.BodyDecodeDone = getGinContextTime(c, "relay_timing_body_decode_done_at")
++		relayInfo.Timing.BodyResetDone = getGinContextTime(c, "relay_timing_body_reset_done_at")
 +		relayInfo.Timing.ModelRequestDone = getGinContextTime(c, "relay_timing_model_request_done_at")
 +		relayInfo.Timing.ChannelSelected = getGinContextTime(c, "relay_timing_channel_selected_at")
 +		relayInfo.Timing.RelayEnter = relayEnter
 +		relayInfo.Timing.RequestValidated = requestValidated
 +		relayInfo.Timing.RelayInfoReady = time.Now()
++		relayInfo.Timing.BodySizeBytes = c.GetInt64("relay_timing_body_size_bytes")
++		relayInfo.Timing.BodyStorageType = c.GetString("relay_timing_body_storage_type")
 +	}
  
  	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
  	needCountToken := constant.CountToken
-@@ -132,6 +242,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+@@ -132,6 +275,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
  	} else {
  		meta = fastTokenCountMetaForPricing(request)
  	}
@@ -201,7 +354,7 @@ index d8b30f2..508f6d0 100644
  
  	if needSensitiveCheck && meta != nil {
  		contains, words := service.CheckSensitiveText(meta.CombineText)
-@@ -141,6 +254,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+@@ -141,6 +287,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
  			return
  		}
  	}
@@ -211,7 +364,7 @@ index d8b30f2..508f6d0 100644
  
  	tokens, err := service.EstimateRequestToken(c, meta, relayInfo)
  	if err != nil {
-@@ -149,12 +265,18 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+@@ -149,12 +298,18 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
  	}
  
  	relayInfo.SetEstimatePromptTokens(tokens)
@@ -230,7 +383,7 @@ index d8b30f2..508f6d0 100644
  
  	// common.SetContextKey(c, constant.ContextKeyTokenCountMeta, meta)
  
-@@ -166,6 +288,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+@@ -166,6 +321,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
  			return
  		}
  	}
@@ -255,7 +408,7 @@ index 867d883..39e12fc 100644
  	logCount++ // we don't need accurate count, so no lock here
  	if logCount > maxLogCount && !setupLogWorking {
 diff --git a/middleware/distributor.go b/middleware/distributor.go
-index 771719b..2e8e53a 100644
+index 771719b..b564072 100644
 --- a/middleware/distributor.go
 +++ b/middleware/distributor.go
 @@ -31,9 +31,15 @@ type ModelRequest struct {
@@ -284,6 +437,42 @@ index 771719b..2e8e53a 100644
  		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
  		c.Next()
  		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
+@@ -197,6 +206,14 @@ func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
+ 	if err != nil {
+ 		return nil, err
+ 	}
++	if common.RelayTimingLogEnabled {
++		if _, exists := c.Get("relay_timing_body_bytes_ready_at"); !exists {
++			c.Set("relay_timing_body_bytes_ready_at", time.Now())
++		}
++		if _, exists := c.Get("relay_timing_body_size_bytes"); !exists {
++			c.Set("relay_timing_body_size_bytes", int64(len(requestBody)))
++		}
++	}
+ 	if !gjson.ValidBytes(requestBody) {
+ 		return nil, errors.New("invalid JSON request body")
+ 	}
+@@ -210,10 +227,20 @@ func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
+ 	if err != nil {
+ 		return nil, err
+ 	}
++	if common.RelayTimingLogEnabled {
++		if _, exists := c.Get("relay_timing_body_decode_done_at"); !exists {
++			c.Set("relay_timing_body_decode_done_at", time.Now())
++		}
++	}
+ 
+ 	if _, seekErr := storage.Seek(0, io.SeekStart); seekErr != nil {
+ 		return nil, seekErr
+ 	}
++	if common.RelayTimingLogEnabled {
++		if _, exists := c.Get("relay_timing_body_reset_done_at"); !exists {
++			c.Set("relay_timing_body_reset_done_at", time.Now())
++		}
++	}
+ 	c.Request.Body = io.NopCloser(storage)
+ 
+ 	return &ModelRequest{
 diff --git a/middleware/logger.go b/middleware/logger.go
 index 151008d..7f78d74 100644
 --- a/middleware/logger.go
@@ -554,16 +743,21 @@ index 5d2a6a9..9be19e0 100644
  	if err == nil {
  		return false
 diff --git a/relay/common/relay_info.go b/relay/common/relay_info.go
-index 2f7afd3..d235a7a 100644
+index 2f7afd3..aef61b5 100644
 --- a/relay/common/relay_info.go
 +++ b/relay/common/relay_info.go
-@@ -85,6 +85,79 @@ type TokenCountMeta struct {
+@@ -85,6 +85,86 @@ type TokenCountMeta struct {
  	estimatePromptTokens int
  }
  
 +type RelayTimingInfo struct {
 +	RequestReceivedAt time.Time
 +	DistributeStart   time.Time
++	BodyStorageStart  time.Time
++	BodyStorageReady  time.Time
++	BodyBytesReady    time.Time
++	BodyDecodeDone    time.Time
++	BodyResetDone     time.Time
 +	ModelRequestDone  time.Time
 +	ChannelSelected   time.Time
 +	RelayEnter        time.Time
@@ -593,6 +787,8 @@ index 2f7afd3..d235a7a 100644
 +	IdleTime          time.Duration
 +	WriteErr          string
 +	UpstreamStatus    int
++	BodySizeBytes     int64
++	BodyStorageType   string
 +}
 +
 +func (t *RelayTimingInfo) ResetAttempt() {
@@ -637,7 +833,7 @@ index 2f7afd3..d235a7a 100644
  type RelayInfo struct {
  	TokenId           int
  	TokenKey          string
-@@ -169,6 +242,7 @@ type RelayInfo struct {
+@@ -169,6 +249,7 @@ type RelayInfo struct {
  	BillingRequestInput   *billingexpr.RequestInput
  
  	Request dto.Request
@@ -645,7 +841,7 @@ index 2f7afd3..d235a7a 100644
  
  	// RequestConversionChain records request format conversions in order, e.g.
  	// ["openai", "openai_responses"] or ["openai", "claude"].
-@@ -656,8 +730,12 @@ func (info *RelayInfo) GetEstimatePromptTokens() int {
+@@ -656,8 +737,12 @@ func (info *RelayInfo) GetEstimatePromptTokens() int {
  }
  
  func (info *RelayInfo) SetFirstResponseTime() {
