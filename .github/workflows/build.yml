@@ -20,6 +20,14 @@ on:
         required: false
         default: false
         type: boolean
+      patch_mode:
+        description: "Build with custom patches or upstream source only."
+        required: true
+        default: patched
+        type: choice
+        options:
+          - patched
+          - upstream
 
 permissions:
   contents: write
@@ -45,9 +53,16 @@ jobs:
         env:
           INPUT_UPSTREAM_TAG: ${{ github.event.inputs.upstream_tag || '' }}
           INPUT_FORCE_REBUILD: ${{ github.event_name == 'push' && 'true' || github.event.inputs.force_rebuild || 'false' }}
+          INPUT_PATCH_MODE: ${{ github.event.inputs.patch_mode || 'patched' }}
           BUILD_TARGET: ${{ matrix.build_target }}
         run: |
           set -euo pipefail
+
+          PATCH_MODE="${INPUT_PATCH_MODE}"
+          if [ "${PATCH_MODE}" != "patched" ] && [ "${PATCH_MODE}" != "upstream" ]; then
+            echo "::error::Unsupported patch mode: ${PATCH_MODE}"
+            exit 1
+          fi
 
           MODE="stable"
           if [ "${BUILD_TARGET}" = "alpha" ] || [ "${INPUT_UPSTREAM_TAG}" = "alpha" ]; then
@@ -96,13 +111,21 @@ jobs:
             RELEASE_NAME="${TAG}"
           fi
 
+          if [ "${PATCH_MODE}" = "upstream" ]; then
+            VERSION="upstream-${VERSION}"
+            RELEASE_TAG="upstream-${RELEASE_TAG}"
+            RELEASE_NAME="${VERSION}"
+          fi
+
           echo "mode=${MODE}" >> "${GITHUB_OUTPUT}"
+          echo "patch_mode=${PATCH_MODE}" >> "${GITHUB_OUTPUT}"
           echo "source_ref=${SOURCE_REF}" >> "${GITHUB_OUTPUT}"
           echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
           echo "release_tag=${RELEASE_TAG}" >> "${GITHUB_OUTPUT}"
           echo "release_name=${RELEASE_NAME}" >> "${GITHUB_OUTPUT}"
           echo "force_rebuild=${INPUT_FORCE_REBUILD}" >> "${GITHUB_OUTPUT}"
           echo "MODE=${MODE}" >> "${GITHUB_ENV}"
+          echo "PATCH_MODE=${PATCH_MODE}" >> "${GITHUB_ENV}"
           echo "SOURCE_REF=${SOURCE_REF}" >> "${GITHUB_ENV}"
           echo "VERSION=${VERSION}" >> "${GITHUB_ENV}"
           echo "RELEASE_TAG=${RELEASE_TAG}" >> "${GITHUB_ENV}"
@@ -110,6 +133,7 @@ jobs:
           echo "FORCE_REBUILD=${INPUT_FORCE_REBUILD}" >> "${GITHUB_ENV}"
           echo "Resolved upstream source: ${SOURCE_REF}"
           echo "Build version: ${VERSION}"
+          echo "Patch mode: ${PATCH_MODE}"
           echo "Release tag: ${RELEASE_TAG}"
           echo "Force rebuild: ${INPUT_FORCE_REBUILD}"
 
@@ -164,6 +188,11 @@ jobs:
         if: steps.release_check.outputs.skip != 'true'
         working-directory: source
         run: |
+          if [ "${PATCH_MODE}" = "upstream" ]; then
+            echo "Skipping custom patches; building upstream source only."
+            exit 0
+          fi
+
           for patch in ../patches/*.patch; do
             echo "Checking ${patch}"
             git apply --check "${patch}"
@@ -272,6 +301,7 @@ jobs:
           name: ${{ steps.version.outputs.release_name }}
           body: |
             Mode: ${{ steps.version.outputs.mode }}
+            Patch Mode: ${{ steps.version.outputs.patch_mode }}
             Version: ${{ steps.version.outputs.version }}
             Upstream: ${{ env.UPSTREAM_REPOSITORY }}@${{ steps.version.outputs.source_ref }}
             Builder: ${{ github.repository }}@${{ github.sha }}

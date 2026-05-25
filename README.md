@@ -6,6 +6,13 @@ tree.
 
 ## Build Modes
 
+- Patch Mode
+  - `patched` builds upstream source with all files under `patches/*.patch`
+    applied. This is the default and keeps the existing release tags.
+  - `upstream` builds the same upstream source without applying any local patch.
+    It publishes to separate `upstream-*` releases so comparison builds never
+    overwrite patched releases.
+
 - Stable
   - Manual runs can specify an upstream tag or leave it empty to use the latest
     stable upstream tag.
@@ -31,7 +38,8 @@ tree.
 
 1. Resolve the upstream source.
 2. Check out upstream source.
-3. Apply `patches/*.patch`.
+3. Apply `patches/*.patch` when patch mode is `patched`; skip this step when
+   patch mode is `upstream`.
 4. Print the patched source diff summary.
 5. Build default and classic frontend assets.
 6. Build pure-Go binaries with `CGO_ENABLED=0`:
@@ -150,7 +158,8 @@ servers.
 ## Triggers
 
 - Manual: enter an upstream tag, enter `alpha`, or leave empty for the latest
-  stable upstream tag. Enable force rebuild to update an existing Release.
+  stable upstream tag. Choose `patched` or `upstream` patch mode. Enable force
+  rebuild to update an existing Release.
 - Scheduled: runs daily at `00:00 UTC+8` (`16:00 UTC`) for stable and alpha.
 
 ## How To Run Manually
@@ -168,7 +177,28 @@ v1.0.0
 Leave the tag empty for the latest stable upstream tag, or enter `alpha` for the
 latest upstream source commit.
 
-6. Download the generated files from the GitHub Release with the same tag name.
+6. Choose the patch mode:
+
+```text
+patched
+```
+
+for normal custom builds, or:
+
+```text
+upstream
+```
+
+for an upstream-only comparison build.
+
+7. Download the generated files from the GitHub Release:
+
+```text
+alpha                      patched latest upstream source
+upstream-alpha             upstream-only latest upstream source
+vX.Y.Z                     patched stable/tag source
+upstream-vX.Y.Z            upstream-only stable/tag source
+```
 
 If upstream code changes conflict with these patches, the action fails at
 `git apply --check`. In that case, refresh the patches against the new upstream
