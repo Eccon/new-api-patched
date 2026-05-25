@@ -198,7 +198,7 @@ jobs:
         if: steps.release_check.outputs.skip != 'true'
         uses: actions/setup-go@v5
         with:
-          go-version-file: source/go.mod
+          go-version: '1.26.x'
           cache-dependency-path: source/go.sum
 
       - name: Build binaries
