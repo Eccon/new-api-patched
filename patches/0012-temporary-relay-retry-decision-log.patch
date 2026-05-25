@@ -81,11 +81,182 @@ index ba610aa..0bec7c2 100644
  }
  
  func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {
+diff --git a/model/option.go b/model/option.go
+index ed1af72..28e4c94 100644
+--- a/model/option.go
++++ b/model/option.go
+@@ -1,6 +1,7 @@
+ package model
+ 
+ import (
++	"fmt"
+ 	"strconv"
+ 	"strings"
+ 	"time"
+@@ -590,7 +591,13 @@ func handleConfigUpdate(key, value string) bool {
+ 	configMap := map[string]string{
+ 		configKey: value,
+ 	}
++	if key == "channel_affinity_setting.rules" {
++		common.SysLog("channel affinity option update received: " + summarizeChannelAffinityRulesForDebug(value))
++	}
+ 	config.UpdateConfigFromMap(cfg, configMap)
++	if key == "channel_affinity_setting.rules" {
++		common.SysLog("channel affinity runtime after option update: " + summarizeRuntimeChannelAffinityRulesForDebug())
++	}
+ 
+ 	// 特定配置的后处理
+ 	if configName == "performance_setting" {
+@@ -606,3 +613,46 @@ func handleConfigUpdate(key, value string) bool {
+ 
+ 	return true // 已处理
+ }
++
++func summarizeChannelAffinityRulesForDebug(raw string) string {
++	var rules []operation_setting.ChannelAffinityRule
++	if err := common.UnmarshalJsonStr(raw, &rules); err != nil {
++		return fmt.Sprintf("option_rules=parse_error raw_len=%d err=%q", len(raw), err.Error())
++	}
++	return fmt.Sprintf("option_rules=%s", summarizeChannelAffinityRulesForDebugValue(rules))
++}
++
++func summarizeRuntimeChannelAffinityRulesForDebug() string {
++	setting := operation_setting.GetChannelAffinitySetting()
++	if setting == nil {
++		return "runtime_setting=nil"
++	}
++	return fmt.Sprintf(
++		"runtime_enabled=%t runtime_switch_on_success=%t runtime_rules=%s",
++		setting.Enabled,
++		setting.SwitchOnSuccess,
++		summarizeChannelAffinityRulesForDebugValue(setting.Rules),
++	)
++}
++
++func summarizeChannelAffinityRulesForDebugValue(rules []operation_setting.ChannelAffinityRule) string {
++	if len(rules) == 0 {
++		return "count=0"
++	}
++	parts := make([]string, 0, len(rules))
++	for i, rule := range rules {
++		parts = append(parts, fmt.Sprintf(
++			"[%d]name=%q skip_retry=%t models=%d paths=%d key_sources=%d include_group=%t include_model=%t include_rule=%t",
++			i,
++			rule.Name,
++			rule.SkipRetryOnFailure,
++			len(rule.ModelRegex),
++			len(rule.PathRegex),
++			len(rule.KeySources),
++			rule.IncludeUsingGroup,
++			rule.IncludeModelName,
++			rule.IncludeRuleName,
++		))
++	}
++	return fmt.Sprintf("count=%d %s", len(rules), strings.Join(parts, "; "))
++}
 diff --git a/service/channel_affinity.go b/service/channel_affinity.go
-index f16c350..0f6c397 100644
+index f16c350..11d4d1e 100644
 --- a/service/channel_affinity.go
 +++ b/service/channel_affinity.go
-@@ -641,6 +641,38 @@ func ShouldSkipRetryAfterChannelAffinityFailure(c *gin.Context) bool {
+@@ -11,6 +11,7 @@ import (
+ 
+ 	"github.com/QuantumNous/new-api/common"
+ 	"github.com/QuantumNous/new-api/dto"
++	"github.com/QuantumNous/new-api/logger"
+ 	"github.com/QuantumNous/new-api/pkg/cachex"
+ 	"github.com/QuantumNous/new-api/setting/operation_setting"
+ 	"github.com/QuantumNous/new-api/types"
+@@ -550,6 +551,7 @@ func ApplyChannelAffinityOverrideTemplate(c *gin.Context, paramOverride map[stri
+ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup string) (int, bool) {
+ 	setting := operation_setting.GetChannelAffinitySetting()
+ 	if setting == nil || !setting.Enabled {
++		logger.LogInfo(c, fmt.Sprintf("channel affinity debug: disabled_or_nil setting_nil=%t", setting == nil))
+ 		return 0, false
+ 	}
+ 	path := ""
+@@ -561,14 +563,18 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup
+ 		userAgent = c.Request.UserAgent()
+ 	}
+ 
++	lastMiss := "no_rules"
+ 	for _, rule := range setting.Rules {
+ 		if !matchAnyRegexCached(rule.ModelRegex, modelName) {
++			lastMiss = fmt.Sprintf("model_mismatch rule=%q skip_retry=%t", rule.Name, rule.SkipRetryOnFailure)
+ 			continue
+ 		}
+ 		if len(rule.PathRegex) > 0 && !matchAnyRegexCached(rule.PathRegex, path) {
++			lastMiss = fmt.Sprintf("path_mismatch rule=%q skip_retry=%t", rule.Name, rule.SkipRetryOnFailure)
+ 			continue
+ 		}
+ 		if len(rule.UserAgentInclude) > 0 && !matchAnyIncludeFold(rule.UserAgentInclude, userAgent) {
++			lastMiss = fmt.Sprintf("user_agent_mismatch rule=%q skip_retry=%t", rule.Name, rule.SkipRetryOnFailure)
+ 			continue
+ 		}
+ 		var affinityValue string
+@@ -581,9 +587,11 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup
+ 			}
+ 		}
+ 		if affinityValue == "" {
++			lastMiss = fmt.Sprintf("empty_affinity_value rule=%q skip_retry=%t", rule.Name, rule.SkipRetryOnFailure)
+ 			continue
+ 		}
+ 		if rule.ValueRegex != "" && !matchAnyRegexCached([]string{rule.ValueRegex}, affinityValue) {
++			lastMiss = fmt.Sprintf("value_regex_mismatch rule=%q skip_retry=%t key_fp=%q", rule.Name, rule.SkipRetryOnFailure, affinityFingerprint(affinityValue))
+ 			continue
+ 		}
+ 
+@@ -613,13 +621,50 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup
+ 		channelID, found, err := cache.Get(cacheKeySuffix)
+ 		if err != nil {
+ 			common.SysError(fmt.Sprintf("channel affinity cache get failed: key=%s, err=%v", cacheKeyFull, err))
++			logger.LogInfo(c, fmt.Sprintf(
++				"channel affinity debug: cache_error rule=%q runtime_skip=%t group=%q model=%q path=%q key_source=%s key_path=%q key_fp=%q err=%q %s",
++				rule.Name,
++				rule.SkipRetryOnFailure,
++				usingGroup,
++				modelName,
++				path,
++				strings.TrimSpace(usedSource.Type),
++				strings.TrimSpace(usedSource.Path),
++				affinityFingerprint(affinityValue),
++				err.Error(),
++				channelAffinityOptionRuleDebugString(rule.Name),
++			))
+ 			return 0, false
+ 		}
++		logger.LogInfo(c, fmt.Sprintf(
++			"channel affinity debug: matched rule=%q runtime_skip=%t cache_hit=%t cached_channel=%d group=%q model=%q path=%q key_source=%s key_path=%q key_fp=%q runtime_rules=%d %s",
++			rule.Name,
++			rule.SkipRetryOnFailure,
++			found,
++			channelID,
++			usingGroup,
++			modelName,
++			path,
++			strings.TrimSpace(usedSource.Type),
++			strings.TrimSpace(usedSource.Path),
++			affinityFingerprint(affinityValue),
++			len(setting.Rules),
++			channelAffinityOptionRuleDebugString(rule.Name),
++		))
+ 		if found {
+ 			return channelID, true
+ 		}
++		lastMiss = fmt.Sprintf("cache_miss rule=%q skip_retry=%t key_fp=%q", rule.Name, rule.SkipRetryOnFailure, affinityFingerprint(affinityValue))
+ 		return 0, false
+ 	}
++	logger.LogInfo(c, fmt.Sprintf(
++		"channel affinity debug: no_preferred_channel group=%q model=%q path=%q rules=%d last_miss=%s",
++		usingGroup,
++		modelName,
++		path,
++		len(setting.Rules),
++		lastMiss,
++	))
+ 	return 0, false
+ }
+ 
+@@ -641,6 +686,73 @@ func ShouldSkipRetryAfterChannelAffinityFailure(c *gin.Context) bool {
  	return meta.SkipRetry
  }
  
@@ -117,10 +288,91 @@ index f16c350..0f6c397 100644
 +		fmt.Sprintf("affinity_group=%q", meta.UsingGroup),
 +		fmt.Sprintf("affinity_model=%q", meta.ModelName),
 +		fmt.Sprintf("affinity_key_fp=%q", meta.KeyFingerprint),
++		channelAffinityRuntimeRuleDebugString(meta.RuleName),
++		channelAffinityOptionRuleDebugString(meta.RuleName),
 +	)
 +	return strings.Join(parts, " ")
++}
++
++func channelAffinityRuntimeRuleDebugString(ruleName string) string {
++	setting := operation_setting.GetChannelAffinitySetting()
++	if setting == nil {
++		return "affinity_runtime_setting=nil"
++	}
++	for i, rule := range setting.Rules {
++		if rule.Name == ruleName {
++			return fmt.Sprintf("affinity_runtime_rules=%d affinity_runtime_rule_index=%d affinity_runtime_rule_skip=%t", len(setting.Rules), i, rule.SkipRetryOnFailure)
++		}
++	}
++	return fmt.Sprintf("affinity_runtime_rules=%d affinity_runtime_rule=missing", len(setting.Rules))
++}
++
++func channelAffinityOptionRuleDebugString(ruleName string) string {
++	common.OptionMapRWMutex.RLock()
++	raw, ok := common.OptionMap["channel_affinity_setting.rules"]
++	common.OptionMapRWMutex.RUnlock()
++	if !ok {
++		return "affinity_option_rules=missing"
++	}
++
++	var rules []operation_setting.ChannelAffinityRule
++	if err := common.UnmarshalJsonStr(raw, &rules); err != nil {
++		return fmt.Sprintf("affinity_option_rules=parse_error affinity_option_raw_len=%d affinity_option_err=%q", len(raw), err.Error())
++	}
++	for i, rule := range rules {
++		if rule.Name == ruleName {
++			return fmt.Sprintf("affinity_option_rules=%d affinity_option_rule_index=%d affinity_option_rule_skip=%t", len(rules), i, rule.SkipRetryOnFailure)
++		}
++	}
++	return fmt.Sprintf("affinity_option_rules=%d affinity_option_rule=missing", len(rules))
 +}
 +
  func MarkChannelAffinityUsed(c *gin.Context, selectedGroup string, channelID int) {
  	if c == nil || channelID <= 0 {
  		return
+diff --git a/setting/config/config.go b/setting/config/config.go
+index a82d934..017bca2 100644
+--- a/setting/config/config.go
++++ b/setting/config/config.go
+@@ -2,6 +2,7 @@ package config
+ 
+ import (
+ 	"encoding/json"
++	"fmt"
+ 	"reflect"
+ 	"strconv"
+ 	"strings"
+@@ -249,6 +250,7 @@ func updateConfigFromMap(config interface{}, configMap map[string]string) error
+ 				// 反序列化到指针指向的值
+ 				err := json.Unmarshal([]byte(strValue), field.Interface())
+ 				if err != nil {
++					common.SysError(formatConfigUpdateDecodeError(fieldType.Name, key, field.Kind(), strValue, err))
+ 					continue
+ 				}
+ 			}
+@@ -258,12 +260,14 @@ func updateConfigFromMap(config interface{}, configMap map[string]string) error
+ 			// are properly cleared.
+ 			fresh := reflect.New(field.Type())
+ 			if err := json.Unmarshal([]byte(strValue), fresh.Interface()); err != nil {
++				common.SysError(formatConfigUpdateDecodeError(fieldType.Name, key, field.Kind(), strValue, err))
+ 				continue
+ 			}
+ 			field.Set(fresh.Elem())
+ 		case reflect.Slice, reflect.Struct:
+ 			err := json.Unmarshal([]byte(strValue), field.Addr().Interface())
+ 			if err != nil {
++				common.SysError(formatConfigUpdateDecodeError(fieldType.Name, key, field.Kind(), strValue, err))
+ 				continue
+ 			}
+ 		}
+@@ -272,6 +276,10 @@ func updateConfigFromMap(config interface{}, configMap map[string]string) error
+ 	return nil
+ }
+ 
++func formatConfigUpdateDecodeError(fieldName string, jsonKey string, kind reflect.Kind, raw string, err error) string {
++	return fmt.Sprintf("config update decode failed: field=%s json_key=%s kind=%s raw_len=%d err=%v", fieldName, jsonKey, kind, len(raw), err)
++}
++
+ // ConfigToMap 将配置对象转换为map（导出函数）
+ func ConfigToMap(config interface{}) (map[string]string, error) {
+ 	return configToMap(config)
