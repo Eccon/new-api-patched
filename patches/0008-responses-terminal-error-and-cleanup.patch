@@ -1,33 +1,44 @@
+diff --git a/dto/openai_response.go b/dto/openai_response.go
+index f6a7592..41cf166 100644
+--- a/dto/openai_response.go
++++ b/dto/openai_response.go
+@@ -392,9 +392,10 @@ const (
+ // ResponsesStreamResponse 用于处理 /v1/responses 流式响应
+ type ResponsesStreamResponse struct {
+-	Type     string                   `json:"type"`
+-	Response *OpenAIResponsesResponse `json:"response,omitempty"`
+-	Delta    string                   `json:"delta,omitempty"`
+-	Item     *ResponsesOutput         `json:"item,omitempty"`
++	Type           string                   `json:"type"`
++	SequenceNumber *int                     `json:"sequence_number,omitempty"`
++	Response       *OpenAIResponsesResponse `json:"response,omitempty"`
++	Delta          string                   `json:"delta,omitempty"`
++	Item           *ResponsesOutput         `json:"item,omitempty"`
+ 	// - response.function_call_arguments.delta
+ 	// - response.function_call_arguments.done
+ 	OutputIndex  *int                           `json:"output_index,omitempty"`
 diff --git a/relay/channel/openai/helper.go b/relay/channel/openai/helper.go
-index 08811a7..deb587c 100644
+index 08811a7..f44f59c 100644
 --- a/relay/channel/openai/helper.go
 +++ b/relay/channel/openai/helper.go
-@@ -259,3 +259,42 @@ func sendResponsesStreamData(c *gin.Context, streamResponse dto.ResponsesStreamR
+@@ -259,3 +259,40 @@ func sendResponsesStreamData(c *gin.Context, streamResponse dto.ResponsesStreamR
  	}
  	helper.ResponseChunkData(c, streamResponse, data)
  }
 +
-+func sendResponsesErrorEvent(c *gin.Context, reason string) {
++func sendResponsesErrorEvent(c *gin.Context, reason string, sequenceNumber int) {
 +	payload := struct {
-+		Type           string `json:"type"`
-+		SequenceNumber int    `json:"sequence_number"`
-+		Error          struct {
-+			Type    string `json:"type"`
-+			Message string `json:"message"`
-+			Code    string `json:"code"`
-+		} `json:"error"`
++		Type           string  `json:"type"`
++		SequenceNumber int     `json:"sequence_number"`
++		Code           string  `json:"code"`
++		Message        string  `json:"message"`
++		Param          *string `json:"param"`
 +	}{
 +		Type:           "error",
-+		SequenceNumber: 0,
-+	}
-+	payload.Error.Type = "upstream_error"
-+	payload.Error.Message = reason
-+	payload.Error.Code = reason
-+
-+	jsonData, err := common.Marshal(payload)
-+	if err != nil {
-+		logger.LogError(c, "failed to marshal responses error event: "+err.Error())
-+		return
++		SequenceNumber: sequenceNumber,
++		Code:           reason,
++		Message:        reason,
++		Param:          nil,
 +	}
 +
 +	if c == nil || c.Writer == nil {
@@ -36,6 +47,13 @@ index 08811a7..deb587c 100644
 +	if c.Request != nil && c.Request.Context().Err() != nil {
 +		return
 +	}
++
++	jsonData, err := common.Marshal(payload)
++	if err != nil {
++		logger.LogError(c, "failed to marshal responses error event: "+err.Error())
++		return
++	}
++
 +	c.Render(-1, common.CustomEvent{Data: "event: error\n"})
 +	c.Render(-1, common.CustomEvent{Data: "data: " + string(jsonData)})
 +	if err := helper.FlushWriter(c); err != nil {
@@ -74,16 +92,23 @@ diff --git a/relay/channel/openai/relay_responses.go b/relay/channel/openai/rela
 index 2665b8d..5dc65a0 100644
 --- a/relay/channel/openai/relay_responses.go
 +++ b/relay/channel/openai/relay_responses.go
-@@ -78,6 +78,8 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+@@ -78,6 +78,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
  
  	var usage = &dto.Usage{}
  	var responseTextBuilder strings.Builder
 +	sawTerminalEvent := false
 +	sawErrorEvent := false
++	lastSequenceNumber := -1
  
  	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
  
-@@ -91,6 +93,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+@@ -88,9 +91,13 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+ 			sr.Error(err)
+ 			return
+ 		}
++		if streamResponse.SequenceNumber != nil {
++			lastSequenceNumber = *streamResponse.SequenceNumber
++		}
  		sendResponsesStreamData(c, streamResponse, data)
  		switch streamResponse.Type {
  		case "response.completed":
@@ -100,16 +125,20 @@ index 2665b8d..5dc65a0 100644
  		case "response.output_text.delta":
  			// 处理输出文本
  			responseTextBuilder.WriteString(streamResponse.Delta)
-@@ -130,6 +135,15 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+@@ -130,6 +139,19 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
  		}
  	})
  
 +	if info != nil && info.StreamStatus != nil && !sawTerminalEvent && !sawErrorEvent {
++		nextSequenceNumber := 0
++		if lastSequenceNumber >= 0 {
++			nextSequenceNumber = lastSequenceNumber + 1
++		}
 +		switch info.StreamStatus.EndReason {
 +		case relaycommon.StreamEndReasonTimeout:
-+			sendResponsesErrorEvent(c, "stream_timeout")
++			sendResponsesErrorEvent(c, "stream_timeout", nextSequenceNumber)
 +		case relaycommon.StreamEndReasonScannerErr:
-+			sendResponsesErrorEvent(c, "stream_read_error")
++			sendResponsesErrorEvent(c, "stream_read_error", nextSequenceNumber)
 +		}
 +	}
 +
