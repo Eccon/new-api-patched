@@ -21,7 +21,7 @@ diff --git a/relay/channel/openai/helper.go b/relay/channel/openai/helper.go
 index 08811a7..f44f59c 100644
 --- a/relay/channel/openai/helper.go
 +++ b/relay/channel/openai/helper.go
-@@ -259,3 +259,40 @@ func sendResponsesStreamData(c *gin.Context, streamResponse dto.ResponsesStreamR
+@@ -259,3 +259,41 @@ func sendResponsesStreamData(c *gin.Context, streamResponse dto.ResponsesStreamR
  	}
  	helper.ResponseChunkData(c, streamResponse, data)
  }
