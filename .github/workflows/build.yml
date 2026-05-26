@@ -4,8 +4,10 @@ on:
   push:
     branches:
       - master
+      - test/first-response-timeout-20260525
     paths:
       - "patches/**"
+      - ".github/workflows/build.yml"
   schedule:
     # Runs daily at 00:00 UTC+8.
     - cron: "0 16 * * *"
@@ -34,6 +36,8 @@ permissions:
 
 env:
   UPSTREAM_REPOSITORY: QuantumNous/new-api
+  FIRST_RESPONSE_TIMEOUT_BRANCH: test/first-response-timeout-20260525
+  FIRST_RESPONSE_TIMEOUT_RELEASE_TAG: first-response-timeout-20260525
 
 jobs:
   build:
@@ -68,6 +72,10 @@ jobs:
           if [ "${BUILD_TARGET}" = "alpha" ] || [ "${INPUT_UPSTREAM_TAG}" = "alpha" ]; then
             MODE="alpha"
           fi
+          ROLLING_RELEASE_LABEL="alpha"
+          if [ "${GITHUB_REF_NAME}" = "${FIRST_RESPONSE_TIMEOUT_BRANCH}" ]; then
+            ROLLING_RELEASE_LABEL="first response timeout"
+          fi
 
           if [ "${MODE}" = "alpha" ]; then
             DEFAULT_BRANCH="$(git ls-remote --symref "https://github.com/${UPSTREAM_REPOSITORY}.git" HEAD \
@@ -89,6 +97,11 @@ jobs:
             VERSION="alpha-${SHORT_SHA}"
             RELEASE_TAG="alpha"
             RELEASE_NAME="${VERSION}"
+            if [ "${GITHUB_REF_NAME}" = "${FIRST_RESPONSE_TIMEOUT_BRANCH}" ]; then
+              VERSION="${FIRST_RESPONSE_TIMEOUT_RELEASE_TAG}-${SHORT_SHA}"
+              RELEASE_TAG="${FIRST_RESPONSE_TIMEOUT_RELEASE_TAG}"
+              RELEASE_NAME="${VERSION}"
+            fi
           else
             if [ -n "${INPUT_UPSTREAM_TAG}" ]; then
               TAG="${INPUT_UPSTREAM_TAG}"
@@ -124,6 +137,7 @@ jobs:
           echo "release_tag=${RELEASE_TAG}" >> "${GITHUB_OUTPUT}"
           echo "release_name=${RELEASE_NAME}" >> "${GITHUB_OUTPUT}"
           echo "force_rebuild=${INPUT_FORCE_REBUILD}" >> "${GITHUB_OUTPUT}"
+          echo "rolling_release_label=${ROLLING_RELEASE_LABEL}" >> "${GITHUB_OUTPUT}"
           echo "MODE=${MODE}" >> "${GITHUB_ENV}"
           echo "PATCH_MODE=${PATCH_MODE}" >> "${GITHUB_ENV}"
           echo "SOURCE_REF=${SOURCE_REF}" >> "${GITHUB_ENV}"
@@ -131,6 +145,7 @@ jobs:
           echo "RELEASE_TAG=${RELEASE_TAG}" >> "${GITHUB_ENV}"
           echo "RELEASE_NAME=${RELEASE_NAME}" >> "${GITHUB_ENV}"
           echo "FORCE_REBUILD=${INPUT_FORCE_REBUILD}" >> "${GITHUB_ENV}"
+          echo "ROLLING_RELEASE_LABEL=${ROLLING_RELEASE_LABEL}" >> "${GITHUB_ENV}"
           echo "Resolved upstream source: ${SOURCE_REF}"
           echo "Build version: ${VERSION}"
           echo "Patch mode: ${PATCH_MODE}"
@@ -148,17 +163,17 @@ jobs:
               CURRENT_RELEASE_NAME="$(gh release view "${RELEASE_TAG}" --json name --jq '.name')"
               if [ "${FORCE_REBUILD}" = "true" ]; then
                 echo "skip=false" >> "${GITHUB_OUTPUT}"
-                echo "Force rebuild enabled. Updating alpha release ${RELEASE_TAG}."
+                echo "Force rebuild enabled. Updating ${ROLLING_RELEASE_LABEL} release ${RELEASE_TAG}."
               elif [ "${CURRENT_RELEASE_NAME}" = "${RELEASE_NAME}" ]; then
                 echo "skip=true" >> "${GITHUB_OUTPUT}"
-                echo "Alpha release ${RELEASE_TAG} is already ${RELEASE_NAME}. Skipping build."
+                echo "${ROLLING_RELEASE_LABEL} release ${RELEASE_TAG} is already ${RELEASE_NAME}. Skipping build."
               else
                 echo "skip=false" >> "${GITHUB_OUTPUT}"
-                echo "Alpha release ${RELEASE_TAG} is ${CURRENT_RELEASE_NAME}. Updating to ${RELEASE_NAME}."
+                echo "${ROLLING_RELEASE_LABEL} release ${RELEASE_TAG} is ${CURRENT_RELEASE_NAME}. Updating to ${RELEASE_NAME}."
               fi
             else
               echo "skip=false" >> "${GITHUB_OUTPUT}"
-              echo "Alpha release ${RELEASE_TAG} does not exist. Creating ${RELEASE_NAME}."
+              echo "${ROLLING_RELEASE_LABEL} release ${RELEASE_TAG} does not exist. Creating ${RELEASE_NAME}."
             fi
             exit 0
           fi
@@ -263,7 +278,7 @@ jobs:
 
           sha256sum dist/new-api-* > dist/checksums.txt
 
-      - name: Move alpha release tag
+      - name: Move rolling release tag
         if: steps.release_check.outputs.skip != 'true' && steps.version.outputs.mode == 'alpha'
         run: |
           git tag -f "${RELEASE_TAG}" "${GITHUB_SHA}"
