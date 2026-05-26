@@ -90,6 +90,10 @@ No Docker image is built.
   - Adds `RELAY_NON_STREAM_TIMEOUT` for bounding total non-stream relay request time.
   - Uses Go's native `http.Transport.ResponseHeaderTimeout`.
   - Applies the timeout only to relay requests already known to be streaming.
+  - Also applies `RELAY_RESPONSE_HEADER_TIMEOUT` as a per-stream first-response timeout after the upstream attempt starts.
+  - Cancels the upstream stream attempt when no response begins within the configured timeout.
+  - Classifies both response-header and first-response timeout failures as `upstream error: response header timeout`.
+  - Avoids treating downstream client cancellation as an upstream first-response timeout.
   - Keeps normal non-stream relay clients without a response-header timeout.
   - Applies non-stream total timeout through request context and cancels it when the returned response body is closed.
   - Keeps stream requests out of `RELAY_NON_STREAM_TIMEOUT`; stream total timeout still follows `RELAY_TIMEOUT`.

@@ -27,10 +27,18 @@ index c33f04f..a110979 100644
  	RelayMaxIdleConnsPerHost = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS_PER_HOST", 100)
  
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index f3fc526..cdbe908 100644
+index f3fc526..e4ca653 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
-@@ -312,7 +312,7 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
+@@ -6,6 +6,7 @@ import (
+ 	"fmt"
+ 	"io"
+ 	"net/http"
++	"net/http/httptrace"
+ 	"regexp"
+ 	"strings"
+ 	"sync"
+@@ -312,7 +313,7 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
  		return nil, fmt.Errorf("get request url failed: %w", err)
  	}
  	logger.LogDebug(c, "fullRequestURL: %s", fullRequestURL)
@@ -39,7 +47,7 @@ index f3fc526..cdbe908 100644
  	if err != nil {
  		return nil, fmt.Errorf("new request failed: %w", err)
  	}
-@@ -342,7 +342,7 @@ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBod
+@@ -342,7 +343,7 @@ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBod
  		return nil, fmt.Errorf("get request url failed: %w", err)
  	}
  	logger.LogDebug(c, "fullRequestURL: %s", fullRequestURL)
@@ -48,7 +56,7 @@ index f3fc526..cdbe908 100644
  	if err != nil {
  		return nil, fmt.Errorf("new request failed: %w", err)
  	}
-@@ -493,12 +493,12 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -493,12 +494,12 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  	var client *http.Client
  	var err error
  	if info.ChannelSetting.Proxy != "" {
@@ -63,12 +71,16 @@ index f3fc526..cdbe908 100644
  	}
  
  	var stopPinger context.CancelFunc
-@@ -521,30 +521,73 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -521,30 +522,223 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  
  	applyDefaultUpstreamUserAgent(c, req, info)
  	logUpstreamUserAgent(c, req)
 +	reqCtx, cancel := service.WithRelayRequestTimeout(c.Request.Context(), info.IsStream)
 +	req = req.WithContext(reqCtx)
++	firstResponseTimeout := newFirstResponseTimeoutControl(req, info)
++	if firstResponseTimeout != nil {
++		req = firstResponseTimeout.request
++	}
 +	closeRequestBodies := func() {
 +		if req != nil && req.Body != nil {
 +			_ = req.Body.Close()
@@ -78,29 +90,75 @@ index f3fc526..cdbe908 100644
 +		}
 +	}
 +
++	if firstResponseTimeout != nil {
++		firstResponseTimeout.Start()
++	}
  	resp, err := client.Do(req)
++	doReturn := time.Now()
++	if firstResponseTimeout != nil {
++		firstResponseTimeout.CompleteAt(doReturn)
++	}
  	if err != nil {
++		firstResponseTimedOut := isFirstResponseTimeout(firstResponseTimeout, reqCtx, c)
++		if resp != nil && resp.Body != nil {
++			_ = resp.Body.Close()
++		}
++		closeRequestBodies()
++		if firstResponseTimeout != nil {
++			firstResponseTimeout.Cancel()
++		}
++		cancel()
++		if firstResponseTimedOut {
++			logger.LogError(c, "do request failed: response header timeout: "+err.Error())
++			return nil, types.NewError(
++				err,
++				types.ErrorCodeDoRequestFailed,
++				types.ErrOptionWithHideErrMsg("upstream error: response header timeout"),
++			)
++		}
+ 		logger.LogError(c, "do request failed: "+err.Error())
+ 		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
+ 	}
++	if isFirstResponseTimeout(firstResponseTimeout, reqCtx, c) {
 +		if resp != nil && resp.Body != nil {
 +			_ = resp.Body.Close()
 +		}
 +		closeRequestBodies()
 +		cancel()
- 		logger.LogError(c, "do request failed: "+err.Error())
- 		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
- 	}
++		firstResponseTimeout.Cancel()
++		logger.LogError(c, "do request failed: response header timeout")
++		return nil, types.NewError(
++			context.DeadlineExceeded,
++			types.ErrorCodeDoRequestFailed,
++			types.ErrOptionWithHideErrMsg("upstream error: response header timeout"),
++		)
++	}
  	if resp == nil {
 +		closeRequestBodies()
 +		cancel()
++		if firstResponseTimeout != nil {
++			firstResponseTimeout.Cancel()
++		}
  		return nil, errors.New("resp is nil")
  	}
 +	if resp.Body == nil {
 +		closeRequestBodies()
 +		cancel()
++		if firstResponseTimeout != nil {
++			firstResponseTimeout.Cancel()
++		}
 +		return nil, errors.New("resp body is nil")
++	}
++	responseBodyCancel := cancel
++	if firstResponseTimeout != nil {
++		responseBodyCancel = func() {
++			firstResponseTimeout.Cancel()
++			cancel()
++		}
 +	}
 +	resp.Body = &cancelOnCloseReadCloser{
 +		ReadCloser: resp.Body,
-+		cancel:     cancel,
++		cancel:     responseBodyCancel,
 +	}
  
  	if upID := resp.Header.Get(common2.RequestIdKey); upID != "" {
@@ -113,6 +171,106 @@ index f3fc526..cdbe908 100644
  	return resp, nil
  }
  
++type firstResponseTimeoutControl struct {
++	request  *http.Request
++	timer    *time.Timer
++	cancel   context.CancelFunc
++	timeout  time.Duration
++	deadline time.Time
++	complete bool
++	timedOut bool
++	mu       sync.Mutex
++}
++
++func newFirstResponseTimeoutControl(req *http.Request, info *common.RelayInfo) *firstResponseTimeoutControl {
++	if req == nil || info == nil || !info.IsStream || common2.RelayResponseHeaderTimeout <= 0 {
++		return nil
++	}
++	timeout := time.Duration(common2.RelayResponseHeaderTimeout) * time.Second
++	ctx, cancel := context.WithCancel(req.Context())
++	control := &firstResponseTimeoutControl{
++		cancel:  cancel,
++		timeout: timeout,
++	}
++	control.request = req.WithContext(httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
++		GotFirstResponseByte: func() {
++			control.CompleteAt(time.Now())
++		},
++	}))
++	return control
++}
++
++func (c *firstResponseTimeoutControl) Start() {
++	if c == nil {
++		return
++	}
++	c.mu.Lock()
++	if c.complete || c.timedOut || c.timer != nil {
++		c.mu.Unlock()
++		return
++	}
++	c.deadline = time.Now().Add(c.timeout)
++	c.timer = time.AfterFunc(c.timeout, func() {
++		c.mu.Lock()
++		if c.complete {
++			c.mu.Unlock()
++			return
++		}
++		c.timedOut = true
++		cancel := c.cancel
++		c.mu.Unlock()
++		if cancel != nil {
++			cancel()
++		}
++	})
++	c.mu.Unlock()
++}
++
++func (c *firstResponseTimeoutControl) CompleteAt(t time.Time) {
++	if c == nil {
++		return
++	}
++	c.mu.Lock()
++	if c.deadline.IsZero() || !t.After(c.deadline) {
++		c.complete = true
++		c.timedOut = false
++	}
++	timer := c.timer
++	c.mu.Unlock()
++	if timer != nil {
++		timer.Stop()
++	}
++}
++
++func (c *firstResponseTimeoutControl) Cancel() {
++	if c == nil || c.cancel == nil {
++		return
++	}
++	c.cancel()
++}
++
++func (c *firstResponseTimeoutControl) TimedOut() bool {
++	if c == nil {
++		return false
++	}
++	c.mu.Lock()
++	defer c.mu.Unlock()
++	return c.timedOut || (!c.complete && !c.deadline.IsZero() && time.Now().After(c.deadline))
++}
++
++func isFirstResponseTimeout(control *firstResponseTimeoutControl, parent context.Context, c *gin.Context) bool {
++	if control == nil || !control.TimedOut() {
++		return false
++	}
++	if parent != nil && parent.Err() != nil {
++		return false
++	}
++	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
++		return false
++	}
++	return true
++}
++
 +type cancelOnCloseReadCloser struct {
 +	io.ReadCloser
 +	cancel context.CancelFunc
@@ -209,10 +367,10 @@ index 1f6ff7e..edc8f8e 100644
  
  	awsResp, err := a.AwsClient.InvokeModel(ctx, a.AwsReq.(*bedrockruntime.InvokeModelInput))
 diff --git a/service/error.go b/service/error.go
-index a2ff0aa..7be802a 100644
+index cf7325b..cfa6560 100644
 --- a/service/error.go
 +++ b/service/error.go
-@@ -85,10 +85,10 @@ func ClaudeErrorWrapperLocal(err error, code string, statusCode int) *dto.Claude
+@@ -85,12 +85,12 @@ func ClaudeErrorWrapperLocal(err error, code string, statusCode int) *dto.Claude
  
  func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFail bool) (newApiErr *types.NewAPIError) {
  	newApiErr = types.InitOpenAIError(types.ErrorCodeBadResponseStatusCode, resp.StatusCode)
@@ -224,6 +382,8 @@ index a2ff0aa..7be802a 100644
  	}
 -	CloseResponseBodyGracefully(resp)
  	var errResponse dto.GeneralErrorResponse
+ 	responseBodyText := string(responseBody)
+ 	responseBodyPreview := common.LocalLogPreview(responseBodyText)
 diff --git a/service/http_client.go b/service/http_client.go
 index 2f75de2..400f767 100644
 --- a/service/http_client.go

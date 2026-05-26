@@ -1,11 +1,11 @@
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index cdbe908..5d2a6a9 100644
+index e4ca653..3be2f31 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
-@@ -539,6 +539,14 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -563,6 +563,14 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+ 				types.ErrOptionWithHideErrMsg("upstream error: response header timeout"),
+ 			)
  		}
- 		closeRequestBodies()
- 		cancel()
 +		if isResponseHeaderTimeout(err) {
 +			logger.LogError(c, "do request failed: response header timeout: "+err.Error())
 +			return nil, types.NewError(
@@ -17,7 +17,7 @@ index cdbe908..5d2a6a9 100644
  		logger.LogError(c, "do request failed: "+err.Error())
  		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
  	}
-@@ -565,6 +573,15 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -616,6 +624,15 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  	return resp, nil
  }
  
@@ -30,6 +30,6 @@ index cdbe908..5d2a6a9 100644
 +		strings.Contains(msg, "response header timeout")
 +}
 +
- type cancelOnCloseReadCloser struct {
- 	io.ReadCloser
- 	cancel context.CancelFunc
+ type firstResponseTimeoutControl struct {
+ 	request  *http.Request
+ 	timer    *time.Timer

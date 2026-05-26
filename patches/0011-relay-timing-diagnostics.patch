@@ -176,7 +176,7 @@ index 6e5b362..9e70d21 100644
  	os.Exit(1)
  }
 diff --git a/controller/relay.go b/controller/relay.go
-index d8b30f2..ba610aa 100644
+index e189a49..a4dc0e9 100644
 --- a/controller/relay.go
 +++ b/controller/relay.go
 @@ -65,7 +65,130 @@ func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewA
@@ -568,10 +568,10 @@ index 241c2a8..49ab2cf 100644
  		c.Request = c.Request.WithContext(ctx)
  		c.Header(common.RequestIdKey, id)
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index 5d2a6a9..9be19e0 100644
+index 3be2f31..8e3509d 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
-@@ -2,10 +2,12 @@ package channel
+@@ -2,6 +2,7 @@ package channel
  
  import (
  	"context"
@@ -579,15 +579,10 @@ index 5d2a6a9..9be19e0 100644
  	"errors"
  	"fmt"
  	"io"
- 	"net/http"
-+	"net/http/httptrace"
- 	"regexp"
- 	"strings"
- 	"sync"
-@@ -523,6 +525,71 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
- 	logUpstreamUserAgent(c, req)
- 	reqCtx, cancel := service.WithRelayRequestTimeout(c.Request.Context(), info.IsStream)
- 	req = req.WithContext(reqCtx)
+@@ -528,6 +529,71 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+ 	if firstResponseTimeout != nil {
+ 		req = firstResponseTimeout.request
+ 	}
 +	var attemptTiming *common.RelayTimingInfo
 +	var attemptTimingMu sync.Mutex
 +	if common2.RelayTimingLogEnabled && info != nil && req != nil {
@@ -656,14 +651,13 @@ index 5d2a6a9..9be19e0 100644
  	closeRequestBodies := func() {
  		if req != nil && req.Body != nil {
  			_ = req.Body.Close()
-@@ -533,7 +600,31 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -545,8 +611,31 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+ 	if firstResponseTimeout != nil {
+ 		firstResponseTimeout.CompleteAt(doReturn)
  	}
- 
- 	resp, err := client.Do(req)
 +	var attempt common.RelayTimingInfo
 +	hasAttemptTiming := false
 +	if common2.RelayTimingLogEnabled && info != nil {
-+		doReturn := time.Now()
 +		if attemptTiming != nil {
 +			attemptTimingMu.Lock()
 +			attemptTiming.DoReturn = doReturn
@@ -682,13 +676,14 @@ index 5d2a6a9..9be19e0 100644
 +		}
 +	}
  	if err != nil {
+ 		firstResponseTimedOut := isFirstResponseTimeout(firstResponseTimeout, reqCtx, c)
 +		if hasAttemptTiming {
 +			logRelayFailedAttemptTiming(c, info, attempt, err)
 +		}
  		if resp != nil && resp.Body != nil {
  			_ = resp.Body.Close()
  		}
-@@ -573,6 +664,53 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -624,6 +713,53 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  	return resp, nil
  }
  
