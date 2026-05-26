@@ -212,7 +212,7 @@ diff --git a/service/error.go b/service/error.go
 index a2ff0aa..7be802a 100644
 --- a/service/error.go
 +++ b/service/error.go
-@@ -85,12 +85,12 @@ func ClaudeErrorWrapperLocal(err error, code string, statusCode int) *dto.Claude
+@@ -85,10 +85,10 @@ func ClaudeErrorWrapperLocal(err error, code string, statusCode int) *dto.Claude
  
  func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFail bool) (newApiErr *types.NewAPIError) {
  	newApiErr = types.InitOpenAIError(types.ErrorCodeBadResponseStatusCode, resp.StatusCode)
@@ -224,8 +224,6 @@ index a2ff0aa..7be802a 100644
  	}
 -	CloseResponseBodyGracefully(resp)
  	var errResponse dto.GeneralErrorResponse
- 	buildErrWithBody := func(message string) error {
- 		if message == "" {
 diff --git a/service/http_client.go b/service/http_client.go
 index 2f75de2..400f767 100644
 --- a/service/http_client.go
