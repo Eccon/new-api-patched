@@ -137,6 +137,13 @@ No Docker image is built.
   - Logs timing fields, event kind, line length, path, client IP, model/channel/status, connection reuse data, and upstream write error text when present.
   - Does not log request bodies, response bodies, Authorization values, API keys, headers, or raw query strings; URL-like error text is masked before logging.
 
+- `0012-record-actual-response-model-in-usage-logs.patch`
+  - Captures the model reported by OpenAI Chat Completions and Responses responses/streams.
+  - Stores the captured model in usage-log `other.actual_model_name` when it is the actual served model.
+  - Keeps the existing mapped-model fallback for older logs and mapped channels.
+  - Shows `actual_model_name` before the mapped-model fallback in default and classic usage-log UI.
+  - Does not add or migrate any database columns.
+
 ## Version Handling
 
 The workflow sets `common.Version` through the full upstream module path:
