@@ -2,7 +2,7 @@ diff --git a/service/http_client.go b/service/http_client.go
 index 2c3168f..2f75de2 100644
 --- a/service/http_client.go
 +++ b/service/http_client.go
-@@ -34,11 +34,15 @@ func checkRedirect(req *http.Request, via []*http.Request) error {
+@@ -34,12 +34,16 @@ func checkRedirect(req *http.Request, via []*http.Request) error {
  }
  
  func InitHttpClient() {
@@ -10,6 +10,7 @@ index 2c3168f..2f75de2 100644
  	transport := &http.Transport{
  		MaxIdleConns:        common.RelayMaxIdleConns,
  		MaxIdleConnsPerHost: common.RelayMaxIdleConnsPerHost,
+ 		IdleConnTimeout:     time.Duration(common.RelayIdleConnTimeout) * time.Second,
  		ForceAttemptHTTP2:   true,
  		Proxy:               http.ProxyFromEnvironment, // Support HTTP_PROXY, HTTPS_PROXY, NO_PROXY env vars
 +		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {

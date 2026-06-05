@@ -2,25 +2,28 @@ diff --git a/common/constants.go b/common/constants.go
 index d81c17d..7f94ff0 100644
 --- a/common/constants.go
 +++ b/common/constants.go
-@@ -172,7 +172,9 @@ var UpstreamUserAgentOpenAI = ""
+@@ -172,8 +172,11 @@ var UpstreamUserAgentOpenAI = ""
  var UpstreamUserAgentClaude = ""
  var UpstreamUserAgentGemini = ""
  
 -var RelayTimeout int // unit is second
 +var RelayTimeout int               // unit is second
+ 
+ var RelayIdleConnTimeout int // unit is second
 +var RelayResponseHeaderTimeout int // unit is second
 +var RelayNonStreamTimeout int      // unit is second
- 
++
  var RelayMaxIdleConns int
  var RelayMaxIdleConnsPerHost int
 diff --git a/common/init.go b/common/init.go
 index c33f04f..a110979 100644
 --- a/common/init.go
 +++ b/common/init.go
-@@ -102,6 +102,8 @@ func InitEnv() {
+@@ -102,7 +102,9 @@ func InitEnv() {
  	SyncFrequency = GetEnvOrDefault("SYNC_FREQUENCY", 60)
  	BatchUpdateInterval = GetEnvOrDefault("BATCH_UPDATE_INTERVAL", 5)
  	RelayTimeout = GetEnvOrDefault("RELAY_TIMEOUT", 0)
+ 	RelayIdleConnTimeout = GetEnvOrDefault("RELAY_IDLE_CONN_TIMEOUT", 90)
 +	RelayResponseHeaderTimeout = GetEnvOrDefault("RELAY_RESPONSE_HEADER_TIMEOUT", 0)
 +	RelayNonStreamTimeout = GetEnvOrDefault("RELAY_NON_STREAM_TIMEOUT", -1)
  	RelayMaxIdleConns = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS", 500)

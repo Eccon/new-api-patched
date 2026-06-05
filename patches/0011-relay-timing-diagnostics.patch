@@ -2,8 +2,10 @@ diff --git a/common/constants.go b/common/constants.go
 index 7f94ff0..dc22219 100644
 --- a/common/constants.go
 +++ b/common/constants.go
-@@ -175,6 +175,8 @@ var UpstreamUserAgentGemini = ""
+@@ -175,8 +175,10 @@ var UpstreamUserAgentGemini = ""
  var RelayTimeout int               // unit is second
+ 
+ var RelayIdleConnTimeout int // unit is second
  var RelayResponseHeaderTimeout int // unit is second
  var RelayNonStreamTimeout int      // unit is second
 +var RelayTimingLogEnabled bool
@@ -137,8 +139,9 @@ diff --git a/common/init.go b/common/init.go
 index a110979..2bad871 100644
 --- a/common/init.go
 +++ b/common/init.go
-@@ -104,6 +104,8 @@ func InitEnv() {
+@@ -104,7 +104,9 @@ func InitEnv() {
  	RelayTimeout = GetEnvOrDefault("RELAY_TIMEOUT", 0)
+ 	RelayIdleConnTimeout = GetEnvOrDefault("RELAY_IDLE_CONN_TIMEOUT", 90)
  	RelayResponseHeaderTimeout = GetEnvOrDefault("RELAY_RESPONSE_HEADER_TIMEOUT", 0)
  	RelayNonStreamTimeout = GetEnvOrDefault("RELAY_NON_STREAM_TIMEOUT", -1)
 +	RelayTimingLogEnabled = GetEnvOrDefaultBool("RELAY_TIMING_LOG_ENABLED", false)
@@ -568,122 +571,10 @@ index 241c2a8..49ab2cf 100644
  		c.Request = c.Request.WithContext(ctx)
  		c.Header(common.RequestIdKey, id)
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index 3be2f31..8e3509d 100644
+index 3be2f31..ea56131 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
-@@ -2,6 +2,7 @@ package channel
- 
- import (
- 	"context"
-+	"crypto/tls"
- 	"errors"
- 	"fmt"
- 	"io"
-@@ -528,6 +529,71 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
- 	if firstResponseTimeout != nil {
- 		req = firstResponseTimeout.request
- 	}
-+	var attemptTiming *common.RelayTimingInfo
-+	var attemptTimingMu sync.Mutex
-+	if common2.RelayTimingLogEnabled && info != nil && req != nil {
-+		attemptTiming = &common.RelayTimingInfo{
-+			DoStart: time.Now(),
-+		}
-+		setAttemptTiming := func(update func(*common.RelayTimingInfo)) {
-+			attemptTimingMu.Lock()
-+			defer attemptTimingMu.Unlock()
-+			update(attemptTiming)
-+		}
-+		req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{
-+			GotConn: func(connInfo httptrace.GotConnInfo) {
-+				setAttemptTiming(func(t *common.RelayTimingInfo) {
-+					t.GotConn = time.Now()
-+					t.ReusedConn = connInfo.Reused
-+					t.WasIdleConn = connInfo.WasIdle
-+					t.IdleTime = connInfo.IdleTime
-+				})
-+			},
-+			DNSStart: func(_ httptrace.DNSStartInfo) {
-+				setAttemptTiming(func(t *common.RelayTimingInfo) {
-+					t.DNSStart = time.Now()
-+				})
-+			},
-+			DNSDone: func(_ httptrace.DNSDoneInfo) {
-+				setAttemptTiming(func(t *common.RelayTimingInfo) {
-+					t.DNSDone = time.Now()
-+				})
-+			},
-+			ConnectStart: func(_, _ string) {
-+				setAttemptTiming(func(t *common.RelayTimingInfo) {
-+					t.ConnectStart = time.Now()
-+				})
-+			},
-+			ConnectDone: func(_, _ string, _ error) {
-+				setAttemptTiming(func(t *common.RelayTimingInfo) {
-+					t.ConnectDone = time.Now()
-+				})
-+			},
-+			TLSHandshakeStart: func() {
-+				setAttemptTiming(func(t *common.RelayTimingInfo) {
-+					t.TLSStart = time.Now()
-+				})
-+			},
-+			TLSHandshakeDone: func(_ tls.ConnectionState, _ error) {
-+				setAttemptTiming(func(t *common.RelayTimingInfo) {
-+					t.TLSDone = time.Now()
-+				})
-+			},
-+			WroteRequest: func(writeInfo httptrace.WroteRequestInfo) {
-+				setAttemptTiming(func(t *common.RelayTimingInfo) {
-+					t.WroteRequest = time.Now()
-+					if writeInfo.Err != nil {
-+						t.WriteErr = writeInfo.Err.Error()
-+					}
-+				})
-+			},
-+			GotFirstResponseByte: func() {
-+				setAttemptTiming(func(t *common.RelayTimingInfo) {
-+					t.FirstByte = time.Now()
-+				})
-+			},
-+		}))
-+	}
- 	closeRequestBodies := func() {
- 		if req != nil && req.Body != nil {
- 			_ = req.Body.Close()
-@@ -545,8 +611,31 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
- 	if firstResponseTimeout != nil {
- 		firstResponseTimeout.CompleteAt(doReturn)
- 	}
-+	var attempt common.RelayTimingInfo
-+	hasAttemptTiming := false
-+	if common2.RelayTimingLogEnabled && info != nil {
-+		if attemptTiming != nil {
-+			attemptTimingMu.Lock()
-+			attemptTiming.DoReturn = doReturn
-+			if resp != nil {
-+				attemptTiming.UpstreamStatus = resp.StatusCode
-+			}
-+			attempt = *attemptTiming
-+			hasAttemptTiming = true
-+			attemptTimingMu.Unlock()
-+			info.Timing.SetAttempt(attempt)
-+		} else {
-+			info.Timing.DoReturn = doReturn
-+		}
-+		if resp != nil {
-+			info.Timing.UpstreamStatus = resp.StatusCode
-+		}
-+	}
- 	if err != nil {
- 		firstResponseTimedOut := isFirstResponseTimeout(firstResponseTimeout, reqCtx, c)
-+		if hasAttemptTiming {
-+			logRelayFailedAttemptTiming(c, info, attempt, err)
-+		}
- 		if resp != nil && resp.Body != nil {
- 			_ = resp.Body.Close()
- 		}
-@@ -624,6 +713,53 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -624,6 +624,53 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  	return resp, nil
  }
  
@@ -737,6 +628,7 @@ index 3be2f31..8e3509d 100644
  func isResponseHeaderTimeout(err error) bool {
  	if err == nil {
  		return false
+
 diff --git a/relay/common/relay_info.go b/relay/common/relay_info.go
 index 2f7afd3..aef61b5 100644
 --- a/relay/common/relay_info.go
