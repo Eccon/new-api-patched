@@ -115,10 +115,10 @@ index 78975dd..419b95b 100644
      }
  
 diff --git a/web/default/src/features/usage-logs/components/dialogs/details-dialog.tsx b/web/default/src/features/usage-logs/components/dialogs/details-dialog.tsx
-index 2785a55..825ba10 100644
+index 87571fe..d111f35 100644
 --- a/web/default/src/features/usage-logs/components/dialogs/details-dialog.tsx
 +++ b/web/default/src/features/usage-logs/components/dialogs/details-dialog.tsx
-@@ -420,6 +420,10 @@ export function DetailsDialog(props: DetailsDialogProps) {
+@@ -427,6 +427,10 @@ export function DetailsDialog(props: DetailsDialogProps) {
    const showTiming = isTimingLogType(props.log.type)
    const showAdminIp =
      !!props.log.ip && (showTiming || (props.isAdmin && isTopup))
@@ -129,37 +129,37 @@ index 2785a55..825ba10 100644
    const adminInfo = other?.admin_info
    const topupAuditFields =
      isTopup && props.isAdmin && adminInfo
-@@ -581,6 +585,22 @@ export function DetailsDialog(props: DetailsDialogProps) {
-                 />
-               )}
- 
-+              {requestUserAgent && (
-+                <DetailRow
-+                  label={t('User-Agent')}
-+                  value={
-+                    <button
-+                      type='button'
-+                      className='max-w-full cursor-pointer break-all text-left hover:underline'
-+                      onClick={() => copyToClipboard(requestUserAgent)}
-+                    >
-+                      {requestUserAgent}
-+                    </button>
-+                  }
-+                  mono
-+                />
-+              )}
+@@ -628,6 +632,22 @@ export function DetailsDialog(props: DetailsDialogProps) {
+               />
+             )}
+
++            {requestUserAgent && (
++              <DetailRow
++                label={t('User-Agent')}
++                value={
++                  <button
++                    type='button'
++                    className='max-w-full cursor-pointer break-all text-left hover:underline'
++                    onClick={() => copyToClipboard(requestUserAgent)}
++                  >
++                    {requestUserAgent}
++                  </button>
++                }
++                mono
++              />
++            )}
 +
-               {showTiming && props.log.use_time > 0 && (
-                 <DetailRow
-                   label={t('Response Time')}
+             {showTiming && props.log.use_time > 0 && (
+               <DetailRow
+                 label={t('Response Time')}
 diff --git a/web/default/src/features/usage-logs/types.ts b/web/default/src/features/usage-logs/types.ts
-index 8db88c4..f629371 100644
+index b243aff..371037c 100644
 --- a/web/default/src/features/usage-logs/types.ts
 +++ b/web/default/src/features/usage-logs/types.ts
-@@ -110,6 +110,7 @@ export interface LogOtherData {
-     admin_username?: string
-     admin_id?: number | string
-   }
+@@ -130,6 +130,7 @@ export interface LogOtherData {
+   // Login audit fields (type=7); visible to the log owner
+   login_method?: string
+   user_agent?: string
 +  request_user_agent?: string
    request_path?: string
    request_conversion?: string[]
