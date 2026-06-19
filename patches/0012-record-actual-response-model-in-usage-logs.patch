@@ -247,23 +247,23 @@ index ba6eb0c..5030559 100644
    const isViolation = isViolationFeeLog(other)
    const isRefund = props.log.type === 6
 @@ -959,7 +962,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
-           )}
+         )}
  
-           {/* Model mapping */}
--          {other?.is_model_mapped && other?.upstream_model_name && (
-+          {actualModel && (
-             <DetailSection label={t('Model Mapping')}>
-               <DetailRow
-                 label={t('Request Model')}
+         {/* Model mapping */}
+-        {other?.is_model_mapped && other?.upstream_model_name && (
++        {actualModel && (
+           <DetailSection label={t('Model Mapping')}>
+             <DetailRow
+               label={t('Request Model')}
 @@ -968,7 +971,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
-               />
-               <DetailRow
-                 label={t('Actual Model')}
--                value={other.upstream_model_name}
-+                value={actualModel}
-                 mono
-               />
-             </DetailSection>
+             />
+             <DetailRow
+               label={t('Actual Model')}
+-              value={other.upstream_model_name}
++              value={actualModel}
+               mono
+             />
+           </DetailSection>
 diff --git a/web/default/src/features/usage-logs/lib/format.ts b/web/default/src/features/usage-logs/lib/format.ts
 index c85409f..6502f24 100644
 --- a/web/default/src/features/usage-logs/lib/format.ts

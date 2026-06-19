@@ -129,29 +129,26 @@ index 87571fe..d111f35 100644
    const adminInfo = other?.admin_info
    const topupAuditFields =
      isTopup && props.isAdmin && adminInfo
-@@ -628,6 +632,22 @@ export function DetailsDialog(props: DetailsDialogProps) {
-               />
-             )}
-
-+            {requestUserAgent && (
-+              <DetailRow
-+                label={t('User-Agent')}
-+                value={
-+                  <button
-+                    type='button'
-+                    className='max-w-full cursor-pointer break-all text-left hover:underline'
-+                    onClick={() => copyToClipboard(requestUserAgent)}
-+                  >
-+                    {requestUserAgent}
-+                  </button>
-+                }
-+                mono
-+              />
-+            )}
+@@ -628,3 +632,19 @@ export function DetailsDialog(props: DetailsDialogProps) {
++          {requestUserAgent && (
++            <DetailRow
++              label={t('User-Agent')}
++              value={
++                <button
++                  type='button'
++                  className='max-w-full cursor-pointer break-all text-left hover:underline'
++                  onClick={() => copyToClipboard(requestUserAgent)}
++                >
++                  {requestUserAgent}
++                </button>
++              }
++              mono
++            />
++          )}
 +
-             {showTiming && props.log.use_time > 0 && (
-               <DetailRow
-                 label={t('Response Time')}
+           {showTiming && props.log.use_time > 0 && (
+             <DetailRow
+               label={t('Response Time')}
 diff --git a/web/default/src/features/usage-logs/types.ts b/web/default/src/features/usage-logs/types.ts
 index b243aff..371037c 100644
 --- a/web/default/src/features/usage-logs/types.ts
