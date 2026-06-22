@@ -64,14 +64,14 @@ index 8ec7807..040a1de 100644
  func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
  	if !common.LogConsumeEnabled {
  		return
-@@ -213,6 +247,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
+@@ -298,6 +332,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
  	username := c.GetString("username")
  	requestId := c.GetString(common.RequestIdKey)
  	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
+ 	createdAt := common.GetTimestamp()
 +	params.Other = appendRequestUserAgentToOther(c, params.Other)
  	otherStr := common.MapToJsonStr(params.Other)
  	// 判断是否需要记录 IP
- 	needRecordIp := false
 diff --git a/web/classic/src/hooks/usage-logs/useUsageLogsData.jsx b/web/classic/src/hooks/usage-logs/useUsageLogsData.jsx
 index 78975dd..419b95b 100644
 --- a/web/classic/src/hooks/usage-logs/useUsageLogsData.jsx
