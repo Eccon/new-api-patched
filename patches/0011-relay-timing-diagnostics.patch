@@ -552,17 +552,17 @@ diff --git a/middleware/request-id.go b/middleware/request-id.go
 index 241c2a8..49ab2cf 100644
 --- a/middleware/request-id.go
 +++ b/middleware/request-id.go
-@@ -5,6 +5,7 @@ import (
- 	"crypto/sha256"
- 	"encoding/hex"
- 	"runtime/debug"
+@@ -2,6 +2,7 @@ package middleware
+ 
+ import (
+ 	"context"
 +	"time"
  
  	"github.com/QuantumNous/new-api/common"
  	"github.com/gin-gonic/gin"
-@@ -22,6 +23,9 @@ func RequestId() func(c *gin.Context) {
+@@ -10,6 +11,9 @@ func RequestId() func(c *gin.Context) {
  	return func(c *gin.Context) {
- 		id := common.GetTimeString() + _bp + common.GetRandomString(8)
+ 		id := common.NewRequestId()
  		c.Set(common.RequestIdKey, id)
 +		if common.RelayTimingLogEnabled {
 +			c.Set("relay_timing_request_received_at", time.Now())
