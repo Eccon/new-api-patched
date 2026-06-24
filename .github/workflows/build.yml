@@ -216,12 +216,17 @@ jobs:
           NODE_OPTIONS: "--max-old-space-size=4096"
           VITE_REACT_APP_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          cd web/default
-          bun install
+          cd web
+          bun install --frozen-lockfile
+          cd default
           DISABLE_ESLINT_PLUGIN=true bun run build
-          cd ../classic
-          bun install --filter ./classic
+          cd ../..
+
+          cd web
+          bun install --filter ./classic --frozen-lockfile
+          cd classic
           bun run build
+          cd ../..
 
       - name: Set up Go
         if: steps.release_check.outputs.skip != 'true'
