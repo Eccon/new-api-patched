@@ -220,7 +220,7 @@ jobs:
           bun install
           DISABLE_ESLINT_PLUGIN=true bun run build
           cd ../classic
-          bun install
+          bun install --filter ./classic
           bun run build
 
       - name: Set up Go
