@@ -1,8 +1,8 @@
 diff --git a/common/constants.go b/common/constants.go
-index d81c17d..7f94ff0 100644
+index 4e7de1e6a6f5f1a585f8d5e01b8dd68702c96f05..f6028ef9ec2d831881e1d3f572ec447b74fe6d5f 100644
 --- a/common/constants.go
 +++ b/common/constants.go
-@@ -172,8 +172,11 @@ var UpstreamUserAgentOpenAI = ""
+@@ -187,9 +187,12 @@ var UpstreamUserAgentOpenAI = ""
  var UpstreamUserAgentClaude = ""
  var UpstreamUserAgentGemini = ""
  
@@ -15,12 +15,12 @@ index d81c17d..7f94ff0 100644
 +
  var RelayMaxIdleConns int
  var RelayMaxIdleConnsPerHost int
+ 
 diff --git a/common/init.go b/common/init.go
-index c33f04f..a110979 100644
+index 8651f180c1b28084c6fa8f409247e3b8b5990608..0c8527dc3782af5bef14f9236c8728d70c8b6733 100644
 --- a/common/init.go
 +++ b/common/init.go
-@@ -102,7 +102,9 @@ func InitEnv() {
- 	SyncFrequency = GetEnvOrDefault("SYNC_FREQUENCY", 60)
+@@ -108,6 +108,8 @@ func InitEnv() {
  	BatchUpdateInterval = GetEnvOrDefault("BATCH_UPDATE_INTERVAL", 5)
  	RelayTimeout = GetEnvOrDefault("RELAY_TIMEOUT", 0)
  	RelayIdleConnTimeout = GetEnvOrDefault("RELAY_IDLE_CONN_TIMEOUT", 90)
@@ -29,8 +29,26 @@ index c33f04f..a110979 100644
  	RelayMaxIdleConns = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS", 500)
  	RelayMaxIdleConnsPerHost = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS_PER_HOST", 100)
  
+diff --git a/controller/relay.go b/controller/relay.go
+index 6e91ccb605063bfcec3173d65cb546e8f8f6cbe8..be74d3d21fc2ce25b329f45a13e946dc5a6ef303 100644
+--- a/controller/relay.go
++++ b/controller/relay.go
+@@ -229,6 +229,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+ 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
+ 		relayInfo.LastError = newAPIError
+ 
++		if c.Request.Context().Err() != nil {
++			// 下游已断开，停止重试并避免把客户端取消记录为渠道错误。
++			logger.LogInfo(c, fmt.Sprintf(
++				"relay aborted: downstream_gone, last_error=%s", common.LocalLogPreview(newAPIError.Error()),
++			))
++			break
++		}
+ 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
+ 
+ 		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index f3fc526..e4ca653 100644
+index 63fd489a7fce2569e580af982ad2ccf9ce8a2b25..1df13ff60d6e50613720e79ae1bb01ffc4e6e77d 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
 @@ -6,6 +6,7 @@ import (
@@ -59,7 +77,7 @@ index f3fc526..e4ca653 100644
  	if err != nil {
  		return nil, fmt.Errorf("new request failed: %w", err)
  	}
-@@ -493,12 +494,12 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -483,12 +484,12 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  	var client *http.Client
  	var err error
  	if info.ChannelSetting.Proxy != "" {
@@ -74,7 +92,7 @@ index f3fc526..e4ca653 100644
  	}
  
  	var stopPinger context.CancelFunc
-@@ -521,30 +522,223 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -513,30 +514,223 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  
  	applyDefaultUpstreamUserAgent(c, req, info)
  	logUpstreamUserAgent(c, req)
@@ -302,7 +320,7 @@ index f3fc526..e4ca653 100644
  		return nil, fmt.Errorf("new request failed: %w", err)
  	}
 diff --git a/relay/channel/aws/relay-aws.go b/relay/channel/aws/relay-aws.go
-index 1f6ff7e..edc8f8e 100644
+index 1f6ff7e69263745a3c95304ea03994793edf296a..edc8f8e56ee2a335d883fdb7421f55b146001f7f 100644
 --- a/relay/channel/aws/relay-aws.go
 +++ b/relay/channel/aws/relay-aws.go
 @@ -7,7 +7,6 @@ import (
@@ -370,7 +388,7 @@ index 1f6ff7e..edc8f8e 100644
  
  	awsResp, err := a.AwsClient.InvokeModel(ctx, a.AwsReq.(*bedrockruntime.InvokeModelInput))
 diff --git a/service/error.go b/service/error.go
-index cf7325b..cfa6560 100644
+index cf7325b61039000d75b1ed21eb8c2397816fa518..cfa65607ac1a6b1cf297a49dc3633e47f398b93f 100644
 --- a/service/error.go
 +++ b/service/error.go
 @@ -85,12 +85,12 @@ func ClaudeErrorWrapperLocal(err error, code string, statusCode int) *dto.Claude
@@ -388,24 +406,18 @@ index cf7325b..cfa6560 100644
  	responseBodyText := string(responseBody)
  	responseBodyPreview := common.LocalLogPreview(responseBodyText)
 diff --git a/service/http_client.go b/service/http_client.go
-index 2f75de2..400f767 100644
+index c0f89c5ebd3d900fec4de430ed7e7f6bdb2115ec..3f0bb1da7b84a42fcb20014a1b5f8c5360fa0468 100644
 --- a/service/http_client.go
 +++ b/service/http_client.go
-@@ -16,9 +16,10 @@ import (
- )
+@@ -17,6 +17,7 @@ import (
  
  var (
--	httpClient      *http.Client
--	proxyClientLock sync.Mutex
--	proxyClients    = make(map[string]*http.Client)
-+	httpClient       *http.Client
-+	streamHttpClient *http.Client
-+	proxyClientLock  sync.Mutex
-+	proxyClients     = make(map[string]*http.Client)
- )
- 
- func checkRedirect(req *http.Request, via []*http.Request) error {
-@@ -48,24 +49,37 @@ func InitHttpClient() {
+ 	httpClient              *http.Client
++	streamHttpClient        *http.Client
+ 	ssrfProtectedHTTPClient *http.Client
+ 	proxyClientLock         sync.Mutex
+ 	proxyClients            = make(map[string]*http.Client)
+@@ -69,21 +70,27 @@ func InitHttpClient() {
  		transport.TLSClientConfig = common.InsecureTLSConfig
  	}
  
@@ -427,6 +439,7 @@ index 2f75de2..400f767 100644
 +		applyResponseHeaderTimeout(streamTransport, true)
 +		streamHttpClient = newRelayHTTPClient(streamTransport)
  	}
+ 	ssrfProtectedHTTPClient = newProtectedFetchHTTPClient()
  }
  
 +func newRelayHTTPClient(transport http.RoundTripper) *http.Client {
@@ -440,7 +453,10 @@ index 2f75de2..400f767 100644
 +	return client
 +}
 +
- func GetHttpClient() *http.Client {
+ // GetHttpClient returns the general outbound client used by relay/provider
+ // integrations. Do not attach the SSRF-protected dialer here: provider base URLs
+ // are root/operator-managed deployment targets, not arbitrary user-controlled
+@@ -95,6 +102,13 @@ func GetHttpClient() *http.Client {
  	return httpClient
  }
  
@@ -451,10 +467,10 @@ index 2f75de2..400f767 100644
 +	return httpClient
 +}
 +
- // GetHttpClientWithProxy returns the default client or a proxy-enabled one when proxyURL is provided.
- func GetHttpClientWithProxy(proxyURL string) (*http.Client, error) {
- 	if proxyURL == "" {
-@@ -74,6 +88,49 @@ func GetHttpClientWithProxy(proxyURL string) (*http.Client, error) {
+ // GetSSRFProtectedHTTPClient 返回带拨号时 SSRF 校验的客户端。
+ // ssrfProtectedHTTPClient 由 InitHttpClient 在启动时初始化，运行期只读。
+ func GetSSRFProtectedHTTPClient() *http.Client {
+@@ -112,6 +126,49 @@ func GetHttpClientWithProxy(proxyURL string) (*http.Client, error) {
  	return NewProxyHttpClient(proxyURL)
  }
  
@@ -504,7 +520,7 @@ index 2f75de2..400f767 100644
  // ResetProxyClientCache 清空代理客户端缓存，确保下次使用时重新初始化
  func ResetProxyClientCache() {
  	proxyClientLock.Lock()
-@@ -88,15 +145,24 @@ func ResetProxyClientCache() {
+@@ -126,15 +183,24 @@ func ResetProxyClientCache() {
  
  // NewProxyHttpClient 创建支持代理的 HTTP 客户端
  func NewProxyHttpClient(proxyURL string) (*http.Client, error) {
@@ -531,7 +547,7 @@ index 2f75de2..400f767 100644
  		proxyClientLock.Unlock()
  		return client, nil
  	}
-@@ -115,16 +181,13 @@ func NewProxyHttpClient(proxyURL string) (*http.Client, error) {
+@@ -154,16 +220,13 @@ func NewProxyHttpClient(proxyURL string) (*http.Client, error) {
  			ForceAttemptHTTP2:   true,
  			Proxy:               http.ProxyURL(parsedURL),
  		}
@@ -551,7 +567,7 @@ index 2f75de2..400f767 100644
  		proxyClientLock.Unlock()
  		return client, nil
  
-@@ -156,14 +219,14 @@ func NewProxyHttpClient(proxyURL string) (*http.Client, error) {
+@@ -196,14 +259,14 @@ func NewProxyHttpClient(proxyURL string) (*http.Client, error) {
  				return dialer.Dial(network, addr)
  			},
  		}
