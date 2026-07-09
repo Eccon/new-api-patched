@@ -1,8 +1,9 @@
 diff --git a/dto/openai_response.go b/dto/openai_response.go
-index f6a7592..41cf166 100644
+index e503f5f91c6952abb8daa9a48b54b129d5f531b0..342026980772cf3926fd865df052898edd468d9a 100644
 --- a/dto/openai_response.go
 +++ b/dto/openai_response.go
-@@ -392,9 +392,10 @@ const (
+@@ -390,10 +390,11 @@ const (
+ 
  // ResponsesStreamResponse 用于处理 /v1/responses 流式响应
  type ResponsesStreamResponse struct {
 -	Type     string                   `json:"type"`
@@ -18,12 +19,12 @@ index f6a7592..41cf166 100644
  	// - response.function_call_arguments.done
  	OutputIndex  *int                           `json:"output_index,omitempty"`
 diff --git a/relay/channel/openai/helper.go b/relay/channel/openai/helper.go
-index 08811a7..f44f59c 100644
+index d10176b58fe1bb47be414caa5d9690b0c73ee373..ed1f59d896f9b8bfced62bebde5f259e8fd999a1 100644
 --- a/relay/channel/openai/helper.go
 +++ b/relay/channel/openai/helper.go
-@@ -259,3 +259,41 @@ func sendResponsesStreamData(c *gin.Context, streamResponse dto.ResponsesStreamR
+@@ -208,3 +208,42 @@ func sendResponsesStreamData(c *gin.Context, streamResponse dto.ResponsesStreamR
  	}
- 	helper.ResponseChunkData(c, streamResponse, data)
+ 	_ = helper.ResponseChunkData(c, streamResponse, data)
  }
 +
 +func sendResponsesErrorEvent(c *gin.Context, reason string, sequenceNumber int) {
@@ -54,6 +55,7 @@ index 08811a7..f44f59c 100644
 +		return
 +	}
 +
++	helper.ExtendWriteDeadline(c)
 +	c.Render(-1, common.CustomEvent{Data: "event: error\n"})
 +	c.Render(-1, common.CustomEvent{Data: "data: " + string(jsonData)})
 +	if err := helper.FlushWriter(c); err != nil {
@@ -63,33 +65,8 @@ index 08811a7..f44f59c 100644
 +		logger.LogError(c, "failed to send responses error event: "+err.Error())
 +	}
 +}
-diff --git a/relay/common/stream_status.go b/relay/common/stream_status.go
-index 7e1caaa..8afdd04 100644
---- a/relay/common/stream_status.go
-+++ b/relay/common/stream_status.go
-@@ -12,7 +12,7 @@ type StreamEndReason string
- const (
- 	StreamEndReasonNone        StreamEndReason = ""
- 	StreamEndReasonDone        StreamEndReason = "done"
--	StreamEndReasonTimeout     StreamEndReason = "timeout"
-+	StreamEndReasonTimeout     StreamEndReason = "stream_inactivity_timeout"
- 	StreamEndReasonClientGone  StreamEndReason = "client_gone"
- 	StreamEndReasonScannerErr  StreamEndReason = "scanner_error"
- 	StreamEndReasonHandlerStop StreamEndReason = "handler_stop"
-diff --git a/relay/common/stream_status_test.go b/relay/common/stream_status_test.go
-index 6fc755a..3bf877e 100644
---- a/relay/common/stream_status_test.go
-+++ b/relay/common/stream_status_test.go
-@@ -171,6 +171,6 @@ func TestStreamStatus_Summary(t *testing.T) {
- 	s2.RecordError("bad json")
- 	s2.RecordError("write failed")
- 	summary2 := s2.Summary()
--	assert.Contains(t, summary2, "reason=timeout")
-+	assert.Contains(t, summary2, "reason=stream_inactivity_timeout")
- 	assert.Contains(t, summary2, "soft_errors=2")
- }
 diff --git a/relay/channel/openai/relay_responses.go b/relay/channel/openai/relay_responses.go
-index 2665b8d..5dc65a0 100644
+index 2665b8d027e9999c18d1b54953fc300cdb9a7823..8c9d421d3d2bfac5a90189bfb695dedb69140cf1 100644
 --- a/relay/channel/openai/relay_responses.go
 +++ b/relay/channel/openai/relay_responses.go
 @@ -78,6 +78,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
@@ -116,11 +93,11 @@ index 2665b8d..5dc65a0 100644
  			if streamResponse.Response != nil {
  				if streamResponse.Response.Usage != nil {
  					if streamResponse.Response.Usage.InputTokens != 0 {
-@@ -112,6 +115,8 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+@@ -112,6 +119,8 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
  					c.Set("image_generation_call_size", streamResponse.Response.GetSize())
  				}
  			}
-+		case "response.error", "response.failed", "response.incomplete", "response.cancelled", "response.canceled":
++		case "error", "response.error", "response.failed", "response.incomplete", "response.cancelled", "response.canceled":
 +			sawErrorEvent = true
  		case "response.output_text.delta":
  			// 处理输出文本
@@ -145,32 +122,29 @@ index 2665b8d..5dc65a0 100644
  	if usage.CompletionTokens == 0 {
  		// 计算输出文本的 token 数量
  		tempStr := responseTextBuilder.String()
-diff --git a/relay/helper/stream_scanner.go b/relay/helper/stream_scanner.go
-index a9bc5e1..d6f1919 100644
---- a/relay/helper/stream_scanner.go
-+++ b/relay/helper/stream_scanner.go
-@@ -43,13 +43,6 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
- 	// 无条件新建 StreamStatus
- 	info.StreamStatus = relaycommon.NewStreamStatus()
- 
--	// 确保响应体总是被关闭
--	defer func() {
--		if resp.Body != nil {
--			resp.Body.Close()
--		}
--	}()
--
- 	streamingTimeout := time.Duration(constant.StreamingTimeout) * time.Second
- 
- 	var (
-@@ -83,6 +76,10 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
- 
- 	// 改进资源清理，确保所有 goroutine 正确退出
- 	defer func() {
-+		if resp.Body != nil {
-+			resp.Body.Close()
-+		}
-+
- 		// 通知所有 goroutine 停止
- 		common.SafeSendBool(stopChan, true)
+diff --git a/relay/common/stream_status.go b/relay/common/stream_status.go
+index 57b0bb973b2e231d37b547910c9f5ddbb58bad2a..76a2b6b53763b33a61b1a25d08526a77526f8943 100644
+--- a/relay/common/stream_status.go
++++ b/relay/common/stream_status.go
+@@ -12,7 +12,7 @@ type StreamEndReason string
+ const (
+ 	StreamEndReasonNone        StreamEndReason = ""
+ 	StreamEndReasonDone        StreamEndReason = "done"
+-	StreamEndReasonTimeout     StreamEndReason = "timeout"
++	StreamEndReasonTimeout     StreamEndReason = "stream_inactivity_timeout"
+ 	StreamEndReasonClientGone  StreamEndReason = "client_gone"
+ 	StreamEndReasonScannerErr  StreamEndReason = "scanner_error"
+ 	StreamEndReasonHandlerStop StreamEndReason = "handler_stop"
+diff --git a/relay/common/stream_status_test.go b/relay/common/stream_status_test.go
+index 4a31cb79fbcff5e31e2a622a8d4a88e603e2c347..53f21a7ef8c0697d2e3db25064699419deb600c0 100644
+--- a/relay/common/stream_status_test.go
++++ b/relay/common/stream_status_test.go
+@@ -171,7 +171,7 @@ func TestStreamStatus_Summary(t *testing.T) {
+ 	s2.RecordError("bad json")
+ 	s2.RecordError("write failed")
+ 	summary2 := s2.Summary()
+-	assert.Contains(t, summary2, "reason=timeout")
++	assert.Contains(t, summary2, "reason=stream_inactivity_timeout")
+ 	assert.Contains(t, summary2, "soft_errors=2")
+ }
  
