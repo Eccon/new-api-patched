@@ -1,10 +1,8 @@
 diff --git a/common/constants.go b/common/constants.go
-index 7f94ff0..dc22219 100644
+index f6028ef9ec2d831881e1d3f572ec447b74fe6d5f..f8584ff64a817fc92ae7dd847ae130bb44ecfe94 100644
 --- a/common/constants.go
 +++ b/common/constants.go
-@@ -175,8 +175,10 @@ var UpstreamUserAgentGemini = ""
- var RelayTimeout int               // unit is second
- 
+@@ -192,6 +192,8 @@ var RelayTimeout int               // unit is second
  var RelayIdleConnTimeout int // unit is second
  var RelayResponseHeaderTimeout int // unit is second
  var RelayNonStreamTimeout int      // unit is second
@@ -14,7 +12,7 @@ index 7f94ff0..dc22219 100644
  var RelayMaxIdleConns int
  var RelayMaxIdleConnsPerHost int
 diff --git a/common/gin.go b/common/gin.go
-index 315e866..bc6979d 100644
+index 315e86613ec7ca85a92794975613125099ceb564..bc6979d5ac2e88c62bc1f82d578824307134b27c 100644
 --- a/common/gin.go
 +++ b/common/gin.go
 @@ -22,6 +22,46 @@ const KeyBodyStorage = "key_body_storage"
@@ -136,11 +134,10 @@ index 315e866..bc6979d 100644
  	return nil
  }
 diff --git a/common/init.go b/common/init.go
-index a110979..2bad871 100644
+index 0c8527dc3782af5bef14f9236c8728d70c8b6733..6ea33b186650bc18de5515242254efdaab9c3010 100644
 --- a/common/init.go
 +++ b/common/init.go
-@@ -104,7 +104,9 @@ func InitEnv() {
- 	RelayTimeout = GetEnvOrDefault("RELAY_TIMEOUT", 0)
+@@ -110,6 +110,8 @@ func InitEnv() {
  	RelayIdleConnTimeout = GetEnvOrDefault("RELAY_IDLE_CONN_TIMEOUT", 90)
  	RelayResponseHeaderTimeout = GetEnvOrDefault("RELAY_RESPONSE_HEADER_TIMEOUT", 0)
  	RelayNonStreamTimeout = GetEnvOrDefault("RELAY_NON_STREAM_TIMEOUT", -1)
@@ -150,7 +147,7 @@ index a110979..2bad871 100644
  	RelayMaxIdleConnsPerHost = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS_PER_HOST", 100)
  
 diff --git a/common/sys_log.go b/common/sys_log.go
-index 6e5b362..9e70d21 100644
+index 1fa4ebb5751616151b09a9dc2f05de1ba39d3ee4..8725dc12191febcb0a12a76e3cc838333a71829b 100644
 --- a/common/sys_log.go
 +++ b/common/sys_log.go
 @@ -17,21 +17,21 @@ var LogWriterMu sync.RWMutex
@@ -179,7 +176,7 @@ index 6e5b362..9e70d21 100644
  	os.Exit(1)
  }
 diff --git a/controller/relay.go b/controller/relay.go
-index e189a49..a4dc0e9 100644
+index 6865a0e6a0fe4b9c103c02992363d5da68f87ab7..245a11391293355cf358a43aca67d91ef163f855 100644
 --- a/controller/relay.go
 +++ b/controller/relay.go
 @@ -65,7 +65,130 @@ func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewA
@@ -398,7 +395,7 @@ index e189a49..a4dc0e9 100644
  	defer func() {
  		// Only return quota if downstream failed and quota was actually pre-consumed
 diff --git a/logger/logger.go b/logger/logger.go
-index 867d883..39e12fc 100644
+index 867d88322430db1bd5ca253b46e07f8478cf0631..39e12fc32752c9e956a48939c2c61e1c2fceeb02 100644
 --- a/logger/logger.go
 +++ b/logger/logger.go
 @@ -107,7 +107,7 @@ func logHelper(ctx context.Context, level string, msg string) {
@@ -411,7 +408,7 @@ index 867d883..39e12fc 100644
  	logCount++ // we don't need accurate count, so no lock here
  	if logCount > maxLogCount && !setupLogWorking {
 diff --git a/middleware/distributor.go b/middleware/distributor.go
-index 771719b..b564072 100644
+index cf5caa06d5138b0f77e61103958611df691e4979..313473cf939e73b5aad3ba496b6c388cd515fbb5 100644
 --- a/middleware/distributor.go
 +++ b/middleware/distributor.go
 @@ -31,9 +31,15 @@ type ModelRequest struct {
@@ -430,7 +427,7 @@ index 771719b..b564072 100644
  		if err != nil {
  			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
  			return
-@@ -158,6 +164,9 @@ func Distribute() func(c *gin.Context) {
+@@ -161,6 +167,9 @@ func Distribute() func(c *gin.Context) {
  			}
  		}
  		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
@@ -440,7 +437,7 @@ index 771719b..b564072 100644
  		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
  		c.Next()
  		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
-@@ -197,6 +206,14 @@ func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
+@@ -214,6 +223,14 @@ func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
  	if err != nil {
  		return nil, err
  	}
@@ -455,7 +452,7 @@ index 771719b..b564072 100644
  	if !gjson.ValidBytes(requestBody) {
  		return nil, errors.New("invalid JSON request body")
  	}
-@@ -210,10 +227,20 @@ func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
+@@ -227,10 +244,20 @@ func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
  	if err != nil {
  		return nil, err
  	}
@@ -477,7 +474,7 @@ index 771719b..b564072 100644
  
  	return &ModelRequest{
 diff --git a/middleware/logger.go b/middleware/logger.go
-index 151008d..7f78d74 100644
+index 151008d9f23ab80034d909dc31e2a48215fac09e..7f78d74233f7192a14d79325a74dcdb8643e8416 100644
 --- a/middleware/logger.go
 +++ b/middleware/logger.go
 @@ -1,9 +1,12 @@
@@ -549,7 +546,7 @@ index 151008d..7f78d74 100644
  	server.Use(gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
  		var requestID string
 diff --git a/middleware/request-id.go b/middleware/request-id.go
-index 241c2a8..49ab2cf 100644
+index e1bf315a45e0ee409318275c7f3290d938a7b04e..c62680fe3dc545476c053cad12baea4c13b8ca63 100644
 --- a/middleware/request-id.go
 +++ b/middleware/request-id.go
 @@ -2,6 +2,7 @@ package middleware
@@ -560,7 +557,7 @@ index 241c2a8..49ab2cf 100644
  
  	"github.com/QuantumNous/new-api/common"
  	"github.com/gin-gonic/gin"
-@@ -10,6 +11,9 @@ func RequestId() func(c *gin.Context) {
+@@ -11,6 +12,9 @@ func RequestId() func(c *gin.Context) {
  	return func(c *gin.Context) {
  		id := common.NewRequestId()
  		c.Set(common.RequestIdKey, id)
@@ -571,10 +568,10 @@ index 241c2a8..49ab2cf 100644
  		c.Request = c.Request.WithContext(ctx)
  		c.Header(common.RequestIdKey, id)
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index 3be2f31..ea56131 100644
+index b9a2e11d511b03fe7807fff15ddbdf3eaa0b2ea1..a761e10b11ec8bf8391f7bb5405f1c1467d3a08d 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
-@@ -624,6 +624,53 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -616,6 +616,53 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  	return resp, nil
  }
  
@@ -628,9 +625,8 @@ index 3be2f31..ea56131 100644
  func isResponseHeaderTimeout(err error) bool {
  	if err == nil {
  		return false
-
 diff --git a/relay/common/relay_info.go b/relay/common/relay_info.go
-index 2f7afd3..aef61b5 100644
+index 9f460ce5c6a7bf68f9284964beb196325a2faf8d..e938da61b50d99e49d8ac42dec94ba9b7ced1f10 100644
 --- a/relay/common/relay_info.go
 +++ b/relay/common/relay_info.go
 @@ -85,6 +85,86 @@ type TokenCountMeta struct {
@@ -720,7 +716,7 @@ index 2f7afd3..aef61b5 100644
  type RelayInfo struct {
  	TokenId           int
  	TokenKey          string
-@@ -169,6 +249,7 @@ type RelayInfo struct {
+@@ -174,6 +254,7 @@ type RelayInfo struct {
  	BillingRequestInput   *billingexpr.RequestInput
  
  	Request dto.Request
@@ -728,7 +724,7 @@ index 2f7afd3..aef61b5 100644
  
  	// RequestConversionChain records request format conversions in order, e.g.
  	// ["openai", "openai_responses"] or ["openai", "claude"].
-@@ -656,8 +737,12 @@ func (info *RelayInfo) GetEstimatePromptTokens() int {
+@@ -662,8 +743,12 @@ func (info *RelayInfo) GetEstimatePromptTokens() int {
  }
  
  func (info *RelayInfo) SetFirstResponseTime() {
@@ -743,11 +739,11 @@ index 2f7afd3..aef61b5 100644
  	}
  }
 diff --git a/relay/helper/stream_scanner.go b/relay/helper/stream_scanner.go
-index 46b99a4..d171216 100644
+index 4d200ddda34b14424eb1f92eaf3c2a8ad5d7bd18..db396adf7ab839a7800fd9d17e2da983411def2d 100644
 --- a/relay/helper/stream_scanner.go
 +++ b/relay/helper/stream_scanner.go
-@@ -27,6 +27,45 @@ const (
- 	DefaultPingInterval         = 10 * time.Second
+@@ -32,6 +32,45 @@ const (
+ 	streamWriteTimeout = 30 * time.Second
  )
  
 +func streamProbeKind(line string) string {
@@ -792,7 +788,7 @@ index 46b99a4..d171216 100644
  func getScannerBufferSize() int {
  	if constant.StreamScannerMaxBufferMB > 0 {
  		return constant.StreamScannerMaxBufferMB << 20
-@@ -36,7 +75,10 @@ func getScannerBufferSize() int {
+@@ -57,7 +96,10 @@ func ExtendWriteDeadline(c *gin.Context) {
  
  func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo, dataHandler func(data string, sr *StreamResult)) {
  
@@ -804,8 +800,8 @@ index 46b99a4..d171216 100644
  		return
  	}
  
-@@ -210,7 +252,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
- 			logger.LogDebug(c, "scanner goroutine exited")
+@@ -217,7 +259,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+ 			wg.Done()
  		}()
  
 +		probeIndex := 0
@@ -814,7 +810,7 @@ index 46b99a4..d171216 100644
  			// 检查是否需要停止
  			select {
  			case <-stopChan:
-@@ -225,6 +269,15 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+@@ -229,6 +273,15 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
  
  			ticker.Reset(streamingTimeout)
  			data := scanner.Text()
@@ -830,7 +826,7 @@ index 46b99a4..d171216 100644
  			logger.LogDebug(c, "stream scanner data: %s", data)
  
  			if len(data) < 6 {
-@@ -239,7 +292,14 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+@@ -243,7 +296,14 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
  				continue
  			}
  			if !strings.HasPrefix(data, "[DONE]") {
@@ -846,7 +842,7 @@ index 46b99a4..d171216 100644
  				info.ReceivedResponseCount++
  
  				select {
-@@ -252,6 +312,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+@@ -256,6 +316,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
  			} else {
  				info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
  				logger.LogDebug(c, "received [DONE], stopping scanner")
@@ -856,7 +852,7 @@ index 46b99a4..d171216 100644
  				return
  			}
  		}
-@@ -280,4 +343,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+@@ -287,4 +350,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
  	} else {
  		logger.LogError(c, fmt.Sprintf("stream ended: %s, received=%d", info.StreamStatus.Summary(), info.ReceivedResponseCount))
  	}
@@ -865,10 +861,10 @@ index 46b99a4..d171216 100644
 +	}
  }
 diff --git a/service/text_quota.go b/service/text_quota.go
-index 3f344dc..562c5af 100644
+index 42385ca8b95fb1fffc470e8c8166c0b4d603e68a..6587fed2c5b46cdb248db188bcf8fb365fd95c8c 100644
 --- a/service/text_quota.go
 +++ b/service/text_quota.go
-@@ -319,6 +319,78 @@ func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage)
+@@ -333,6 +333,78 @@ func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage)
  	return "openai"
  }
  
@@ -947,10 +943,10 @@ index 3f344dc..562c5af 100644
  func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []string) {
  	originUsage := usage
  	if usage == nil {
-@@ -458,6 +530,10 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
- 	if tieredBillingApplied {
- 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
+@@ -474,6 +546,10 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
  	}
+ 
+ 	attachQuotaSaturation(ctx, relayInfo, other)
 +	if common.RelayTimingLogEnabled {
 +		relayInfo.Timing.QuotaLogStart = time.Now()
 +		logRelayTiming(ctx, relayInfo)
