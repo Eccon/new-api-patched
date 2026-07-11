@@ -1,5 +1,5 @@
 diff --git a/relay/channel/openai/chat_via_responses.go b/relay/channel/openai/chat_via_responses.go
-index 8eb4821..6fea4a8 100644
+index 1bc04f67a3488c4bb6638ade6c90570f9cdf1884..e9ba1fe2880d0dd697a85e41464c595bc2dcbf25 100644
 --- a/relay/channel/openai/chat_via_responses.go
 +++ b/relay/channel/openai/chat_via_responses.go
 @@ -36,6 +36,7 @@ func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
@@ -31,7 +31,7 @@ index 8eb4821..6fea4a8 100644
  		if streamResp.Type == "response.error" || streamResp.Type == "response.failed" {
  			if streamResp.Response != nil {
 diff --git a/relay/channel/openai/helper.go b/relay/channel/openai/helper.go
-index 97e4383..88c59c3 100644
+index ed1f59d896f9b8bfced62bebde5f259e8fd999a1..d2c5ea67c11c61388346c416c33aa40bc5d0db36 100644
 --- a/relay/channel/openai/helper.go
 +++ b/relay/channel/openai/helper.go
 @@ -91,22 +91,22 @@ func ProcessStreamResponse(streamResponse dto.ChatCompletionsStreamResponse, res
@@ -74,7 +74,7 @@ index 97e4383..88c59c3 100644
  	if service.ValidUsage(lastStreamResponse.Usage) {
  		*containStreamUsage = true
 diff --git a/relay/channel/openai/relay-openai.go b/relay/channel/openai/relay-openai.go
-index de40fe7..c2c4c39 100644
+index de40fe7071fc14e4042799851b6e6842ffee2420..c2c4c396cc8c5dc75961b9d51336afb45d8a56e0 100644
 --- a/relay/channel/openai/relay-openai.go
 +++ b/relay/channel/openai/relay-openai.go
 @@ -118,6 +118,7 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
@@ -112,7 +112,7 @@ index de40fe7..c2c4c39 100644
  	if oaiError := simpleResponse.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
  		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 diff --git a/relay/channel/openai/relay_responses.go b/relay/channel/openai/relay_responses.go
-index 42af5bb..e8df2c8 100644
+index 8c9d421d3d2bfac5a90189bfb695dedb69140cf1..7effcf181d34fc344f123e3703cc2a63593a18c1 100644
 --- a/relay/channel/openai/relay_responses.go
 +++ b/relay/channel/openai/relay_responses.go
 @@ -30,6 +30,7 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
@@ -134,7 +134,7 @@ index 42af5bb..e8df2c8 100644
  		switch streamResponse.Type {
  		case "response.completed":
 diff --git a/relay/common/relay_info.go b/relay/common/relay_info.go
-index bb4fd27..1cd603e 100644
+index e938da61b50d99e49d8ac42dec94ba9b7ced1f10..2b0819aff483170309584cc4add58079b7c5266f 100644
 --- a/relay/common/relay_info.go
 +++ b/relay/common/relay_info.go
 @@ -183,6 +183,7 @@ type RelayInfo struct {
@@ -145,7 +145,7 @@ index bb4fd27..1cd603e 100644
  	RequestURLPath         string
  	RequestHeaders         map[string]string
  	ShouldIncludeUsage     bool
-@@ -737,6 +738,20 @@ func (info *RelayInfo) GetEstimatePromptTokens() int {
+@@ -742,6 +743,20 @@ func (info *RelayInfo) GetEstimatePromptTokens() int {
  	return info.estimatePromptTokens
  }
  
@@ -167,10 +167,10 @@ index bb4fd27..1cd603e 100644
  	info.SetFirstResponseTimeAt(time.Now())
  }
 diff --git a/service/log_info_generate.go b/service/log_info_generate.go
-index 54448d5..a3af845 100644
+index 207b0af5bfefcbf339547a4dff28cbf8f7b3c4ba..a5e50abe5cafb996e5fa88400d911dd9e0fd0c8f 100644
 --- a/service/log_info_generate.go
 +++ b/service/log_info_generate.go
-@@ -33,6 +33,26 @@ func appendRequestPath(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, other
+@@ -68,6 +68,26 @@ func appendRequestPath(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, other
  	}
  }
  
@@ -197,7 +197,7 @@ index 54448d5..a3af845 100644
  func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, modelRatio, groupRatio, completionRatio float64,
  	cacheTokens int, cacheRatio float64, modelPrice float64, userGroupRatio float64) map[string]interface{} {
  	other := make(map[string]interface{})
-@@ -51,6 +71,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
+@@ -86,6 +106,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
  		other["is_model_mapped"] = true
  		other["upstream_model_name"] = relayInfo.UpstreamModelName
  	}
@@ -206,7 +206,7 @@ index 54448d5..a3af845 100644
  	isSystemPromptOverwritten := common.GetContextKeyBool(ctx, constant.ContextKeySystemPromptOverride)
  	if isSystemPromptOverwritten {
 diff --git a/web/classic/src/components/table/usage-logs/UsageLogsColumnDefs.jsx b/web/classic/src/components/table/usage-logs/UsageLogsColumnDefs.jsx
-index baf9ba2..cb8ac99 100644
+index baf9ba27bc7705b47a50c0e4a15f1068e02e4f2d..cb8ac9962a0db56df6f5698ad7191a63d510c6d6 100644
 --- a/web/classic/src/components/table/usage-logs/UsageLogsColumnDefs.jsx
 +++ b/web/classic/src/components/table/usage-logs/UsageLogsColumnDefs.jsx
 @@ -275,7 +275,13 @@ function renderModelName(record, copyText, t) {
@@ -237,20 +237,20 @@ index baf9ba2..cb8ac99 100644
                          );
                        },
 diff --git a/web/default/src/features/usage-logs/components/dialogs/details-dialog.tsx b/web/default/src/features/usage-logs/components/dialogs/details-dialog.tsx
-index c94aa3b..33d6710 100644
+index 41043efebe1232381006fcf2c6214a23fd779638..078a32110f43049ffdaf4bdca28d9a7c81c8a4b2 100644
 --- a/web/default/src/features/usage-logs/components/dialogs/details-dialog.tsx
 +++ b/web/default/src/features/usage-logs/components/dialogs/details-dialog.tsx
-@@ -410,6 +410,9 @@ export function DetailsDialog(props: DetailsDialogProps) {
-   const details = props.log.content ?? ''
-   const other = parseLogOther(props.log.other)
-   const typeConfig = getLogTypeConfig(props.log.type)
+@@ -419,6 +419,9 @@ export function DetailsDialog(props: DetailsDialogProps) {
+   } else if (other?.reasoning_effort === 'medium') {
+     reasoningEffortVariant = 'info'
+   }
 +  const actualModel =
 +    other?.actual_model_name?.trim() ||
 +    (other?.is_model_mapped ? other?.upstream_model_name : undefined)
  
    const isViolation = isViolationFeeLog(other)
    const isRefund = props.log.type === 6
-@@ -953,7 +956,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
+@@ -978,7 +981,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
          )}
  
          {/* Model mapping */}
@@ -259,7 +259,7 @@ index c94aa3b..33d6710 100644
            <DetailSection label={t('Model Mapping')}>
              <DetailRow
                label={t('Request Model')}
-@@ -962,7 +965,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
+@@ -987,7 +990,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
              />
              <DetailRow
                label={t('Actual Model')}
@@ -269,10 +269,10 @@ index c94aa3b..33d6710 100644
              />
            </DetailSection>
 diff --git a/web/default/src/features/usage-logs/lib/format.ts b/web/default/src/features/usage-logs/lib/format.ts
-index 443cada..a7d2d41 100644
+index e00eb1b435a88fad701f662d8858094805d8f63b..fdff5c3500a94f11777649d1bf142ca063b55636 100644
 --- a/web/default/src/features/usage-logs/lib/format.ts
 +++ b/web/default/src/features/usage-logs/lib/format.ts
-@@ -158,6 +158,7 @@ export function formatModelName(log: UsageLog): {
+@@ -159,6 +159,7 @@ export function formatModelName(log: UsageLog): {
    actualModel?: string
  } {
    const other = parseLogOther(log.other)
@@ -280,7 +280,7 @@ index 443cada..a7d2d41 100644
    const isMapped = !!(
      other?.is_model_mapped &&
      other?.upstream_model_name &&
-@@ -167,7 +168,7 @@ export function formatModelName(log: UsageLog): {
+@@ -168,7 +169,7 @@ export function formatModelName(log: UsageLog): {
    return {
      name: log.model_name,
      isMapped,
@@ -290,10 +290,10 @@ index 443cada..a7d2d41 100644
  }
  
 diff --git a/web/default/src/features/usage-logs/types.ts b/web/default/src/features/usage-logs/types.ts
-index 6c94ea4..d5e385f 100644
+index 7640261644627000927307710c2d83232946a238..71c254f2d0a86fd74a9ec18b458be73846583dfa 100644
 --- a/web/default/src/features/usage-logs/types.ts
 +++ b/web/default/src/features/usage-logs/types.ts
-@@ -155,6 +155,7 @@ export interface LogOtherData {
+@@ -164,6 +164,7 @@ export interface LogOtherData {
    cache_creation_ratio_1h?: number
    is_model_mapped?: boolean
    upstream_model_name?: string

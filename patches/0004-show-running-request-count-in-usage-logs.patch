@@ -1,5 +1,5 @@
 diff --git a/controller/log.go b/controller/log.go
-index a43f7b7..c21acc5 100644
+index ce9b4666fa5e7c376f3a74f4a48fd576dbe8ef1c..9dba0349e31bccbf7702b3ce9cea84d0f88881a9 100644
 --- a/controller/log.go
 +++ b/controller/log.go
 @@ -5,6 +5,7 @@ import (
@@ -39,7 +39,7 @@ index a43f7b7..c21acc5 100644
  		},
  	})
 diff --git a/web/classic/src/components/table/usage-logs/UsageLogsActions.jsx b/web/classic/src/components/table/usage-logs/UsageLogsActions.jsx
-index d921483..049e57c 100644
+index d921483ed283cf9e5f8841cf8450f8fffc63df2a..049e57c29361dc3e94e9899f234cbcf7a83f1c59 100644
 --- a/web/classic/src/components/table/usage-logs/UsageLogsActions.jsx
 +++ b/web/classic/src/components/table/usage-logs/UsageLogsActions.jsx
 @@ -57,6 +57,17 @@ const LogsActions = ({
@@ -61,7 +61,7 @@ index d921483..049e57c 100644
              color='pink'
              style={{
 diff --git a/web/classic/src/hooks/usage-logs/useUsageLogsData.jsx b/web/classic/src/hooks/usage-logs/useUsageLogsData.jsx
-index 78975dd..9d098db 100644
+index 20b5b3da6e0365887f916523143dbf7f7acf502e..fa3be81e0d7f820173cad57c343cac3c7a70f09d 100644
 --- a/web/classic/src/hooks/usage-logs/useUsageLogsData.jsx
 +++ b/web/classic/src/hooks/usage-logs/useUsageLogsData.jsx
 @@ -93,7 +93,8 @@ export const useLogsData = () => {
@@ -92,7 +92,7 @@ index 78975dd..9d098db 100644
  
      if (
        formValues.dateRange &&
-@@ -825,6 +826,22 @@ export const useLogsData = () => {
+@@ -849,6 +850,22 @@ export const useLogsData = () => {
      }
    }, [formApi]);
  
@@ -116,10 +116,26 @@ index 78975dd..9d098db 100644
    const hasExpandableRows = () => {
      return logs.some(
 diff --git a/web/default/src/features/usage-logs/components/common-logs-stats.tsx b/web/default/src/features/usage-logs/components/common-logs-stats.tsx
-index 9e51b97..4a31bd9 100644
+index c85a595603b44abd3754e0d4be4e970f316b6bee..01f77129f912025e2cb389bd1b8c5dd7486f831e 100644
 --- a/web/default/src/features/usage-logs/components/common-logs-stats.tsx
 +++ b/web/default/src/features/usage-logs/components/common-logs-stats.tsx
-@@ -72,6 +72,7 @@ export function CommonLogsStats() {
+@@ -34,12 +34,14 @@ const route = getRouteApi('/_authenticated/usage-logs/$section')
+ 
+ function StatBadge(props: {
+   label: string
+-  tone: 'usage' | 'rpm' | 'tpm'
++  tone: 'usage' | 'running' | 'rpm' | 'tpm'
+   value: string | number
+ }) {
+   let labelClassName = 'text-foreground'
+   if (props.tone === 'usage') {
+     labelClassName = 'text-status-info'
++  } else if (props.tone === 'running') {
++    labelClassName = 'text-status-success'
+   } else if (props.tone === 'rpm') {
+     labelClassName = 'text-metric-rpm'
+   }
+@@ -80,6 +82,7 @@ export function CommonLogsStats() {
          : DEFAULT_LOG_STATS
      },
      placeholderData: (previousData) => previousData,
@@ -127,23 +143,23 @@ index 9e51b97..4a31bd9 100644
    })
  
    if (isLoading) {
-@@ -91,6 +92,11 @@ export function CommonLogsStats() {
+@@ -99,6 +102,11 @@ export function CommonLogsStats() {
+         tone='usage'
          value={sensitiveVisible ? formatLogQuota(stats?.quota || 0) : '••••'}
-         accent='bg-sky-500/70'
        />
 +      <StatBadge
 +        label='RUN'
++        tone='running'
 +        value={stats?.active_connections || 0}
-+        accent='bg-emerald-500/70'
 +      />
-       <StatBadge
-         label={t('RPM')}
-         value={stats?.rpm || 0}
+       <StatBadge label={t('RPM')} tone='rpm' value={stats?.rpm || 0} />
+       <StatBadge label={t('TPM')} tone='tpm' value={stats?.tpm || 0} />
+     </div>
 diff --git a/web/default/src/features/usage-logs/constants.ts b/web/default/src/features/usage-logs/constants.ts
-index 2473894..fb12845 100644
+index 26255250ed5201304058e9a04ed6c9fa37ea6d20..08c5c817b71458e9218eeb6ddcc9f4a14ed2429e 100644
 --- a/web/default/src/features/usage-logs/constants.ts
 +++ b/web/default/src/features/usage-logs/constants.ts
-@@ -32,6 +32,7 @@ import type { LogStatistics, LogCategory } from './types'
+@@ -33,6 +33,7 @@ import type { LogStatistics, LogCategory } from './types'
  export const DEFAULT_LOG_STATS: LogStatistics = {
    quota: 0,
    rpm: 0,
@@ -152,7 +168,7 @@ index 2473894..fb12845 100644
  }
  
 diff --git a/web/default/src/features/usage-logs/lib/utils.ts b/web/default/src/features/usage-logs/lib/utils.ts
-index 78246d4..11b2a6f 100644
+index 22a648f87f1b0f86be6c7b612a701112300dc455..a9c2a9c2e8de40866db3494b3a255beda56d9787 100644
 --- a/web/default/src/features/usage-logs/lib/utils.ts
 +++ b/web/default/src/features/usage-logs/lib/utils.ts
 @@ -73,13 +73,14 @@ export function isPerCallBilling(modelPrice?: number): boolean {
@@ -173,10 +189,10 @@ index 78246d4..11b2a6f 100644
    return { start, end }
  }
 diff --git a/web/default/src/features/usage-logs/types.ts b/web/default/src/features/usage-logs/types.ts
-index 8db88c4..dcd12dc 100644
+index 7f96adef9b941826baa0e5686da845bbf040e801..7640261644627000927307710c2d83232946a238 100644
 --- a/web/default/src/features/usage-logs/types.ts
 +++ b/web/default/src/features/usage-logs/types.ts
-@@ -197,6 +197,7 @@ export interface LogOtherData {
+@@ -227,6 +227,7 @@ export interface LogOtherData {
  export interface LogStatistics {
    quota: number
    rpm: number

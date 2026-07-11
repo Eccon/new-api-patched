@@ -1,5 +1,5 @@
 diff --git a/web/classic/src/components/table/usage-logs/UsageLogsColumnDefs.jsx b/web/classic/src/components/table/usage-logs/UsageLogsColumnDefs.jsx
-index 07e6fbb..baf9ba2 100644
+index 07e6fbb9896de18bb268cc310158419d0d4a85be..baf9ba27bc7705b47a50c0e4a15f1068e02e4f2d 100644
 --- a/web/classic/src/components/table/usage-logs/UsageLogsColumnDefs.jsx
 +++ b/web/classic/src/components/table/usage-logs/UsageLogsColumnDefs.jsx
 @@ -344,6 +344,23 @@ function formatTokenCount(value) {
@@ -45,10 +45,10 @@ index 07e6fbb..baf9ba2 100644
            cacheText = `${t('缓存写')} ${formatTokenCount(cacheSummary.cacheWriteTokens)}`;
          }
 diff --git a/web/default/src/features/usage-logs/components/columns/common-logs-columns.tsx b/web/default/src/features/usage-logs/components/columns/common-logs-columns.tsx
-index d512f79..d4d9b60 100644
+index 9b1d918846a83a0eb91c387ba15890482b1c604c..474e4d415ae11011a7122ee2da36171dbe8090f9 100644
 --- a/web/default/src/features/usage-logs/components/columns/common-logs-columns.tsx
 +++ b/web/default/src/features/usage-logs/components/columns/common-logs-columns.tsx
-@@ -89,6 +89,29 @@ function getGroupRatioText(other: LogOtherData | null): string | null {
+@@ -101,6 +101,29 @@ function getGroupRatioText(
    return null
  }
  
@@ -75,10 +75,10 @@ index d512f79..d4d9b60 100644
 +  return fixed.endsWith('.0') ? `${Math.round(rate)}%` : `${fixed}%`
 +}
 +
- function splitQuotaDisplay(value: string): { prefix: string; amount: string } {
-   const match = value.match(/^([^0-9+\-.,\s]+)(.+)$/)
-   if (!match) return { prefix: '', amount: value }
-@@ -684,6 +707,11 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
+ function buildDetailSegments(
+   log: UsageLog,
+   other: LogOtherData | null,
+@@ -767,6 +790,11 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
          const cacheWriteTokens = hasSplitCache
            ? cacheWrite5m + cacheWrite1h
            : other?.cache_creation_tokens || 0
@@ -90,9 +90,9 @@ index d512f79..d4d9b60 100644
  
          return (
            <div className='flex flex-col gap-0.5'>
-@@ -696,6 +724,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
+@@ -779,6 +807,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
                  {cacheReadTokens > 0 && (
-                   <span className='text-muted-foreground/60'>
+                   <span className='text-subtle-foreground'>
                      {t('Cache')}↓ {cacheReadTokens.toLocaleString()}
 +                    {cacheReadRateText}
                    </span>
