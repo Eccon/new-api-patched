@@ -864,7 +864,7 @@ diff --git a/service/text_quota.go b/service/text_quota.go
 index 42385ca8b95fb1fffc470e8c8166c0b4d603e68a..6587fed2c5b46cdb248db188bcf8fb365fd95c8c 100644
 --- a/service/text_quota.go
 +++ b/service/text_quota.go
-@@ -333,6 +333,78 @@ func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage)
+@@ -336,7 +336,79 @@ func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage)
  	return "openai"
  }
  
@@ -942,6 +942,7 @@ index 42385ca8b95fb1fffc470e8c8166c0b4d603e68a..6587fed2c5b46cdb248db188bcf8fb36
 +
  func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []string) {
  	originUsage := usage
+ 	billingUsage := effectiveBillingUsage(usage)
  	if usage == nil {
 @@ -474,6 +546,10 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
  	}

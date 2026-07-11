@@ -1,8 +1,8 @@
 diff --git a/common/constants.go b/common/constants.go
-index c7d5637..d81c17d 100644
+index 87d212f99732709394ea474ff92982b3ea909ca5..4e7de1e6a6f5f1a585f8d5e01b8dd68702c96f05 100644
 --- a/common/constants.go
 +++ b/common/constants.go
-@@ -168,7 +168,11 @@ var SyncFrequency int // unit is second
+@@ -183,6 +183,10 @@ var SyncFrequency int // unit is second
  var BatchUpdateEnabled = false
  var BatchUpdateInterval int
  
@@ -13,12 +13,11 @@ index c7d5637..d81c17d 100644
  var RelayTimeout int // unit is second
  
  var RelayIdleConnTimeout int // unit is second
- var RelayMaxIdleConns int
 diff --git a/common/init.go b/common/init.go
-index 35b4c6b..c33f04f 100644
+index 88b2dc3e62e1481e2f326db864ec4d669210648c..8651f180c1b28084c6fa8f409247e3b8b5990608 100644
 --- a/common/init.go
 +++ b/common/init.go
-@@ -108,6 +108,9 @@ func InitEnv() {
+@@ -114,6 +114,9 @@ func InitEnv() {
  	// Initialize string variables with GetEnvOrDefaultString
  	GeminiSafetySetting = GetEnvOrDefaultString("GEMINI_SAFETY_SETTING", "BLOCK_NONE")
  	CohereSafetySetting = GetEnvOrDefaultString("COHERE_SAFETY_SETTING", "NONE")
@@ -28,8 +27,47 @@ index 35b4c6b..c33f04f 100644
  
  	// Initialize rate limit variables
  	GlobalApiRateLimitEnable = GetEnvOrDefaultBool("GLOBAL_API_RATE_LIMIT_ENABLE", true)
+diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
+index 9fae7df078d072b69839ed590f73845ef362bab3..740c7cdb0e2aff0bf72fe2c3e3940a584f816aa7 100644
+--- a/relay/channel/api_request.go
++++ b/relay/channel/api_request.go
+@@ -190,6 +190,7 @@ func applyHeaderOverridePlaceholders(template string, c *gin.Context, apiKey str
+ func processHeaderOverride(info *common.RelayInfo, c *gin.Context) (map[string]string, error) {
+ 	headerOverride := make(map[string]string)
+ 	if info == nil {
++		syncUpstreamUserAgentOverrideState(c, headerOverride)
+ 		return headerOverride, nil
+ 	}
+ 
+@@ -284,6 +285,7 @@ func processHeaderOverride(info *common.RelayInfo, c *gin.Context) (map[string]s
+ 
+ 		headerOverride[key] = value
+ 	}
++	syncUpstreamUserAgentOverrideState(c, headerOverride)
+ 	return headerOverride, nil
+ }
+ 
+@@ -386,6 +388,9 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
+ 		targetHeader.Set(key, value)
+ 	}
+ 	targetHeader.Set("Content-Type", c.Request.Header.Get("Content-Type"))
++	targetReq := &http.Request{Header: targetHeader}
++	applyDefaultUpstreamUserAgent(c, targetReq, info)
++	logUpstreamUserAgent(c, targetReq)
+ 	targetConn, _, err := websocket.DefaultDialer.Dial(fullRequestURL, targetHeader)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("dial failed to %s: %w", common.SanitizeURLForLog(fullRequestURL), err)
+@@ -506,6 +511,8 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+ 		}
+ 	}
+ 
++	applyDefaultUpstreamUserAgent(c, req, info)
++	logUpstreamUserAgent(c, req)
+ 	resp, err := client.Do(req)
+ 	if err != nil {
+ 		logger.LogError(c, "do request failed: "+err.Error())
 diff --git a/relay/channel/api_request_test.go b/relay/channel/api_request_test.go
-index 531214d..f2ee1f3 100644
+index f697f8555692c0a00f85a69d6409c3fe180f9c5f..72951750ea862f43bc6a9de14e1d5151fa17b6b2 100644
 --- a/relay/channel/api_request_test.go
 +++ b/relay/channel/api_request_test.go
 @@ -5,7 +5,9 @@ import (
@@ -42,7 +80,7 @@ index 531214d..f2ee1f3 100644
  	"github.com/gin-gonic/gin"
  	"github.com/stretchr/testify/require"
  )
-@@ -195,3 +197,119 @@ func TestProcessHeaderOverride_PassHeadersTemplateSetsRuntimeHeaders(t *testing.
+@@ -191,3 +193,119 @@ func TestProcessHeaderOverride_PassHeadersTemplateSetsRuntimeHeaders(t *testing.
  	require.Equal(t, "sess-123", upstreamReq.Header.Get("Session_id"))
  	require.Empty(t, upstreamReq.Header.Get("X-Codex-Beta-Features"))
  }
@@ -162,48 +200,9 @@ index 531214d..f2ee1f3 100644
 +		})
 +	}
 +}
-diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index ac7e215..c79e776 100644
---- a/relay/channel/api_request.go
-+++ b/relay/channel/api_request.go
-@@ -174,5 +174,6 @@ func processHeaderOverride(info *common.RelayInfo, c *gin.Context) (map[string]s
- 	headerOverride := make(map[string]string)
- 	if info == nil {
-+		syncUpstreamUserAgentOverrideState(c, headerOverride)
- 		return headerOverride, nil
- 	}
- 
-@@ -267,6 +267,7 @@ func processHeaderOverride(info *common.RelayInfo, c *gin.Context) (map[string]s
- 
- 		headerOverride[key] = value
- 	}
-+	syncUpstreamUserAgentOverrideState(c, headerOverride)
- 	return headerOverride, nil
- }
- 
-@@ -370,7 +372,10 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
- 		targetHeader.Set(key, value)
- 	}
- 	targetHeader.Set("Content-Type", c.Request.Header.Get("Content-Type"))
-+	targetReq := &http.Request{Header: targetHeader}
-+	applyDefaultUpstreamUserAgent(c, targetReq, info)
-+	logUpstreamUserAgent(c, targetReq)
- 	targetConn, _, err := websocket.DefaultDialer.Dial(fullRequestURL, targetHeader)
- 	if err != nil {
- 		return nil, fmt.Errorf("dial failed to %s: %w", fullRequestURL, err)
- 	}
-@@ -515,6 +516,8 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
- 		}
- 	}
- 
-+	applyDefaultUpstreamUserAgent(c, req, info)
-+	logUpstreamUserAgent(c, req)
- 	resp, err := client.Do(req)
- 	if err != nil {
- 		logger.LogError(c, "do request failed: "+err.Error())
 diff --git a/relay/channel/upstream_user_agent.go b/relay/channel/upstream_user_agent.go
 new file mode 100644
-index 0000000..0ad1442
+index 0000000000000000000000000000000000000000..2cafd9a109784bd92c20fae9dbe4490bf8bead78
 --- /dev/null
 +++ b/relay/channel/upstream_user_agent.go
 @@ -0,0 +1,117 @@

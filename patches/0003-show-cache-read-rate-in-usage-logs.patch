@@ -45,10 +45,10 @@ index 07e6fbb9896de18bb268cc310158419d0d4a85be..baf9ba27bc7705b47a50c0e4a15f1068
            cacheText = `${t('缓存写')} ${formatTokenCount(cacheSummary.cacheWriteTokens)}`;
          }
 diff --git a/web/default/src/features/usage-logs/components/columns/common-logs-columns.tsx b/web/default/src/features/usage-logs/components/columns/common-logs-columns.tsx
-index 9b1d918846a83a0eb91c387ba15890482b1c604c..474e4d415ae11011a7122ee2da36171dbe8090f9 100644
+index 07f54f747b00ff093e0a12d9986d8553e0c1c6b6..11a7f31ebb483c88ff110a413dc494f0b9979c65 100644
 --- a/web/default/src/features/usage-logs/components/columns/common-logs-columns.tsx
 +++ b/web/default/src/features/usage-logs/components/columns/common-logs-columns.tsx
-@@ -101,6 +101,29 @@ function getGroupRatioText(
+@@ -93,6 +93,29 @@ function getGroupRatio(other: LogOtherData | null): number | null {
    return null
  }
  
@@ -75,10 +75,10 @@ index 9b1d918846a83a0eb91c387ba15890482b1c604c..474e4d415ae11011a7122ee2da36171d
 +  return fixed.endsWith('.0') ? `${Math.round(rate)}%` : `${fixed}%`
 +}
 +
- function buildDetailSegments(
-   log: UsageLog,
-   other: LogOtherData | null,
-@@ -767,6 +790,11 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
+ function splitQuotaDisplay(value: string): { prefix: string; amount: string } {
+   const match = value.match(/^([^0-9+\-.,\s]+)(.+)$/)
+   if (!match) return { prefix: '', amount: value }
+@@ -669,6 +692,11 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
          const cacheWriteTokens = hasSplitCache
            ? cacheWrite5m + cacheWrite1h
            : other?.cache_creation_tokens || 0
@@ -90,9 +90,9 @@ index 9b1d918846a83a0eb91c387ba15890482b1c604c..474e4d415ae11011a7122ee2da36171d
  
          return (
            <div className='flex flex-col gap-0.5'>
-@@ -779,6 +807,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
+@@ -681,6 +709,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
                  {cacheReadTokens > 0 && (
-                   <span className='text-subtle-foreground'>
+                   <span className='text-muted-foreground/60'>
                      {t('Cache')}↓ {cacheReadTokens.toLocaleString()}
 +                    {cacheReadRateText}
                    </span>

@@ -240,16 +240,16 @@ diff --git a/web/default/src/features/usage-logs/components/dialogs/details-dial
 index 41043efebe1232381006fcf2c6214a23fd779638..078a32110f43049ffdaf4bdca28d9a7c81c8a4b2 100644
 --- a/web/default/src/features/usage-logs/components/dialogs/details-dialog.tsx
 +++ b/web/default/src/features/usage-logs/components/dialogs/details-dialog.tsx
-@@ -419,6 +419,9 @@ export function DetailsDialog(props: DetailsDialogProps) {
+@@ -591,6 +591,9 @@ export function DetailsDialog(props: DetailsDialogProps) {
    } else if (other?.reasoning_effort === 'medium') {
-     reasoningEffortVariant = 'info'
+     reasoningEffortVariant = 'yellow'
    }
 +  const actualModel =
 +    other?.actual_model_name?.trim() ||
 +    (other?.is_model_mapped ? other?.upstream_model_name : undefined)
  
-   const isViolation = isViolationFeeLog(other)
-   const isRefund = props.log.type === 6
+   return (
+     <Dialog
 @@ -978,7 +981,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
          )}
  

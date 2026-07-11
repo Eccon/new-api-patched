@@ -116,26 +116,10 @@ index 20b5b3da6e0365887f916523143dbf7f7acf502e..fa3be81e0d7f820173cad57c343cac3c
    const hasExpandableRows = () => {
      return logs.some(
 diff --git a/web/default/src/features/usage-logs/components/common-logs-stats.tsx b/web/default/src/features/usage-logs/components/common-logs-stats.tsx
-index c85a595603b44abd3754e0d4be4e970f316b6bee..01f77129f912025e2cb389bd1b8c5dd7486f831e 100644
+index dd754e227acba7204f3d74a9831af25115e9c72b..0089bd8506d227efc6a5c5597d2358827fb11053 100644
 --- a/web/default/src/features/usage-logs/components/common-logs-stats.tsx
 +++ b/web/default/src/features/usage-logs/components/common-logs-stats.tsx
-@@ -34,12 +34,14 @@ const route = getRouteApi('/_authenticated/usage-logs/$section')
- 
- function StatBadge(props: {
-   label: string
--  tone: 'usage' | 'rpm' | 'tpm'
-+  tone: 'usage' | 'running' | 'rpm' | 'tpm'
-   value: string | number
- }) {
-   let labelClassName = 'text-foreground'
-   if (props.tone === 'usage') {
-     labelClassName = 'text-status-info'
-+  } else if (props.tone === 'running') {
-+    labelClassName = 'text-status-success'
-   } else if (props.tone === 'rpm') {
-     labelClassName = 'text-metric-rpm'
-   }
-@@ -80,6 +82,7 @@ export function CommonLogsStats() {
+@@ -73,6 +73,7 @@ export function CommonLogsStats() {
          : DEFAULT_LOG_STATS
      },
      placeholderData: (previousData) => previousData,
@@ -143,18 +127,18 @@ index c85a595603b44abd3754e0d4be4e970f316b6bee..01f77129f912025e2cb389bd1b8c5dd7
    })
  
    if (isLoading) {
-@@ -99,6 +102,11 @@ export function CommonLogsStats() {
-         tone='usage'
+@@ -92,6 +93,11 @@ export function CommonLogsStats() {
          value={sensitiveVisible ? formatLogQuota(stats?.quota || 0) : '••••'}
+         accent='bg-sky-500/70'
        />
 +      <StatBadge
 +        label='RUN'
-+        tone='running'
 +        value={stats?.active_connections || 0}
++        accent='bg-emerald-500/70'
 +      />
-       <StatBadge label={t('RPM')} tone='rpm' value={stats?.rpm || 0} />
-       <StatBadge label={t('TPM')} tone='tpm' value={stats?.tpm || 0} />
-     </div>
+       <StatBadge
+         label={t('RPM')}
+         value={stats?.rpm || 0}
 diff --git a/web/default/src/features/usage-logs/constants.ts b/web/default/src/features/usage-logs/constants.ts
 index 26255250ed5201304058e9a04ed6c9fa37ea6d20..08c5c817b71458e9218eeb6ddcc9f4a14ed2429e 100644
 --- a/web/default/src/features/usage-logs/constants.ts
