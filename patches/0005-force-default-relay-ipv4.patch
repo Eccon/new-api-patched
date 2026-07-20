@@ -1,21 +1,17 @@
 diff --git a/service/http_client.go b/service/http_client.go
-index 2c3168f..2f75de2 100644
+index c6febe06662b06c5d33992a13a78815a03c441d5..5a2986e2fefc30624e8c8774ce95cda748db7905 100644
 --- a/service/http_client.go
 +++ b/service/http_client.go
-@@ -34,12 +34,16 @@ func checkRedirect(req *http.Request, via []*http.Request) error {
+@@ -107,8 +107,12 @@ func newRelayHTTPClient(transport *http.Transport) *http.Client {
  }
  
  func InitHttpClient() {
 +	dialer := &net.Dialer{}
- 	transport := &http.Transport{
- 		MaxIdleConns:        common.RelayMaxIdleConns,
- 		MaxIdleConnsPerHost: common.RelayMaxIdleConnsPerHost,
- 		IdleConnTimeout:     time.Duration(common.RelayIdleConnTimeout) * time.Second,
- 		ForceAttemptHTTP2:   true,
- 		Proxy:               http.ProxyFromEnvironment, // Support HTTP_PROXY, HTTPS_PROXY, NO_PROXY env vars
-+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-+			return dialer.DialContext(ctx, "tcp4", addr)
-+		},
- 	}
- 	if common.TLSInsecureSkipVerify {
- 		transport.TLSClientConfig = common.InsecureTLSConfig
+ 	transport := newRelayHTTPTransport()
+ 	transport.Proxy = http.ProxyFromEnvironment
++	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
++		return dialer.DialContext(ctx, "tcp4", addr)
++	}
+ 	httpClient = newRelayHTTPClient(transport)
+ 	ssrfProtectedHTTPClient = newProtectedFetchHTTPClient()
+ }

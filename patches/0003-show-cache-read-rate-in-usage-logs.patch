@@ -1,53 +1,7 @@
-diff --git a/web/classic/src/components/table/usage-logs/UsageLogsColumnDefs.jsx b/web/classic/src/components/table/usage-logs/UsageLogsColumnDefs.jsx
-index 07e6fbb9896de18bb268cc310158419d0d4a85be..baf9ba27bc7705b47a50c0e4a15f1068e02e4f2d 100644
---- a/web/classic/src/components/table/usage-logs/UsageLogsColumnDefs.jsx
-+++ b/web/classic/src/components/table/usage-logs/UsageLogsColumnDefs.jsx
-@@ -344,6 +344,23 @@ function formatTokenCount(value) {
-   return toTokenNumber(value).toLocaleString();
- }
- 
-+function formatCacheRate(cacheTokens, promptTokens, other) {
-+  const cacheReadTokens = toTokenNumber(cacheTokens);
-+  const inputTokens = toTokenNumber(promptTokens);
-+  const isClaudeSemantic =
-+    other?.claude === true || other?.usage_semantic === 'anthropic';
-+  const denominator = isClaudeSemantic
-+    ? inputTokens + cacheReadTokens
-+    : inputTokens;
-+  if (cacheReadTokens <= 0 || denominator <= 0) {
-+    return '';
-+  }
-+
-+  const rate = (cacheReadTokens / denominator) * 100;
-+  const fixed = rate.toFixed(1);
-+  return fixed.endsWith('.0') ? `${Math.round(rate)}%` : `${fixed}%`;
-+}
-+
- function getPromptCacheSummary(other) {
-   if (!other || typeof other !== 'object') {
-     return null;
-@@ -745,11 +762,15 @@ export const getLogsColumns = ({
-         const cacheSummary = getPromptCacheSummary(other);
-         const hasCacheRead = (cacheSummary?.cacheReadTokens || 0) > 0;
-         const hasCacheWrite = (cacheSummary?.cacheWriteTokens || 0) > 0;
-+        const cacheReadRate = hasCacheRead
-+          ? formatCacheRate(cacheSummary.cacheReadTokens, text, other)
-+          : '';
-+        const cacheReadRateText = cacheReadRate ? ` (${cacheReadRate})` : '';
-         let cacheText = '';
-         if (hasCacheRead && hasCacheWrite) {
--          cacheText = `${t('缓存读')} ${formatTokenCount(cacheSummary.cacheReadTokens)} · ${t('写')} ${formatTokenCount(cacheSummary.cacheWriteTokens)}`;
-+          cacheText = `${t('缓存读')} ${formatTokenCount(cacheSummary.cacheReadTokens)}${cacheReadRateText} · ${t('写')} ${formatTokenCount(cacheSummary.cacheWriteTokens)}`;
-         } else if (hasCacheRead) {
--          cacheText = `${t('缓存读')} ${formatTokenCount(cacheSummary.cacheReadTokens)}`;
-+          cacheText = `${t('缓存读')} ${formatTokenCount(cacheSummary.cacheReadTokens)}${cacheReadRateText}`;
-         } else if (hasCacheWrite) {
-           cacheText = `${t('缓存写')} ${formatTokenCount(cacheSummary.cacheWriteTokens)}`;
-         }
-diff --git a/web/default/src/features/usage-logs/components/columns/common-logs-columns.tsx b/web/default/src/features/usage-logs/components/columns/common-logs-columns.tsx
+diff --git a/web/src/features/usage-logs/components/columns/common-logs-columns.tsx b/web/src/features/usage-logs/components/columns/common-logs-columns.tsx
 index 07f54f747b00ff093e0a12d9986d8553e0c1c6b6..11a7f31ebb483c88ff110a413dc494f0b9979c65 100644
---- a/web/default/src/features/usage-logs/components/columns/common-logs-columns.tsx
-+++ b/web/default/src/features/usage-logs/components/columns/common-logs-columns.tsx
+--- a/web/src/features/usage-logs/components/columns/common-logs-columns.tsx
++++ b/web/src/features/usage-logs/components/columns/common-logs-columns.tsx
 @@ -93,6 +93,29 @@ function getGroupRatio(other: LogOtherData | null): number | null {
    return null
  }

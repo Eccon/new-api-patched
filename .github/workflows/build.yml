@@ -218,14 +218,7 @@ jobs:
         run: |
           cd web
           bun install --frozen-lockfile
-          cd default
           DISABLE_ESLINT_PLUGIN=true bun run build
-          cd ../..
-
-          cd web
-          bun install --filter ./classic --frozen-lockfile
-          cd classic
-          bun run build
           cd ../..
 
       - name: Set up Go

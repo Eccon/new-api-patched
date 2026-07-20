@@ -38,87 +38,10 @@ index ce9b4666fa5e7c376f3a74f4a48fd576dbe8ef1c..9dba0349e31bccbf7702b3ce9cea84d0
  			//"token": tokenNum,
  		},
  	})
-diff --git a/web/classic/src/components/table/usage-logs/UsageLogsActions.jsx b/web/classic/src/components/table/usage-logs/UsageLogsActions.jsx
-index d921483ed283cf9e5f8841cf8450f8fffc63df2a..049e57c29361dc3e94e9899f234cbcf7a83f1c59 100644
---- a/web/classic/src/components/table/usage-logs/UsageLogsActions.jsx
-+++ b/web/classic/src/components/table/usage-logs/UsageLogsActions.jsx
-@@ -57,6 +57,17 @@ const LogsActions = ({
-           >
-             {t('消耗额度')}: {renderQuota(stat.quota)}
-           </Tag>
-+          <Tag
-+            color='green'
-+            style={{
-+              fontWeight: 500,
-+              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
-+              padding: 13,
-+            }}
-+            className='!rounded-lg'
-+          >
-+            RUN: {stat.active_connections || 0}
-+          </Tag>
-           <Tag
-             color='pink'
-             style={{
-diff --git a/web/classic/src/hooks/usage-logs/useUsageLogsData.jsx b/web/classic/src/hooks/usage-logs/useUsageLogsData.jsx
-index 20b5b3da6e0365887f916523143dbf7f7acf502e..fa3be81e0d7f820173cad57c343cac3c7a70f09d 100644
---- a/web/classic/src/hooks/usage-logs/useUsageLogsData.jsx
-+++ b/web/classic/src/hooks/usage-logs/useUsageLogsData.jsx
-@@ -93,7 +93,8 @@ export const useLogsData = () => {
- 
-   // Form state
-   const [formApi, setFormApi] = useState(null);
--  let now = new Date();
-+  let todayEnd = new Date();
-+  todayEnd.setHours(23, 59, 59, 999);
-   const formInitValues = {
-     username: '',
-     token_name: '',
-@@ -103,7 +104,7 @@ export const useLogsData = () => {
-     request_id: '',
-     dateRange: [
-       timestamp2string(getTodayStartTimestamp()),
--      timestamp2string(now.getTime() / 1000 + 3600),
-+      timestamp2string(todayEnd.getTime() / 1000),
-     ],
-     logType: '0',
-   };
-@@ -237,7 +238,7 @@ export const useLogsData = () => {
-     const formValues = formApi ? formApi.getValues() : {};
- 
-     let start_timestamp = timestamp2string(getTodayStartTimestamp());
--    let end_timestamp = timestamp2string(now.getTime() / 1000 + 3600);
-+    let end_timestamp = timestamp2string(todayEnd.getTime() / 1000);
- 
-     if (
-       formValues.dateRange &&
-@@ -849,6 +850,22 @@ export const useLogsData = () => {
-     }
-   }, [formApi]);
- 
-+  useEffect(() => {
-+    if (!formApi) {
-+      return;
-+    }
-+
-+    const timer = setInterval(() => {
-+      if (isAdminUser) {
-+        getLogStat().catch(() => {});
-+      } else {
-+        getLogSelfStat().catch(() => {});
-+      }
-+    }, 5000);
-+
-+    return () => clearInterval(timer);
-+  }, [formApi, isAdminUser]);
-+
-   // Check if any record has expandable content
-   const hasExpandableRows = () => {
-     return logs.some(
-diff --git a/web/default/src/features/usage-logs/components/common-logs-stats.tsx b/web/default/src/features/usage-logs/components/common-logs-stats.tsx
+diff --git a/web/src/features/usage-logs/components/common-logs-stats.tsx b/web/src/features/usage-logs/components/common-logs-stats.tsx
 index dd754e227acba7204f3d74a9831af25115e9c72b..0089bd8506d227efc6a5c5597d2358827fb11053 100644
---- a/web/default/src/features/usage-logs/components/common-logs-stats.tsx
-+++ b/web/default/src/features/usage-logs/components/common-logs-stats.tsx
+--- a/web/src/features/usage-logs/components/common-logs-stats.tsx
++++ b/web/src/features/usage-logs/components/common-logs-stats.tsx
 @@ -73,6 +73,7 @@ export function CommonLogsStats() {
          : DEFAULT_LOG_STATS
      },
@@ -139,10 +62,10 @@ index dd754e227acba7204f3d74a9831af25115e9c72b..0089bd8506d227efc6a5c5597d235882
        <StatBadge
          label={t('RPM')}
          value={stats?.rpm || 0}
-diff --git a/web/default/src/features/usage-logs/constants.ts b/web/default/src/features/usage-logs/constants.ts
+diff --git a/web/src/features/usage-logs/constants.ts b/web/src/features/usage-logs/constants.ts
 index 26255250ed5201304058e9a04ed6c9fa37ea6d20..08c5c817b71458e9218eeb6ddcc9f4a14ed2429e 100644
---- a/web/default/src/features/usage-logs/constants.ts
-+++ b/web/default/src/features/usage-logs/constants.ts
+--- a/web/src/features/usage-logs/constants.ts
++++ b/web/src/features/usage-logs/constants.ts
 @@ -33,6 +33,7 @@ import type { LogStatistics, LogCategory } from './types'
  export const DEFAULT_LOG_STATS: LogStatistics = {
    quota: 0,
@@ -151,10 +74,10 @@ index 26255250ed5201304058e9a04ed6c9fa37ea6d20..08c5c817b71458e9218eeb6ddcc9f4a1
    tpm: 0,
  }
  
-diff --git a/web/default/src/features/usage-logs/lib/utils.ts b/web/default/src/features/usage-logs/lib/utils.ts
+diff --git a/web/src/features/usage-logs/lib/utils.ts b/web/src/features/usage-logs/lib/utils.ts
 index 22a648f87f1b0f86be6c7b612a701112300dc455..a9c2a9c2e8de40866db3494b3a255beda56d9787 100644
---- a/web/default/src/features/usage-logs/lib/utils.ts
-+++ b/web/default/src/features/usage-logs/lib/utils.ts
+--- a/web/src/features/usage-logs/lib/utils.ts
++++ b/web/src/features/usage-logs/lib/utils.ts
 @@ -73,13 +73,14 @@ export function isPerCallBilling(modelPrice?: number): boolean {
  }
  
@@ -172,10 +95,10 @@ index 22a648f87f1b0f86be6c7b612a701112300dc455..a9c2a9c2e8de40866db3494b3a255bed
  
    return { start, end }
  }
-diff --git a/web/default/src/features/usage-logs/types.ts b/web/default/src/features/usage-logs/types.ts
+diff --git a/web/src/features/usage-logs/types.ts b/web/src/features/usage-logs/types.ts
 index 7f96adef9b941826baa0e5686da845bbf040e801..7640261644627000927307710c2d83232946a238 100644
---- a/web/default/src/features/usage-logs/types.ts
-+++ b/web/default/src/features/usage-logs/types.ts
+--- a/web/src/features/usage-logs/types.ts
++++ b/web/src/features/usage-logs/types.ts
 @@ -227,6 +227,7 @@ export interface LogOtherData {
  export interface LogStatistics {
    quota: number

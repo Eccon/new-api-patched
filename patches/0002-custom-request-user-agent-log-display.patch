@@ -72,52 +72,10 @@ index 8ec7807..040a1de 100644
 +	params.Other = appendRequestUserAgentToOther(c, params.Other)
  	otherStr := common.MapToJsonStr(params.Other)
  	// 判断是否需要记录 IP
-diff --git a/web/classic/src/hooks/usage-logs/useUsageLogsData.jsx b/web/classic/src/hooks/usage-logs/useUsageLogsData.jsx
-index 78975dd..419b95b 100644
---- a/web/classic/src/hooks/usage-logs/useUsageLogsData.jsx
-+++ b/web/classic/src/hooks/usage-logs/useUsageLogsData.jsx
-@@ -381,6 +381,10 @@ export const useLogsData = () => {
-       logs[i].timestamp2string = timestamp2string(logs[i].created_at);
-       logs[i].key = logs[i].id;
-       let other = getLogOther(logs[i].other);
-+      const requestUserAgent =
-+        typeof other?.request_user_agent === 'string'
-+          ? other.request_user_agent.trim()
-+          : '';
-       let expandDataLocal = [];
- 
-       if (isAdminUser && (logs[i].type === 0 || logs[i].type === 2 || logs[i].type === 6)) {
-@@ -718,6 +722,26 @@ export const useLogsData = () => {
-           });
-         }
-       }
-+      if (requestUserAgent) {
-+        expandDataLocal.push({
-+          key: 'User-Agent',
-+          value: (
-+            <span
-+              style={{
-+                display: 'inline-block',
-+                maxWidth: 900,
-+                whiteSpace: 'normal',
-+                wordBreak: 'break-all',
-+                cursor: 'pointer',
-+                fontFamily: 'monospace',
-+              }}
-+              onClick={(event) => copyText(event, requestUserAgent)}
-+            >
-+              {requestUserAgent}
-+            </span>
-+          ),
-+        });
-+      }
-       expandDatesLocal[logs[i].key] = expandDataLocal;
-     }
- 
-diff --git a/web/default/src/features/usage-logs/components/dialogs/details-dialog.tsx b/web/default/src/features/usage-logs/components/dialogs/details-dialog.tsx
+diff --git a/web/src/features/usage-logs/components/dialogs/details-dialog.tsx b/web/src/features/usage-logs/components/dialogs/details-dialog.tsx
 index 87571fe..d111f35 100644
---- a/web/default/src/features/usage-logs/components/dialogs/details-dialog.tsx
-+++ b/web/default/src/features/usage-logs/components/dialogs/details-dialog.tsx
+--- a/web/src/features/usage-logs/components/dialogs/details-dialog.tsx
++++ b/web/src/features/usage-logs/components/dialogs/details-dialog.tsx
 @@ -427,6 +427,10 @@ export function DetailsDialog(props: DetailsDialogProps) {
    const showTiming = isTimingLogType(props.log.type)
    const showAdminIp =
@@ -149,10 +107,10 @@ index 87571fe..d111f35 100644
            {showTiming && props.log.use_time > 0 && (
              <DetailRow
                label={t('Response Time')}
-diff --git a/web/default/src/features/usage-logs/types.ts b/web/default/src/features/usage-logs/types.ts
+diff --git a/web/src/features/usage-logs/types.ts b/web/src/features/usage-logs/types.ts
 index b243aff..371037c 100644
---- a/web/default/src/features/usage-logs/types.ts
-+++ b/web/default/src/features/usage-logs/types.ts
+--- a/web/src/features/usage-logs/types.ts
++++ b/web/src/features/usage-logs/types.ts
 @@ -130,6 +130,7 @@ export interface LogOtherData {
    // Login audit fields (type=7); visible to the log owner
    login_method?: string
@@ -161,10 +119,10 @@ index b243aff..371037c 100644
    request_path?: string
    request_conversion?: string[]
    ws?: boolean
-diff --git a/web/default/src/i18n/locales/en.json b/web/default/src/i18n/locales/en.json
+diff --git a/web/src/i18n/locales/en.json b/web/src/i18n/locales/en.json
 index 4f8ae55..16456ab 100644
---- a/web/default/src/i18n/locales/en.json
-+++ b/web/default/src/i18n/locales/en.json
+--- a/web/src/i18n/locales/en.json
++++ b/web/src/i18n/locales/en.json
 @@ -4263,6 +4263,7 @@
      "User Subscription Management": "User Subscription Management",
      "User updated successfully": "User updated successfully",
@@ -173,10 +131,10 @@ index 4f8ae55..16456ab 100644
      "User-Agent include (one per line)": "User-Agent include (one per line)",
      "Username": "Username",
      "Username confirmation does not match": "Username confirmation does not match",
-diff --git a/web/default/src/i18n/locales/fr.json b/web/default/src/i18n/locales/fr.json
+diff --git a/web/src/i18n/locales/fr.json b/web/src/i18n/locales/fr.json
 index 850f836..1e3ac90 100644
---- a/web/default/src/i18n/locales/fr.json
-+++ b/web/default/src/i18n/locales/fr.json
+--- a/web/src/i18n/locales/fr.json
++++ b/web/src/i18n/locales/fr.json
 @@ -4263,6 +4263,7 @@
      "User Subscription Management": "Gestion des abonnements utilisateur",
      "User updated successfully": "Utilisateur mis à jour avec succès",
@@ -185,10 +143,10 @@ index 850f836..1e3ac90 100644
      "User-Agent include (one per line)": "User-Agent inclus (un par ligne)",
      "Username": "Nom d'utilisateur",
      "Username confirmation does not match": "La confirmation du nom d'utilisateur ne correspond pas",
-diff --git a/web/default/src/i18n/locales/ja.json b/web/default/src/i18n/locales/ja.json
+diff --git a/web/src/i18n/locales/ja.json b/web/src/i18n/locales/ja.json
 index cb5743b..1de66d7 100644
---- a/web/default/src/i18n/locales/ja.json
-+++ b/web/default/src/i18n/locales/ja.json
+--- a/web/src/i18n/locales/ja.json
++++ b/web/src/i18n/locales/ja.json
 @@ -4263,6 +4263,7 @@
      "User Subscription Management": "ユーザーサブスクリプション管理",
      "User updated successfully": "ユーザーの更新に成功しました",
@@ -197,10 +155,10 @@ index cb5743b..1de66d7 100644
      "User-Agent include (one per line)": "User-Agent include（1行に1つ）",
      "Username": "ユーザー名",
      "Username confirmation does not match": "ユーザー名の確認が一致しません",
-diff --git a/web/default/src/i18n/locales/ru.json b/web/default/src/i18n/locales/ru.json
+diff --git a/web/src/i18n/locales/ru.json b/web/src/i18n/locales/ru.json
 index 91b6d6d..0ad4f99 100644
---- a/web/default/src/i18n/locales/ru.json
-+++ b/web/default/src/i18n/locales/ru.json
+--- a/web/src/i18n/locales/ru.json
++++ b/web/src/i18n/locales/ru.json
 @@ -4263,6 +4263,7 @@
      "User Subscription Management": "Управление подписками пользователя",
      "User updated successfully": "Пользователь успешно обновлен",
@@ -209,10 +167,10 @@ index 91b6d6d..0ad4f99 100644
      "User-Agent include (one per line)": "User-Agent include (по одному на строку)",
      "Username": "Имя пользователя",
      "Username confirmation does not match": "Подтверждение имени пользователя не совпадает",
-diff --git a/web/default/src/i18n/locales/vi.json b/web/default/src/i18n/locales/vi.json
+diff --git a/web/src/i18n/locales/vi.json b/web/src/i18n/locales/vi.json
 index ed2764d..71478c2 100644
---- a/web/default/src/i18n/locales/vi.json
-+++ b/web/default/src/i18n/locales/vi.json
+--- a/web/src/i18n/locales/vi.json
++++ b/web/src/i18n/locales/vi.json
 @@ -4263,6 +4263,7 @@
      "User Subscription Management": "Quản lý đăng ký người dùng",
      "User updated successfully": "Cập nhật người dùng thành công",
@@ -221,10 +179,10 @@ index ed2764d..71478c2 100644
      "User-Agent include (one per line)": "User-Agent include (mỗi dòng một mục)",
      "Username": "Tên người dùng",
      "Username confirmation does not match": "Xác nhận tên người dùng không khớp",
-diff --git a/web/default/src/i18n/locales/zh.json b/web/default/src/i18n/locales/zh.json
+diff --git a/web/src/i18n/locales/zh.json b/web/src/i18n/locales/zh.json
 index fbfd6d7..5443fbf 100644
---- a/web/default/src/i18n/locales/zh.json
-+++ b/web/default/src/i18n/locales/zh.json
+--- a/web/src/i18n/locales/zh.json
++++ b/web/src/i18n/locales/zh.json
 @@ -4263,6 +4263,7 @@
      "User Subscription Management": "用户订阅管理",
      "User updated successfully": "用户更新成功",

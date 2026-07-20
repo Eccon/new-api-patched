@@ -1,8 +1,8 @@
 diff --git a/common/constants.go b/common/constants.go
-index 4e7de1e6a6f5f1a585f8d5e01b8dd68702c96f05..f6028ef9ec2d831881e1d3f572ec447b74fe6d5f 100644
+index bd2fd17693db3636553b3199b795927b83a393a6..27f5a0149981933398070a087531bdfffadd62af 100644
 --- a/common/constants.go
 +++ b/common/constants.go
-@@ -187,9 +187,12 @@ var UpstreamUserAgentOpenAI = ""
+@@ -163,9 +163,12 @@ var UpstreamUserAgentOpenAI = ""
  var UpstreamUserAgentClaude = ""
  var UpstreamUserAgentGemini = ""
  
@@ -17,10 +17,10 @@ index 4e7de1e6a6f5f1a585f8d5e01b8dd68702c96f05..f6028ef9ec2d831881e1d3f572ec447b
  var RelayMaxIdleConnsPerHost int
  
 diff --git a/common/init.go b/common/init.go
-index 8651f180c1b28084c6fa8f409247e3b8b5990608..0c8527dc3782af5bef14f9236c8728d70c8b6733 100644
+index 0c505368d271772d782251281584f9d834bc1c85..2cf9c6fcdbb08a2a6d4ddfc19419583a54b22c34 100644
 --- a/common/init.go
 +++ b/common/init.go
-@@ -108,6 +108,8 @@ func InitEnv() {
+@@ -110,6 +110,8 @@ func InitEnv() {
  	BatchUpdateInterval = GetEnvOrDefault("BATCH_UPDATE_INTERVAL", 5)
  	RelayTimeout = GetEnvOrDefault("RELAY_TIMEOUT", 0)
  	RelayIdleConnTimeout = GetEnvOrDefault("RELAY_IDLE_CONN_TIMEOUT", 90)
@@ -48,7 +48,7 @@ index 6e91ccb605063bfcec3173d65cb546e8f8f6cbe8..be74d3d21fc2ce25b329f45a13e946dc
  
  		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index 63fd489a7fce2569e580af982ad2ccf9ce8a2b25..1df13ff60d6e50613720e79ae1bb01ffc4e6e77d 100644
+index 77369310abebcb317a83179d394ed45d5b808b91..54f2ad0cd1527a1cc2a3499566835460dde12f30 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
 @@ -6,6 +6,7 @@ import (
@@ -81,8 +81,8 @@ index 63fd489a7fce2569e580af982ad2ccf9ce8a2b25..1df13ff60d6e50613720e79ae1bb01ff
  	var client *http.Client
  	var err error
  	if info.ChannelSetting.Proxy != "" {
--		client, err = service.NewProxyHttpClient(info.ChannelSetting.Proxy)
-+		client, err = service.NewProxyHttpClientForRelay(info.ChannelSetting.Proxy, info.IsStream)
+-		client, err = service.GetHttpClientWithProxy(info.ChannelSetting.Proxy)
++		client, err = service.GetHttpClientWithProxyForRelay(info.ChannelSetting.Proxy, info.IsStream)
  		if err != nil {
  			return nil, fmt.Errorf("new proxy http client failed: %w", err)
  		}
@@ -320,7 +320,7 @@ index 63fd489a7fce2569e580af982ad2ccf9ce8a2b25..1df13ff60d6e50613720e79ae1bb01ff
  		return nil, fmt.Errorf("new request failed: %w", err)
  	}
 diff --git a/relay/channel/aws/relay-aws.go b/relay/channel/aws/relay-aws.go
-index 1f6ff7e69263745a3c95304ea03994793edf296a..edc8f8e56ee2a335d883fdb7421f55b146001f7f 100644
+index a0d9923e85c8de1401b5e7416df56f4dc28e3804..df9c045c94470c5367f246b8f126b73ccd995b38 100644
 --- a/relay/channel/aws/relay-aws.go
 +++ b/relay/channel/aws/relay-aws.go
 @@ -7,7 +7,6 @@ import (
@@ -349,8 +349,8 @@ index 1f6ff7e69263745a3c95304ea03994793edf296a..edc8f8e56ee2a335d883fdb7421f55b1
  		err        error
  	)
  	if info.ChannelSetting.Proxy != "" {
--		httpClient, err = service.NewProxyHttpClient(info.ChannelSetting.Proxy)
-+		httpClient, err = service.NewProxyHttpClientForRelay(info.ChannelSetting.Proxy, info.IsStream)
+-		httpClient, err = service.GetHttpClientWithProxy(info.ChannelSetting.Proxy)
++		httpClient, err = service.GetHttpClientWithProxyForRelay(info.ChannelSetting.Proxy, info.IsStream)
  		if err != nil {
  			return nil, fmt.Errorf("new proxy http client failed: %w", err)
  		}
@@ -406,57 +406,49 @@ index cf7325b61039000d75b1ed21eb8c2397816fa518..cfa65607ac1a6b1cf297a49dc3633e47
  	responseBodyText := string(responseBody)
  	responseBodyPreview := common.LocalLogPreview(responseBodyText)
 diff --git a/service/http_client.go b/service/http_client.go
-index c0f89c5ebd3d900fec4de430ed7e7f6bdb2115ec..3f0bb1da7b84a42fcb20014a1b5f8c5360fa0468 100644
+index 5a2986e2fefc30624e8c8774ce95cda748db7905..366d3d5661c637b27ccd9af2c7d672da22fc85b6 100644
 --- a/service/http_client.go
 +++ b/service/http_client.go
-@@ -17,6 +17,7 @@ import (
+@@ -19,11 +19,16 @@ import (
  
  var (
  	httpClient              *http.Client
 +	streamHttpClient        *http.Client
  	ssrfProtectedHTTPClient *http.Client
- 	proxyClientLock         sync.Mutex
- 	proxyClients            = make(map[string]*http.Client)
-@@ -69,21 +70,27 @@ func InitHttpClient() {
- 		transport.TLSClientConfig = common.InsecureTLSConfig
+ 	proxyClients            = proxyHTTPClientCache{
+ 		clients: make(map[string]*http.Client),
+ 		aliases: make(map[string]string),
  	}
++	streamProxyClients      = proxyHTTPClientCache{
++		clients: make(map[string]*http.Client),
++		aliases: make(map[string]string),
++	}
+ 	legacyProxyURLWarnings sync.Map
+ )
  
--	if common.RelayTimeout == 0 {
--		httpClient = &http.Client{
--			Transport:     transport,
--			CheckRedirect: checkRedirect,
--		}
--	} else {
--		httpClient = &http.Client{
--			Transport:     transport,
--			Timeout:       time.Duration(common.RelayTimeout) * time.Second,
--			CheckRedirect: checkRedirect,
--		}
-+	httpClient = newRelayHTTPClient(transport)
+@@ -101,7 +106,7 @@ func newRelayHTTPClient(transport *http.Transport) *http.Client {
+ 		Transport:     transport,
+ 		CheckRedirect: checkRedirect,
+ 	}
+-	if common.RelayTimeout != 0 {
++	if common.RelayTimeout > 0 {
+ 		client.Timeout = time.Duration(common.RelayTimeout) * time.Second
+ 	}
+ 	return client
+@@ -115,6 +120,12 @@ func InitHttpClient() {
+ 		return dialer.DialContext(ctx, "tcp4", addr)
+ 	}
+ 	httpClient = newRelayHTTPClient(transport)
 +	streamHttpClient = httpClient
 +	if shouldUseResponseHeaderTimeout(true) {
 +		streamTransport := transport.Clone()
 +		applyResponseHeaderTimeout(streamTransport, true)
 +		streamHttpClient = newRelayHTTPClient(streamTransport)
- 	}
++	}
  	ssrfProtectedHTTPClient = newProtectedFetchHTTPClient()
  }
  
-+func newRelayHTTPClient(transport http.RoundTripper) *http.Client {
-+	client := &http.Client{
-+		Transport:     transport,
-+		CheckRedirect: checkRedirect,
-+	}
-+	if common.RelayTimeout > 0 {
-+		client.Timeout = time.Duration(common.RelayTimeout) * time.Second
-+	}
-+	return client
-+}
-+
- // GetHttpClient returns the general outbound client used by relay/provider
- // integrations. Do not attach the SSRF-protected dialer here: provider base URLs
- // are root/operator-managed deployment targets, not arbitrary user-controlled
-@@ -95,6 +102,13 @@ func GetHttpClient() *http.Client {
+@@ -129,6 +140,56 @@ func GetHttpClient() *http.Client {
  	return httpClient
  }
  
@@ -467,13 +459,6 @@ index c0f89c5ebd3d900fec4de430ed7e7f6bdb2115ec..3f0bb1da7b84a42fcb20014a1b5f8c53
 +	return httpClient
 +}
 +
- // GetSSRFProtectedHTTPClient 返回带拨号时 SSRF 校验的客户端。
- // ssrfProtectedHTTPClient 由 InitHttpClient 在启动时初始化，运行期只读。
- func GetSSRFProtectedHTTPClient() *http.Client {
-@@ -112,6 +126,49 @@ func GetHttpClientWithProxy(proxyURL string) (*http.Client, error) {
- 	return NewProxyHttpClient(proxyURL)
- }
- 
 +func shouldUseResponseHeaderTimeout(stream bool) bool {
 +	return stream && common.RelayResponseHeaderTimeout > 0
 +}
@@ -517,71 +502,96 @@ index c0f89c5ebd3d900fec4de430ed7e7f6bdb2115ec..3f0bb1da7b84a42fcb20014a1b5f8c53
 +	return context.WithTimeout(ctx, timeout)
 +}
 +
- // ResetProxyClientCache 清空代理客户端缓存，确保下次使用时重新初始化
- func ResetProxyClientCache() {
- 	proxyClientLock.Lock()
-@@ -126,15 +183,24 @@ func ResetProxyClientCache() {
+ // GetSSRFProtectedHTTPClient 返回带拨号时 SSRF 校验的客户端。
+ // ssrfProtectedHTTPClient 由 InitHttpClient 在启动时初始化，运行期只读。
+ func GetSSRFProtectedHTTPClient() *http.Client {
+@@ -192,7 +253,7 @@ func (cache *proxyHTTPClientCache) get(rawCacheKey string) (*http.Client, bool)
+ 	return client, ok
+ }
  
- // NewProxyHttpClient 创建支持代理的 HTTP 客户端
- func NewProxyHttpClient(proxyURL string) (*http.Client, error) {
-+	return NewProxyHttpClientForRelay(proxyURL, false)
+-func (cache *proxyHTTPClientCache) getOrCreate(rawCacheKey string, config *proxyURLConfig) (*http.Client, error) {
++func (cache *proxyHTTPClientCache) getOrCreate(rawCacheKey string, config *proxyURLConfig, stream bool) (*http.Client, error) {
+ 	cache.mutex.Lock()
+ 	defer cache.mutex.Unlock()
+ 	if client, ok := cache.clients[config.cacheKey]; ok {
+@@ -200,7 +261,7 @@ func (cache *proxyHTTPClientCache) getOrCreate(rawCacheKey string, config *proxy
+ 		return client, nil
+ 	}
+ 
+-	client, err := newProxyHTTPClient(config.parsedURL)
++	client, err := newProxyHTTPClient(config.parsedURL, stream)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+@@ -231,7 +292,7 @@ func (cache *proxyHTTPClientCache) reset() map[string]*http.Client {
+ 	return oldClients
+ }
+ 
+-func newProxyHTTPClient(proxyURL *url.URL) (*http.Client, error) {
++func newProxyHTTPClient(proxyURL *url.URL, stream bool) (*http.Client, error) {
+ 	transport := newRelayHTTPTransport()
+ 
+ 	switch proxyURL.Scheme {
+@@ -258,19 +319,31 @@ func newProxyHTTPClient(proxyURL *url.URL) (*http.Client, error) {
+ 		return nil, fmt.Errorf("unsupported proxy scheme")
+ 	}
+ 
++	applyResponseHeaderTimeout(transport, stream)
+ 	return newRelayHTTPClient(transport), nil
+ }
+ 
+ // GetHttpClientWithProxy returns the default client or a cached proxy-enabled client.
+ func GetHttpClientWithProxy(rawProxyURL string) (*http.Client, error) {
++	return GetHttpClientWithProxyForRelay(rawProxyURL, false)
 +}
 +
-+func NewProxyHttpClientForRelay(proxyURL string, stream bool) (*http.Client, error) {
- 	if proxyURL == "" {
++// GetHttpClientWithProxyForRelay selects a stream-specific proxy client when
++// response-header timeout handling is enabled for streaming requests.
++func GetHttpClientWithProxyForRelay(rawProxyURL string, stream bool) (*http.Client, error) {
+ 	trimmedProxyURL := strings.TrimSpace(rawProxyURL)
+ 	if trimmedProxyURL == "" {
 -		if client := GetHttpClient(); client != nil {
 +		if client := GetHttpClientForRelay(stream); client != nil {
  			return client, nil
  		}
  		return http.DefaultClient, nil
  	}
- 
-+	cacheKey := proxyURL
-+	if shouldUseResponseHeaderTimeout(stream) {
-+		cacheKey += "|stream_response_header_timeout"
-+	}
+-	if client, ok := proxyClients.get(trimmedProxyURL); ok {
 +
- 	proxyClientLock.Lock()
--	if client, ok := proxyClients[proxyURL]; ok {
-+	if client, ok := proxyClients[cacheKey]; ok {
- 		proxyClientLock.Unlock()
++	cache := &proxyClients
++	if shouldUseResponseHeaderTimeout(stream) {
++		cache = &streamProxyClients
++	}
++	if client, ok := cache.get(trimmedProxyURL); ok {
  		return client, nil
  	}
-@@ -154,16 +220,13 @@ func NewProxyHttpClient(proxyURL string) (*http.Client, error) {
- 			ForceAttemptHTTP2:   true,
- 			Proxy:               http.ProxyURL(parsedURL),
- 		}
-+		applyResponseHeaderTimeout(transport, stream)
- 		if common.TLSInsecureSkipVerify {
- 			transport.TLSClientConfig = common.InsecureTLSConfig
- 		}
--		client := &http.Client{
--			Transport:     transport,
--			CheckRedirect: checkRedirect,
--		}
--		client.Timeout = time.Duration(common.RelayTimeout) * time.Second
-+		client := newRelayHTTPClient(transport)
- 		proxyClientLock.Lock()
--		proxyClients[proxyURL] = client
-+		proxyClients[cacheKey] = client
- 		proxyClientLock.Unlock()
- 		return client, nil
  
-@@ -196,14 +259,14 @@ func NewProxyHttpClient(proxyURL string) (*http.Client, error) {
- 				return dialer.Dial(network, addr)
- 			},
- 		}
-+		applyResponseHeaderTimeout(transport, stream)
- 		if common.TLSInsecureSkipVerify {
- 			transport.TLSClientConfig = common.InsecureTLSConfig
- 		}
+@@ -282,7 +355,7 @@ func GetHttpClientWithProxy(rawProxyURL string) (*http.Client, error) {
+ 	if legacySuffixStripped {
+ 		warnLegacyProxyURLOnce(config)
+ 	}
+-	return proxyClients.getOrCreate(trimmedProxyURL, config)
++	return cache.getOrCreate(trimmedProxyURL, config, stream)
+ }
  
--		client := &http.Client{Transport: transport, CheckRedirect: checkRedirect}
--		client.Timeout = time.Duration(common.RelayTimeout) * time.Second
-+		client := newRelayHTTPClient(transport)
- 		proxyClientLock.Lock()
--		proxyClients[proxyURL] = client
-+		proxyClients[cacheKey] = client
- 		proxyClientLock.Unlock()
- 		return client, nil
+ // InvalidateProxyClient removes one proxy client and closes its idle connections.
+@@ -298,12 +371,17 @@ func InvalidateProxyClient(rawProxyURL string) {
+ 	if client := proxyClients.remove(config.cacheKey); client != nil {
+ 		client.CloseIdleConnections()
+ 	}
++	if client := streamProxyClients.remove(config.cacheKey); client != nil {
++		client.CloseIdleConnections()
++	}
+ }
+ 
+ // ResetProxyClientCache clears all cached proxy clients.
+ func ResetProxyClientCache() {
+-	for _, client := range proxyClients.reset() {
+-		client.CloseIdleConnections()
++	for _, cache := range []*proxyHTTPClientCache{&proxyClients, &streamProxyClients} {
++		for _, client := range cache.reset() {
++			client.CloseIdleConnections()
++		}
+ 	}
+ }
  

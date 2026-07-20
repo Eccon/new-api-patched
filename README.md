@@ -41,7 +41,7 @@ tree.
 3. Apply `patches/*.patch` when patch mode is `patched`; skip this step when
    patch mode is `upstream`.
 4. Print the patched source diff summary.
-5. Build default and classic frontend assets.
+5. Build the frontend assets.
 6. Build pure-Go binaries with `CGO_ENABLED=0`:
    - `linux/amd64`
    - `linux/arm64`
@@ -64,19 +64,18 @@ No Docker image is built.
 - `0002-custom-request-user-agent-log-display.patch`
   - Stores the incoming request User-Agent once in `logs.other.request_user_agent`.
   - Shows it in the default web usage-log detail dialog for all users.
-  - Shows it as the last row in the classic web usage-log expanded details.
   - Does not add or migrate any database columns.
 
 - `0003-show-cache-read-rate-in-usage-logs.patch`
-  - Shows cache read token rate beside the usage-log list cache read value in both frontends.
+  - Shows cache read token rate beside the usage-log list cache read value in the web frontend.
   - Uses `cache_tokens / prompt_tokens` for OpenAI-style usage.
   - Uses `cache_tokens / (prompt_tokens + cache_tokens)` for Claude/Anthropic usage.
   - Does not add or migrate any database columns.
 
 - `0004-show-running-request-count-in-usage-logs.patch`
   - Adds current running relay request count to `/api/log/stat` and `/api/log/self/stat`.
-  - Shows the value as `RUN` beside usage-log statistics in both frontends.
-  - Refreshes usage-log statistics every 5 seconds in both frontends.
+  - Shows the value as `RUN` beside usage-log statistics in the web frontend.
+  - Refreshes usage-log statistics every 5 seconds in the web frontend.
   - Changes the default usage-log end time to the end of the current day.
   - Does not add or migrate any database columns.
 
@@ -141,7 +140,7 @@ No Docker image is built.
   - Captures the model reported by OpenAI Chat Completions and Responses responses/streams.
   - Stores the captured model in usage-log `other.actual_model_name` when it is the actual served model.
   - Keeps the existing mapped-model fallback for older logs and mapped channels.
-  - Shows `actual_model_name` before the mapped-model fallback in default and classic usage-log UI.
+  - Shows `actual_model_name` before the mapped-model fallback in the web usage-log UI.
   - Does not add or migrate any database columns.
 
 ## Version Handling
