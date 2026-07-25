@@ -1,0 +1,1143 @@
+diff --git a/constant/alpha_search.go b/constant/alpha_search.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..c3f754fc7b0cfa93044dbd922f49f8ad7a9bac06
+--- /dev/null
++++ b/constant/alpha_search.go
+@@ -0,0 +1,5 @@
++package constant
++
++const AlphaSearchPath = "/v1/alpha/search"
++
++const ContextKeyAlphaSearchBillingFallback ContextKey = "alpha_search_billing_fallback"
+diff --git a/controller/relay.go b/controller/relay.go
+index 7d64641f1a6a76fe281ed89fc91551316cca3741..2f609bb8d4e85d8374a444066308dce254f35f6d 100644
+--- a/controller/relay.go
++++ b/controller/relay.go
+@@ -49,12 +49,49 @@ func relayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIErro
+ 		err = relay.EmbeddingHelper(c, info)
+ 	case relayconstant.RelayModeResponses, relayconstant.RelayModeResponsesCompact:
+ 		err = relay.ResponsesHelper(c, info)
++	case relayconstant.RelayModeAlphaSearch:
++		err = relay.AlphaSearchHelper(c, info)
+ 	default:
+ 		err = relay.TextHelper(c, info)
+ 	}
+ 	return err
+ }
+ 
++func prepareAlphaSearchAttemptBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
++	priceData, err := helper.AlphaSearchPriceHelper(c, info)
++	if err != nil {
++		return types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest), types.ErrOptionWithSkipRetry())
++	}
++	if priceData.FreeModel {
++		return nil
++	}
++	if info.Billing == nil {
++		return service.PreConsumeBilling(c, priceData.QuotaToPreConsume, info)
++	}
++	if err := info.Billing.Reserve(priceData.QuotaToPreConsume); err != nil {
++		return types.NewError(err, types.ErrorCodeUpdateDataError, types.ErrOptionWithSkipRetry())
++	}
++	return nil
++}
++
++func settleAlphaSearchBilling(c *gin.Context, info *relaycommon.RelayInfo) {
++	if err := service.SettleBilling(c, info, info.PriceData.Quota); err == nil {
++		return
++	} else {
++		common.SysError("settle alpha search billing error: " + err.Error())
++	}
++
++	if info.Billing == nil || !info.Billing.NeedsRefund() {
++		return
++	}
++	chargedQuota := info.Billing.GetPreConsumedQuota()
++	info.PriceData.Quota = chargedQuota
++	common.SetContextKey(c, constant.ContextKeyAlphaSearchBillingFallback, true)
++	if err := service.SettleBilling(c, info, chargedQuota); err != nil {
++		common.SysError("finalize alpha search reserved billing error: " + err.Error())
++	}
++}
++
+ func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
+ 	var err *types.NewAPIError
+ 	if strings.Contains(c.Request.URL.Path, "embed") {
+@@ -249,6 +286,15 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+ 		newAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
+ 		return
+ 	}
++	if relayFormat == types.RelayFormatAlphaSearch && c.GetInt("channel_type") != constant.ChannelTypeOpenAI {
++		newAPIError = types.NewErrorWithStatusCode(
++			errors.New("alpha search is only supported by OpenAI channels"),
++			types.ErrorCodeInvalidRequest,
++			http.StatusBadRequest,
++			types.ErrOptionWithSkipRetry(),
++		)
++		return
++	}
+ 	if common.RelayTimingLogEnabled {
+ 		relayInfo.Timing.RequestReceivedAt = getGinContextTime(c, "relay_timing_request_received_at")
+ 		relayInfo.Timing.DistributeStart = getGinContextTime(c, "relay_timing_distribute_start_at")
+@@ -302,7 +348,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+ 		relayInfo.Timing.TokensEstimated = time.Now()
+ 	}
+ 
+-	priceData, err := helper.ModelPriceHelper(c, relayInfo, tokens, meta)
++	var priceData types.PriceData
++	if relayFormat == types.RelayFormatAlphaSearch {
++		priceData, err = helper.AlphaSearchPriceHelper(c, relayInfo)
++	} else {
++		priceData, err = helper.ModelPriceHelper(c, relayInfo, tokens, meta)
++	}
+ 	if err != nil {
+ 		newAPIError = types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest))
+ 		return
+@@ -369,6 +420,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+ 		}
+ 		c.Request.Body = io.NopCloser(bodyStorage)
+ 
++		if relayFormat == types.RelayFormatAlphaSearch {
++			newAPIError = prepareAlphaSearchAttemptBilling(c, relayInfo)
++			if newAPIError != nil {
++				break
++			}
++		}
++
+ 		switch relayFormat {
+ 		case types.RelayFormatOpenAIRealtime:
+ 			newAPIError = relay.WssHelper(c, relayInfo)
+@@ -382,6 +440,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+ 
+ 		if newAPIError == nil {
+ 			relayInfo.LastError = nil
++			if relayFormat == types.RelayFormatAlphaSearch {
++				settleAlphaSearchBilling(c, relayInfo)
++				service.LogAlphaSearchConsumption(c, relayInfo)
++			}
+ 			return
+ 		}
+ 
+diff --git a/dto/alpha_search.go b/dto/alpha_search.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..f00b31675b237f403736ad7d12091a075fef25ee
+--- /dev/null
++++ b/dto/alpha_search.go
+@@ -0,0 +1,23 @@
++package dto
++
++import "github.com/QuantumNous/new-api/types"
++
++// AlphaSearchRequest contains only fields owned by the gateway. The complete
++// search payload is forwarded from the stored request body unchanged.
++type AlphaSearchRequest struct {
++	BaseRequest
++	Model           string `json:"model"`
++	MaxOutputTokens *uint  `json:"max_output_tokens,omitempty"`
++}
++
++func (r *AlphaSearchRequest) GetTokenCountMeta() *types.TokenCountMeta {
++	meta := &types.TokenCountMeta{TokenType: types.TokenTypeTokenizer}
++	if r.MaxOutputTokens != nil {
++		meta.MaxTokens = int(*r.MaxOutputTokens)
++	}
++	return meta
++}
++
++func (r *AlphaSearchRequest) SetModelName(modelName string) {
++	r.Model = modelName
++}
+diff --git a/middleware/distributor.go b/middleware/distributor.go
+index 53ab136e4a7f744f92346e9c29278049e819d2dd..7bd3e343d88f1fb01cd9cf39a73040197c84edef 100644
+--- a/middleware/distributor.go
++++ b/middleware/distributor.go
+@@ -111,7 +111,7 @@ func Distribute() func(c *gin.Context) {
+ 					affinityUsable := false
+ 					preferred, err := model.CacheGetChannel(preferredChannelID)
+ 					if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled &&
+-						channelSupportsRequestPath(preferred, c.Request.URL.Path, modelRequest.Model) {
++						model.ChannelSupportsRequestPath(preferred, c.Request.URL.Path, modelRequest.Model) {
+ 						if usingGroup == "auto" {
+ 							userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+ 							autoGroups := service.GetUserAutoGroup(userGroup)
+@@ -178,20 +178,6 @@ func Distribute() func(c *gin.Context) {
+ 	}
+ }
+ 
+-// channelSupportsRequestPath reports whether a channel can serve the request path.
+-// Only Advanced Custom (type 58) channels are path-checked; all other channel types
+-// always pass. A type-58 channel is usable only when one of its routes matches.
+-func channelSupportsRequestPath(channel *model.Channel, requestPath string, requestModel string) bool {
+-	if channel == nil {
+-		return false
+-	}
+-	if channel.Type != constant.ChannelTypeAdvancedCustom {
+-		return true
+-	}
+-	config := channel.GetOtherSettings().AdvancedCustom
+-	return config != nil && config.SupportsPathForModel(requestPath, requestModel)
+-}
+-
+ // getModelFromRequest 从请求中读取模型信息
+ // 根据 Content-Type 自动处理：
+ // - application/json
+diff --git a/middleware/logger.go b/middleware/logger.go
+index 7f78d74233f7192a14d79325a74dcdb8643e8416..d5f15162833ac8dd09a7f60c6201fc7a1bc1e60d 100644
+--- a/middleware/logger.go
++++ b/middleware/logger.go
+@@ -6,6 +6,7 @@ import (
+ 	"strings"
+ 
+ 	"github.com/QuantumNous/new-api/common"
++	"github.com/QuantumNous/new-api/constant"
+ 	"github.com/QuantumNous/new-api/logger"
+ 	"github.com/gin-gonic/gin"
+ )
+@@ -35,6 +36,7 @@ func isLLMRelayRequestPath(path string) bool {
+ 		strings.HasPrefix(path, "/v1/completions") ||
+ 		strings.HasPrefix(path, "/v1/messages") ||
+ 		strings.HasPrefix(path, "/v1/responses") ||
++		path == constant.AlphaSearchPath ||
+ 		isGeminiGenerateRequestPath(path)
+ }
+ 
+diff --git a/model/ability.go b/model/ability.go
+index e67b28301e02467fa626d96f445dd736ba676657..e38c329bcfd0f1a3bff4d581d6675f75f1c76369 100644
+--- a/model/ability.go
++++ b/model/ability.go
+@@ -8,7 +8,6 @@ import (
+ 
+ 	"github.com/QuantumNous/new-api/common"
+ 	"github.com/QuantumNous/new-api/constant"
+-	"github.com/QuantumNous/new-api/dto"
+ 
+ 	"github.com/samber/lo"
+ 	"gorm.io/gorm"
+@@ -106,6 +105,10 @@ func getChannelQuery(group string, model string, retry int) (*gorm.DB, error) {
+ }
+ 
+ func GetChannel(group string, model string, retry int, requestPath string) (*Channel, error) {
++	if requestPath == constant.AlphaSearchPath {
++		return getAlphaSearchChannel(group, model, retry)
++	}
++
+ 	var abilities []Ability
+ 
+ 	var err error = nil
+@@ -146,11 +149,72 @@ func GetChannel(group string, model string, retry int, requestPath string) (*Cha
+ 	return &channel, err
+ }
+ 
+-// filterAbilitiesByRequestPathAndModel restricts candidates by request path and
+-// model for the DB (non-memory-cache) selection path. Only Advanced Custom
+-// (type 58) channels are path-checked: kept only when one of their routes matches
+-// requestPath and model; all other channel types always pass. When requestPath is
+-// empty, filtering is skipped.
++// getAlphaSearchChannel filters by channel type before priority selection so
++// the DB selector behaves like the in-memory selector when higher-priority
++// non-OpenAI channels advertise the same model.
++func getAlphaSearchChannel(group string, model string, retry int) (*Channel, error) {
++	var abilities []Ability
++	err := DB.Model(&Ability{}).
++		Joins("JOIN channels ON channels.id = abilities.channel_id").
++		Where("abilities."+commonGroupCol+" = ? AND abilities.model = ? AND abilities.enabled = ? AND channels.type = ?",
++			group, model, true, constant.ChannelTypeOpenAI).
++		Order("abilities.priority DESC").
++		Order("abilities.weight DESC").
++		Find(&abilities).Error
++	if err != nil {
++		return nil, err
++	}
++	if len(abilities) == 0 {
++		return nil, nil
++	}
++
++	priorities := make([]int64, 0)
++	seenPriorities := make(map[int64]struct{})
++	for _, ability := range abilities {
++		priority := lo.FromPtrOr(ability.Priority, int64(0))
++		if _, exists := seenPriorities[priority]; exists {
++			continue
++		}
++		seenPriorities[priority] = struct{}{}
++		priorities = append(priorities, priority)
++	}
++	if retry >= len(priorities) {
++		retry = len(priorities) - 1
++	}
++	targetPriority := priorities[retry]
++
++	targetAbilities := make([]Ability, 0, len(abilities))
++	weightSum := uint(0)
++	for _, ability := range abilities {
++		if lo.FromPtrOr(ability.Priority, int64(0)) != targetPriority {
++			continue
++		}
++		targetAbilities = append(targetAbilities, ability)
++		weightSum += ability.Weight + 10
++	}
++
++	weight := common.GetRandomInt(int(weightSum))
++	channelID := 0
++	for _, ability := range targetAbilities {
++		weight -= int(ability.Weight) + 10
++		if weight <= 0 {
++			channelID = ability.ChannelId
++			break
++		}
++	}
++	if channelID == 0 {
++		return nil, errors.New("channel not found")
++	}
++
++	channel := &Channel{}
++	if err := DB.First(channel, "id = ?", channelID).Error; err != nil {
++		return nil, err
++	}
++	return channel, nil
++}
++
++// filterAbilitiesByRequestPathAndModel applies the same path contract as the
++// in-memory channel selector to the DB selection path.
+ func filterAbilitiesByRequestPathAndModel(abilities []Ability, requestPath string, model string) []Ability {
+ 	if requestPath == "" || len(abilities) == 0 {
+ 		return abilities
+@@ -168,25 +232,28 @@ func filterAbilitiesByRequestPathAndModel(abilities []Ability, requestPath strin
+ 
+ 	var channels []*Channel
+ 	if err := DB.Where("id IN ?", channelIds).Find(&channels).Error; err != nil {
+-		// On error, fall back to unfiltered candidates to avoid blocking selection
++		if requestPath == constant.AlphaSearchPath {
++			return nil
++		}
++		// On error, preserve the legacy fail-open behavior for unrelated paths.
+ 		return abilities
+ 	}
+ 
+-	advancedConfigs := make(map[int]*dto.AdvancedCustomConfig)
++	channelsByID := make(map[int]*Channel, len(channels))
+ 	for _, channel := range channels {
+-		if channel.Type == constant.ChannelTypeAdvancedCustom {
+-			advancedConfigs[channel.Id] = channel.GetOtherSettings().AdvancedCustom
+-		}
++		channelsByID[channel.Id] = channel
+ 	}
+ 
+ 	filtered := make([]Ability, 0, len(abilities))
+ 	for _, ability := range abilities {
+-		config, isAdvancedCustom := advancedConfigs[ability.ChannelId]
+-		if !isAdvancedCustom {
+-			filtered = append(filtered, ability)
++		channel, ok := channelsByID[ability.ChannelId]
++		if !ok {
++			if requestPath != constant.AlphaSearchPath {
++				filtered = append(filtered, ability)
++			}
+ 			continue
+ 		}
+-		if config != nil && config.SupportsPathForModel(requestPath, model) {
++		if ChannelSupportsRequestPath(channel, requestPath, model) {
+ 			filtered = append(filtered, ability)
+ 		}
+ 	}
+diff --git a/model/alpha_search_channel_test.go b/model/alpha_search_channel_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..005e62146dd9bd957862df78d7a297e70dc98c3e
+--- /dev/null
++++ b/model/alpha_search_channel_test.go
+@@ -0,0 +1,49 @@
++package model
++
++import (
++	"fmt"
++	"testing"
++
++	"github.com/QuantumNous/new-api/common"
++	"github.com/QuantumNous/new-api/constant"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++func insertAlphaSearchChannelCandidate(t *testing.T, id int, channelType int, priority int64) {
++	t.Helper()
++	require.NoError(t, DB.Create(&Channel{
++		Id:     id,
++		Type:   channelType,
++		Key:    fmt.Sprintf("key-%d", id),
++		Status: common.ChannelStatusEnabled,
++		Name:   fmt.Sprintf("channel-%d", id),
++	}).Error)
++	require.NoError(t, DB.Create(&Ability{
++		Group:     "default",
++		Model:     "gpt-5.6",
++		ChannelId: id,
++		Enabled:   true,
++		Priority:  &priority,
++	}).Error)
++}
++
++func TestGetAlphaSearchChannelFiltersTypeBeforePriority(t *testing.T) {
++	truncateTables(t)
++	insertAlphaSearchChannelCandidate(t, 9101, constant.ChannelTypeCodex, 100)
++	insertAlphaSearchChannelCandidate(t, 9102, constant.ChannelTypeOpenRouter, 90)
++	insertAlphaSearchChannelCandidate(t, 9103, constant.ChannelTypeOpenAI, 10)
++
++	channel, err := GetChannel("default", "gpt-5.6", 0, constant.AlphaSearchPath)
++	require.NoError(t, err)
++	require.NotNil(t, channel)
++	assert.Equal(t, 9103, channel.Id)
++	assert.Equal(t, constant.ChannelTypeOpenAI, channel.Type)
++}
++
++func TestChannelSupportsRequestPathRestrictsAlphaSearch(t *testing.T) {
++	assert.True(t, ChannelSupportsRequestPath(&Channel{Type: constant.ChannelTypeOpenAI}, constant.AlphaSearchPath, "gpt-5.6"))
++	assert.False(t, ChannelSupportsRequestPath(&Channel{Type: constant.ChannelTypeCodex}, constant.AlphaSearchPath, "gpt-5.6"))
++	assert.False(t, ChannelSupportsRequestPath(&Channel{Type: constant.ChannelTypeOpenRouter}, constant.AlphaSearchPath, "gpt-5.6"))
++	assert.True(t, ChannelSupportsRequestPath(&Channel{Type: constant.ChannelTypeOpenAI}, "/v1/responses", "gpt-5.6"))
++}
+diff --git a/model/channel.go b/model/channel.go
+index 1de876877559299c4767d6e6b73322d8fb3a5b8d..a74036abf6431f3d497771e10bd99b17efe98c90 100644
+--- a/model/channel.go
++++ b/model/channel.go
+@@ -69,6 +69,23 @@ type ChannelInfo struct {
+ 	MultiKeyMode           constant.MultiKeyMode `json:"multi_key_mode"`
+ }
+ 
++// ChannelSupportsRequestPath reports whether a channel can serve a relay path.
++// Alpha Search is restricted to OpenAI channels; Advanced Custom channels
++// remain constrained by their configured route table on other paths.
++func ChannelSupportsRequestPath(channel *Channel, requestPath string, requestModel string) bool {
++	if channel == nil {
++		return false
++	}
++	if requestPath == constant.AlphaSearchPath {
++		return channel.Type == constant.ChannelTypeOpenAI
++	}
++	if channel.Type != constant.ChannelTypeAdvancedCustom {
++		return true
++	}
++	config := channel.GetOtherSettings().AdvancedCustom
++	return config != nil && config.SupportsPathForModel(requestPath, requestModel)
++}
++
+ type ChannelSortOptions struct {
+ 	SortBy    string
+ 	SortOrder string
+diff --git a/model/channel_cache.go b/model/channel_cache.go
+index 81923017d79cf4c740f5294d6a65774a9704294a..9c219c9f1c1b20587b2747406f702247d69b4bbe 100644
+--- a/model/channel_cache.go
++++ b/model/channel_cache.go
+@@ -209,9 +209,8 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
+ }
+ 
+ // filterChannelsByRequestPathAndModel restricts candidates by request path and
+-// model. Only Advanced Custom (type 58) channels are path-checked: they are kept
+-// only when one of their configured routes matches requestPath and model. All
+-// other channel types always pass. When requestPath is empty, filtering is skipped.
++// model. Alpha Search only accepts OpenAI channels. Advanced Custom channels
++// are kept only when one of their configured routes matches other paths.
+ // Caller must hold channelSyncLock (read lock). The cached slice is never mutated.
+ func filterChannelsByRequestPathAndModel(channels []int, requestPath string, model string) []int {
+ 	if requestPath == "" || len(channels) == 0 {
+@@ -225,8 +224,10 @@ func filterChannelsByRequestPathAndModel(channels []int, requestPath string, mod
+ 			filtered = append(filtered, channelId)
+ 			continue
+ 		}
+-		if channel.Type != constant.ChannelTypeAdvancedCustom {
+-			filtered = append(filtered, channelId)
++		if requestPath == constant.AlphaSearchPath || channel.Type != constant.ChannelTypeAdvancedCustom {
++			if ChannelSupportsRequestPath(channel, requestPath, model) {
++				filtered = append(filtered, channelId)
++			}
+ 			continue
+ 		}
+ 		if config := channel2advancedCustomConfig[channelId]; config != nil && config.SupportsPathForModel(requestPath, model) {
+diff --git a/relay/alpha_search_handler.go b/relay/alpha_search_handler.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..2875c2d5639b338f74990939f92f799f9b21d405
+--- /dev/null
++++ b/relay/alpha_search_handler.go
+@@ -0,0 +1,115 @@
++package relay
++
++import (
++	"encoding/json"
++	"fmt"
++	"io"
++	"net/http"
++
++	"github.com/QuantumNous/new-api/common"
++	"github.com/QuantumNous/new-api/constant"
++	"github.com/QuantumNous/new-api/dto"
++	relaycommon "github.com/QuantumNous/new-api/relay/common"
++	"github.com/QuantumNous/new-api/relay/helper"
++	"github.com/QuantumNous/new-api/service"
++	"github.com/QuantumNous/new-api/types"
++
++	"github.com/gin-gonic/gin"
++)
++
++func buildAlphaSearchBody(body []byte, model string) ([]byte, error) {
++	var payload map[string]json.RawMessage
++	if err := common.Unmarshal(body, &payload); err != nil {
++		return nil, err
++	}
++	if payload == nil {
++		return nil, fmt.Errorf("alpha search request body must be a JSON object")
++	}
++
++	mappedModel, err := common.Marshal(model)
++	if err != nil {
++		return nil, err
++	}
++	payload["model"] = mappedModel
++	return common.Marshal(payload)
++}
++
++func AlphaSearchHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
++	info.InitChannelMeta(c)
++	if info.ChannelType != constant.ChannelTypeOpenAI {
++		return types.NewErrorWithStatusCode(
++			fmt.Errorf("alpha search is only supported by OpenAI channels"),
++			types.ErrorCodeInvalidRequest,
++			http.StatusBadRequest,
++			types.ErrOptionWithSkipRetry(),
++		)
++	}
++
++	request, ok := info.Request.(*dto.AlphaSearchRequest)
++	if !ok {
++		return types.NewErrorWithStatusCode(
++			fmt.Errorf("invalid request type, expected dto.AlphaSearchRequest, got %T", info.Request),
++			types.ErrorCodeInvalidRequest,
++			http.StatusBadRequest,
++			types.ErrOptionWithSkipRetry(),
++		)
++	}
++	requestCopy := *request
++	if err := helper.ModelMappedHelper(c, info, &requestCopy); err != nil {
++		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
++	}
++
++	adaptor := GetAdaptor(info.ApiType)
++	if adaptor == nil {
++		return types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
++	}
++	adaptor.Init(info)
++
++	storage, err := common.GetBodyStorage(c)
++	if err != nil {
++		return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
++	}
++
++	var requestBody io.Reader = common.ReaderOnly(storage)
++	info.UpstreamRequestBodySize = storage.Size()
++	if info.IsModelMapped {
++		bodyBytes, err := storage.Bytes()
++		if err != nil {
++			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
++		}
++		outboundBytes, err := buildAlphaSearchBody(bodyBytes, requestCopy.Model)
++		if err != nil {
++			return types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
++		}
++		outboundBody, size, closer, err := relaycommon.NewOutboundJSONBody(outboundBytes)
++		if err != nil {
++			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
++		}
++		defer closer.Close()
++		requestBody = outboundBody
++		info.UpstreamRequestBodySize = size
++	}
++
++	resp, err := adaptor.DoRequest(c, info, requestBody)
++	if err != nil {
++		return types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
++	}
++	httpResp, ok := resp.(*http.Response)
++	if !ok || httpResp == nil {
++		return types.NewOpenAIError(fmt.Errorf("invalid alpha search response type: %T", resp), types.ErrorCodeBadResponse, http.StatusInternalServerError)
++	}
++
++	if httpResp.StatusCode < http.StatusOK || httpResp.StatusCode >= http.StatusMultipleChoices {
++		newAPIError := service.RelayErrorHandler(c.Request.Context(), httpResp, false)
++		service.ResetStatusCode(newAPIError, c.GetString("status_code_mapping"))
++		return newAPIError
++	}
++	defer service.CloseResponseBodyGracefully(httpResp)
++
++	responseBody, err := io.ReadAll(httpResp.Body)
++	if err != nil {
++		return types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError)
++	}
++	service.IOCopyBytesGracefully(c, httpResp, responseBody)
++	return nil
++}
+diff --git a/relay/alpha_search_handler_test.go b/relay/alpha_search_handler_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..5fbe003183c408b0fe81520a2562105cd764dbbe
+--- /dev/null
++++ b/relay/alpha_search_handler_test.go
+@@ -0,0 +1,29 @@
++package relay
++
++import (
++	"testing"
++
++	"github.com/QuantumNous/new-api/common"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++func TestBuildAlphaSearchBodyOnlyReplacesModel(t *testing.T) {
++	body := []byte(`{
++		"id":"search-session",
++		"model":"gpt-client",
++		"commands":{"search_query":[{"q":"OpenAI news","recency":7}]},
++		"settings":{"search_context_size":"low"},
++		"future_field":{"preserved":true}
++	}`)
++
++	got, err := buildAlphaSearchBody(body, "gpt-upstream")
++	require.NoError(t, err)
++
++	var payload map[string]interface{}
++	require.NoError(t, common.Unmarshal(got, &payload))
++	assert.Equal(t, "gpt-upstream", payload["model"])
++	assert.Equal(t, "search-session", payload["id"])
++	assert.Equal(t, true, payload["future_field"].(map[string]interface{})["preserved"])
++	assert.Equal(t, "OpenAI news", payload["commands"].(map[string]interface{})["search_query"].([]interface{})[0].(map[string]interface{})["q"])
++}
+diff --git a/relay/channel/api_request_test.go b/relay/channel/api_request_test.go
+index 72951750ea862f43bc6a9de14e1d5151fa17b6b2..d4c84aeec9c5a84bd791602d0e29d4c7e3d941d8 100644
+--- a/relay/channel/api_request_test.go
++++ b/relay/channel/api_request_test.go
+@@ -298,6 +298,7 @@ func TestConfiguredUpstreamUserAgentOpenAIFormats(t *testing.T) {
+ 		types.RelayFormatOpenAI,
+ 		types.RelayFormatOpenAIResponses,
+ 		types.RelayFormatOpenAIResponsesCompaction,
++		types.RelayFormatAlphaSearch,
+ 		types.RelayFormatOpenAIAudio,
+ 		types.RelayFormatOpenAIImage,
+ 		types.RelayFormatOpenAIRealtime,
+diff --git a/relay/channel/openai/adaptor.go b/relay/channel/openai/adaptor.go
+index 3fd24665c9396af8dbe5e669e6292572d56de1f4..4abaf8fb323a7092754ccc71cee1c950e24c1141 100644
+--- a/relay/channel/openai/adaptor.go
++++ b/relay/channel/openai/adaptor.go
+@@ -102,7 +102,48 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
+ 	}
+ }
+ 
++func alphaSearchRequestURL(info *relaycommon.RelayInfo) (string, error) {
++	if info == nil {
++		return "", errors.New("relay info is nil")
++	}
++	baseURL, err := url.Parse(info.ChannelBaseUrl)
++	if err != nil {
++		return "", fmt.Errorf("parse channel base URL: %w", err)
++	}
++	if baseURL.Scheme == "" || baseURL.Host == "" {
++		return "", fmt.Errorf("invalid channel base URL")
++	}
++	requestURL, err := url.Parse(info.RequestURLPath)
++	if err != nil {
++		return "", fmt.Errorf("parse alpha search request URL: %w", err)
++	}
++
++	requestPath := constant.AlphaSearchPath
++	// Keep the same Cloudflare AI Gateway convention as GetFullRequestURL:
++	// its OpenAI base URL already includes the provider API prefix.
++	if strings.HasPrefix(info.ChannelBaseUrl, "https://gateway.ai.cloudflare.com") {
++		requestPath = strings.TrimPrefix(requestPath, "/v1")
++	}
++	baseURL.Path = strings.TrimRight(baseURL.Path, "/") + requestPath
++	baseURL.RawPath = ""
++	query := baseURL.Query()
++	for key, values := range requestURL.Query() {
++		for _, value := range values {
++			query.Add(key, value)
++		}
++	}
++	baseURL.RawQuery = query.Encode()
++	baseURL.Fragment = ""
++	return baseURL.String(), nil
++}
++
+ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
++	if info.RelayMode == relayconstant.RelayModeAlphaSearch {
++		if info.ChannelType != constant.ChannelTypeOpenAI {
++			return "", errors.New("alpha search is only supported by OpenAI channels")
++		}
++		return alphaSearchRequestURL(info)
++	}
+ 	if info.RelayMode == relayconstant.RelayModeRealtime {
+ 		if strings.HasPrefix(info.ChannelBaseUrl, "https://") {
+ 			baseUrl := strings.TrimPrefix(info.ChannelBaseUrl, "https://")
+diff --git a/relay/channel/openai/alpha_search_test.go b/relay/channel/openai/alpha_search_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..ffa9024d105362a6ad45fd9a3f08003e2fe71fda
+--- /dev/null
++++ b/relay/channel/openai/alpha_search_test.go
+@@ -0,0 +1,64 @@
++package openai
++
++import (
++	"net/url"
++	"testing"
++
++	"github.com/QuantumNous/new-api/constant"
++	relaycommon "github.com/QuantumNous/new-api/relay/common"
++	relayconstant "github.com/QuantumNous/new-api/relay/constant"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++func TestAlphaSearchRequestURLMergesProviderAndClientQuery(t *testing.T) {
++	info := &relaycommon.RelayInfo{
++		RequestURLPath: "/v1/alpha/search?feature=one&feature=two&tag=client",
++		ChannelMeta: &relaycommon.ChannelMeta{
++			ChannelBaseUrl: "https://upstream.example/proxy?provider=codex&tag=base#ignored",
++		},
++	}
++
++	got, err := alphaSearchRequestURL(info)
++	require.NoError(t, err)
++
++	parsed, err := url.Parse(got)
++	require.NoError(t, err)
++	assert.Equal(t, "https", parsed.Scheme)
++	assert.Equal(t, "upstream.example", parsed.Host)
++	assert.Equal(t, "/proxy/v1/alpha/search", parsed.Path)
++	assert.Empty(t, parsed.Fragment)
++	assert.Equal(t, []string{"one", "two"}, parsed.Query()["feature"])
++	assert.Equal(t, []string{"base", "client"}, parsed.Query()["tag"])
++	assert.Equal(t, "codex", parsed.Query().Get("provider"))
++}
++
++func TestAlphaSearchRequestURLUsesCloudflareGatewayPathConvention(t *testing.T) {
++	info := &relaycommon.RelayInfo{
++		RequestURLPath: "/v1/alpha/search?client=true",
++		ChannelMeta: &relaycommon.ChannelMeta{
++			ChannelBaseUrl: "https://gateway.ai.cloudflare.com/v1/account-id/gateway-id/openai?provider=true",
++		},
++	}
++
++	got, err := alphaSearchRequestURL(info)
++	require.NoError(t, err)
++
++	parsed, err := url.Parse(got)
++	require.NoError(t, err)
++	assert.Equal(t, "/v1/account-id/gateway-id/openai/alpha/search", parsed.Path)
++	assert.Equal(t, "true", parsed.Query().Get("provider"))
++	assert.Equal(t, "true", parsed.Query().Get("client"))
++}
++
++func TestOpenAIAdaptorRejectsAlphaSearchForOtherChannelTypes(t *testing.T) {
++	adaptor := &Adaptor{}
++	_, err := adaptor.GetRequestURL(&relaycommon.RelayInfo{
++		RelayMode: relayconstant.RelayModeAlphaSearch,
++		ChannelMeta: &relaycommon.ChannelMeta{
++			ChannelType:    constant.ChannelTypeCodex,
++			ChannelBaseUrl: "https://upstream.example",
++		},
++	})
++	require.EqualError(t, err, "alpha search is only supported by OpenAI channels")
++}
+diff --git a/relay/channel/upstream_user_agent.go b/relay/channel/upstream_user_agent.go
+index 2cafd9a109784bd92c20fae9dbe4490bf8bead78..633e62b112daf42b7187970a9dfb62527304309f 100644
+--- a/relay/channel/upstream_user_agent.go
++++ b/relay/channel/upstream_user_agent.go
+@@ -29,6 +29,7 @@ func configuredUpstreamUserAgent(info *relaycommon.RelayInfo) string {
+ 	case types.RelayFormatOpenAI,
+ 		types.RelayFormatOpenAIResponses,
+ 		types.RelayFormatOpenAIResponsesCompaction,
++		types.RelayFormatAlphaSearch,
+ 		types.RelayFormatOpenAIAudio,
+ 		types.RelayFormatOpenAIImage,
+ 		types.RelayFormatOpenAIRealtime:
+diff --git a/relay/common/relay_info.go b/relay/common/relay_info.go
+index a5d3f16c0e63c71e15a382acfd2477181792c126..4f36fbe81a162dd5d626c1813c58249264b18fa3 100644
+--- a/relay/common/relay_info.go
++++ b/relay/common/relay_info.go
+@@ -499,6 +499,13 @@ func GenRelayInfoResponses(c *gin.Context, request *dto.OpenAIResponsesRequest)
+ 	return info
+ }
+ 
++func GenRelayInfoAlphaSearch(c *gin.Context, request *dto.AlphaSearchRequest) *RelayInfo {
++	info := genBaseRelayInfo(c, request)
++	info.RelayMode = relayconstant.RelayModeAlphaSearch
++	info.RelayFormat = types.RelayFormatAlphaSearch
++	return info
++}
++
+ func GenRelayInfoGemini(c *gin.Context, request dto.Request) *RelayInfo {
+ 	info := genBaseRelayInfo(c, request)
+ 	info.RelayFormat = types.RelayFormatGemini
+@@ -658,6 +665,12 @@ func GenRelayInfo(c *gin.Context, relayFormat types.RelayFormat, request dto.Req
+ 			return GenRelayInfoResponsesCompaction(c, request), nil
+ 		}
+ 		return nil, errors.New("request is not a OpenAIResponsesCompactionRequest")
++	case types.RelayFormatAlphaSearch:
++		if request, ok := request.(*dto.AlphaSearchRequest); ok {
++			info = GenRelayInfoAlphaSearch(c, request)
++			break
++		}
++		err = errors.New("request is not an AlphaSearchRequest")
+ 	case types.RelayFormatTask:
+ 		info = genBaseRelayInfo(c, nil)
+ 		info.TaskRelayInfo = &TaskRelayInfo{}
+diff --git a/relay/common/request_conversion.go b/relay/common/request_conversion.go
+index 96b728d217de365718c3c46848640c4f167ba7a2..bd9948bf62df6907cea5295bada930c11df0926e 100644
+--- a/relay/common/request_conversion.go
++++ b/relay/common/request_conversion.go
+@@ -11,6 +11,8 @@ func GuessRelayFormatFromRequest(req any) (types.RelayFormat, bool) {
+ 		return types.RelayFormatOpenAI, true
+ 	case *dto.OpenAIResponsesRequest, dto.OpenAIResponsesRequest:
+ 		return types.RelayFormatOpenAIResponses, true
++	case *dto.AlphaSearchRequest, dto.AlphaSearchRequest:
++		return types.RelayFormatAlphaSearch, true
+ 	case *dto.ClaudeRequest, dto.ClaudeRequest:
+ 		return types.RelayFormatClaude, true
+ 	case *dto.GeminiChatRequest, dto.GeminiChatRequest:
+diff --git a/relay/constant/relay_mode.go b/relay/constant/relay_mode.go
+index 25671567921346bbecf12df37fa23f9bbec71a0b..5bc7523f5ec35217c69eb6bcee12a5154954d9f4 100644
+--- a/relay/constant/relay_mode.go
++++ b/relay/constant/relay_mode.go
+@@ -3,6 +3,8 @@ package constant
+ import (
+ 	"net/http"
+ 	"strings"
++
++	appconstant "github.com/QuantumNous/new-api/constant"
+ )
+ 
+ const (
+@@ -52,6 +54,8 @@ const (
+ 	RelayModeGemini
+ 
+ 	RelayModeResponsesCompact
++
++	RelayModeAlphaSearch
+ )
+ 
+ func Path2RelayMode(path string) int {
+@@ -72,6 +76,8 @@ func Path2RelayMode(path string) int {
+ 		relayMode = RelayModeImagesEdits
+ 	} else if strings.HasPrefix(path, "/v1/edits") {
+ 		relayMode = RelayModeEdits
++	} else if path == appconstant.AlphaSearchPath {
++		relayMode = RelayModeAlphaSearch
+ 	} else if strings.HasPrefix(path, "/v1/responses/compact") {
+ 		relayMode = RelayModeResponsesCompact
+ 	} else if strings.HasPrefix(path, "/v1/responses") {
+diff --git a/relay/constant/relay_mode_test.go b/relay/constant/relay_mode_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..4a0bdc18ed03bd0f94b27fd1655b4fb0cd697953
+--- /dev/null
++++ b/relay/constant/relay_mode_test.go
+@@ -0,0 +1,15 @@
++package constant
++
++import (
++	"testing"
++
++	appconstant "github.com/QuantumNous/new-api/constant"
++	"github.com/stretchr/testify/assert"
++)
++
++func TestPath2RelayModeAlphaSearchOnlyMatchesPublicV1Path(t *testing.T) {
++	assert.Equal(t, RelayModeAlphaSearch, Path2RelayMode(appconstant.AlphaSearchPath))
++	assert.Equal(t, RelayModeUnknown, Path2RelayMode("/alpha/search"))
++	assert.Equal(t, RelayModeUnknown, Path2RelayMode("/backend-api/codex/alpha/search"))
++	assert.Equal(t, RelayModeUnknown, Path2RelayMode(appconstant.AlphaSearchPath+"/extra"))
++}
+diff --git a/relay/helper/max_tokens_bounds_test.go b/relay/helper/max_tokens_bounds_test.go
+index 7cdcba874d5744ccaaeb013cf3ec485e1f9c57ae..2e26fa35a4feff7f99678759731674cfa319bc11 100644
+--- a/relay/helper/max_tokens_bounds_test.go
++++ b/relay/helper/max_tokens_bounds_test.go
+@@ -69,4 +69,25 @@ func TestMaxTokensBounds(t *testing.T) {
+ 		require.Error(t, err)
+ 		require.Contains(t, err.Error(), "max_output_tokens is invalid")
+ 	})
++
++	t.Run("alpha search model required", func(t *testing.T) {
++		c := newJSONContext(t, `{"id":"search-1","commands":{"search_query":[{"q":"test"}]}}`)
++		_, err := GetAndValidateAlphaSearchRequest(c)
++		require.EqualError(t, err, "model is required")
++	})
++
++	t.Run("alpha search max_output_tokens overflow rejected", func(t *testing.T) {
++		c := newJSONContext(t, `{"id":"search-1","model":"gpt-5.6","max_output_tokens":`+hugeN+`}`)
++		_, err := GetAndValidateAlphaSearchRequest(c)
++		require.Error(t, err)
++		require.Contains(t, err.Error(), "max_output_tokens is invalid")
++	})
++
++	t.Run("alpha search preserves gateway fields", func(t *testing.T) {
++		c := newJSONContext(t, `{"id":"search-1","model":"gpt-5.6","unknown_alpha_field":true,"max_output_tokens":4096}`)
++		req, err := GetAndValidateAlphaSearchRequest(c)
++		require.NoError(t, err)
++		require.Equal(t, "gpt-5.6", req.Model)
++		require.EqualValues(t, 4096, *req.MaxOutputTokens)
++	})
+ }
+diff --git a/relay/helper/price.go b/relay/helper/price.go
+index 2e8ebb2d2fc1ef48424df68d2450074830fbf23c..4ca0d69ff7d9fecbf649401a2ff7482fe3a1e1d2 100644
+--- a/relay/helper/price.go
++++ b/relay/helper/price.go
+@@ -1,7 +1,9 @@
+ package helper
+ 
+ import (
++	"errors"
+ 	"fmt"
++	"math"
+ 	"strings"
+ 
+ 	"github.com/QuantumNous/new-api/common"
+@@ -251,6 +253,43 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types
+ 	return priceData, nil
+ }
+ 
++// AlphaSearchPriceHelper prices one standalone search request using the
++// model-aware web_search tool price, which is configured in dollars per 1K calls.
++func AlphaSearchPriceHelper(c *gin.Context, info *relaycommon.RelayInfo) (types.PriceData, error) {
++	groupRatioInfo := HandleGroupRatio(c, info)
++	pricePer1K := operation_setting.GetToolPriceForModel("web_search", info.OriginModelName)
++	if pricePer1K < 0 || math.IsNaN(pricePer1K) || math.IsInf(pricePer1K, 0) {
++		return types.PriceData{}, errors.New("web_search price is invalid")
++	}
++	if groupRatioInfo.GroupRatio < 0 || math.IsNaN(groupRatioInfo.GroupRatio) || math.IsInf(groupRatioInfo.GroupRatio, 0) {
++		return types.PriceData{}, errors.New("group ratio is invalid")
++	}
++	pricePerCall := pricePer1K / 1000
++
++	quota, clamp := common.QuotaRoundChecked(pricePerCall * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
++	if clamp != nil {
++		info.QuotaClamp = clamp
++		return types.PriceData{}, clamp
++	}
++
++	freeModel := false
++	if !operation_setting.GetQuotaSetting().EnableFreeModelPreConsume &&
++		(pricePerCall == 0 || groupRatioInfo.GroupRatio == 0) {
++		freeModel = true
++	}
++
++	priceData := types.PriceData{
++		FreeModel:         freeModel,
++		ModelPrice:        pricePerCall,
++		UsePrice:          true,
++		Quota:             quota,
++		QuotaToPreConsume: quota,
++		GroupRatioInfo:    groupRatioInfo,
++	}
++	info.PriceData = priceData
++	return priceData, nil
++}
++
+ func HasModelBillingConfig(modelName string) bool {
+ 	if _, ok := ratio_setting.GetModelPrice(modelName, false); ok {
+ 		return true
+diff --git a/relay/helper/price_test.go b/relay/helper/price_test.go
+index ef396146a31ca330e430c8058a384a09e6c8d484..80d0f007c55c71e5099946e8df984dcf541ec789 100644
+--- a/relay/helper/price_test.go
++++ b/relay/helper/price_test.go
+@@ -10,6 +10,7 @@ import (
+ 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+ 	"github.com/QuantumNous/new-api/setting/billing_setting"
+ 	"github.com/QuantumNous/new-api/setting/config"
++	"github.com/QuantumNous/new-api/setting/operation_setting"
+ 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+ 	"github.com/QuantumNous/new-api/types"
+ 	"github.com/gin-gonic/gin"
+@@ -64,6 +65,58 @@ func TestModelPriceHelperTieredUsesPreloadedRequestInput(t *testing.T) {
+ 	require.Equal(t, common.QuotaPerUnit, info.TieredBillingSnapshot.QuotaPerUnit)
+ }
+ 
++func TestAlphaSearchPriceHelperUsesWebSearchPricePerCall(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++
++	saved := map[string]string{}
++	require.NoError(t, config.GlobalConfig.SaveToDB(func(key, value string) error {
++		saved[key] = value
++		return nil
++	}))
++	t.Cleanup(func() {
++		require.NoError(t, config.GlobalConfig.LoadFromDB(saved))
++		operation_setting.RebuildToolPriceIndex()
++	})
++
++	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
++		"tool_price_setting.prices":       `{"web_search":20,"web_search:gpt-5*":30}`,
++		"group_ratio_setting.group_ratio": `{"default":1.5}`,
++	}))
++	operation_setting.RebuildToolPriceIndex()
++
++	c, _ := gin.CreateTestContext(httptest.NewRecorder())
++	info := &relaycommon.RelayInfo{
++		OriginModelName: "gpt-5.6",
++		UserGroup:       "default",
++		UsingGroup:      "default",
++	}
++
++	priceData, err := AlphaSearchPriceHelper(c, info)
++	require.NoError(t, err)
++	require.Equal(t, 0.03, priceData.ModelPrice)
++	require.Equal(t, 22500, priceData.QuotaToPreConsume)
++	require.Equal(t, 22500, priceData.Quota)
++	require.True(t, priceData.UsePrice)
++	require.Equal(t, priceData, info.PriceData)
++
++	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
++		"tool_price_setting.prices": `{"web_search":-1}`,
++	}))
++	operation_setting.RebuildToolPriceIndex()
++	_, err = AlphaSearchPriceHelper(c, info)
++	require.EqualError(t, err, "web_search price is invalid")
++
++	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
++		"tool_price_setting.prices": `{"web_search":1e308}`,
++	}))
++	operation_setting.RebuildToolPriceIndex()
++	info.QuotaClamp = nil
++	_, err = AlphaSearchPriceHelper(c, info)
++	require.Error(t, err)
++	require.NotNil(t, info.QuotaClamp)
++	require.Equal(t, common.QuotaClampOverflow, info.QuotaClamp.Kind)
++}
++
+ func TestModelPriceHelperTieredPreConsumeMaxTokensFallback(t *testing.T) {
+ 	gin.SetMode(gin.TestMode)
+ 
+diff --git a/relay/helper/valid_request.go b/relay/helper/valid_request.go
+index afbd59ff968036bdf57503f219a3fa9560bac99a..740674bbe3993b2b0dad284d3c39881136dbf91f 100644
+--- a/relay/helper/valid_request.go
++++ b/relay/helper/valid_request.go
+@@ -38,6 +38,8 @@ func GetAndValidateRequest(c *gin.Context, format types.RelayFormat) (request dt
+ 		request, err = GetAndValidateResponsesRequest(c)
+ 	case types.RelayFormatOpenAIResponsesCompaction:
+ 		request, err = GetAndValidateResponsesCompactionRequest(c)
++	case types.RelayFormatAlphaSearch:
++		request, err = GetAndValidateAlphaSearchRequest(c)
+ 
+ 	case types.RelayFormatOpenAIImage:
+ 		request, err = GetAndValidOpenAIImageRequest(c, relayMode)
+@@ -146,6 +148,20 @@ func GetAndValidateResponsesRequest(c *gin.Context) (*dto.OpenAIResponsesRequest
+ 	return request, nil
+ }
+ 
++func GetAndValidateAlphaSearchRequest(c *gin.Context) (*dto.AlphaSearchRequest, error) {
++	request := &dto.AlphaSearchRequest{}
++	if err := common.UnmarshalBodyReusable(c, request); err != nil {
++		return nil, err
++	}
++	if strings.TrimSpace(request.Model) == "" {
++		return nil, errors.New("model is required")
++	}
++	if exceedsMaxTokensLimit(request.MaxOutputTokens) {
++		return nil, errors.New("max_output_tokens is invalid")
++	}
++	return request, nil
++}
++
+ func GetAndValidateResponsesCompactionRequest(c *gin.Context) (*dto.OpenAIResponsesCompactionRequest, error) {
+ 	request := &dto.OpenAIResponsesCompactionRequest{}
+ 	if err := common.UnmarshalBodyReusable(c, request); err != nil {
+diff --git a/router/relay-router.go b/router/relay-router.go
+index 17a13cad7fd6254cc316317f68de53d015beb0f3..ba67db6d4efcfb1a9c904ed77d00da195b16133d 100644
+--- a/router/relay-router.go
++++ b/router/relay-router.go
+@@ -104,6 +104,9 @@ func SetRelayRouter(router *gin.Engine) {
+ 		httpRouter.POST("/responses/compact", func(c *gin.Context) {
+ 			controller.Relay(c, types.RelayFormatOpenAIResponsesCompaction)
+ 		})
++		httpRouter.POST("/alpha/search", func(c *gin.Context) {
++			controller.Relay(c, types.RelayFormatAlphaSearch)
++		})
+ 
+ 		// image related routes
+ 		httpRouter.POST("/edits", func(c *gin.Context) {
+diff --git a/service/alpha_search_billing.go b/service/alpha_search_billing.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..2f0849eb7d6b6e5a846032699fd6e0dfe7e59eac
+--- /dev/null
++++ b/service/alpha_search_billing.go
+@@ -0,0 +1,65 @@
++package service
++
++import (
++	"fmt"
++	"time"
++
++	"github.com/QuantumNous/new-api/common"
++	"github.com/QuantumNous/new-api/constant"
++	"github.com/QuantumNous/new-api/logger"
++	"github.com/QuantumNous/new-api/model"
++	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
++	relaycommon "github.com/QuantumNous/new-api/relay/common"
++
++	"github.com/bytedance/gopkg/util/gopool"
++	"github.com/gin-gonic/gin"
++)
++
++func LogAlphaSearchConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
++	pricePer1K := info.PriceData.ModelPrice * 1000
++	other := map[string]interface{}{
++		"request_path":          c.Request.URL.Path,
++		"web_search":            true,
++		"web_search_call_count": 1,
++	}
++	billingFallback := common.GetContextKeyBool(c, constant.ContextKeyAlphaSearchBillingFallback)
++	if billingFallback {
++		other["billing_settlement_fallback"] = true
++	} else {
++		other["web_search_price"] = pricePer1K
++		other["group_ratio"] = info.PriceData.GroupRatioInfo.GroupRatio
++		if info.PriceData.GroupRatioInfo.HasSpecialRatio {
++			other["user_group_ratio"] = info.PriceData.GroupRatioInfo.GroupSpecialRatio
++		}
++	}
++	if info.IsModelMapped {
++		other["is_model_mapped"] = true
++		other["upstream_model_name"] = info.UpstreamModelName
++	}
++	attachQuotaSaturation(c, info, other)
++
++	useTimeSeconds := 0
++	if !info.StartTime.IsZero() {
++		useTimeSeconds = int(time.Since(info.StartTime).Seconds())
++	}
++	logContent := fmt.Sprintf("Standalone Web Search 调用 1 次，按次计费 %s", logger.FormatQuota(info.PriceData.Quota))
++	if billingFallback {
++		logContent = fmt.Sprintf("Standalone Web Search 调用 1 次，结算调整失败，按实际预留额度计费 %s", logger.FormatQuota(info.PriceData.Quota))
++	}
++	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
++		ChannelId:      info.ChannelId,
++		ModelName:      info.OriginModelName,
++		TokenName:      c.GetString("token_name"),
++		Quota:          info.PriceData.Quota,
++		Content:        logContent,
++		TokenId:        info.TokenId,
++		UseTimeSeconds: useTimeSeconds,
++		Group:          info.UsingGroup,
++		Other:          other,
++	})
++	model.UpdateUserUsedQuotaAndRequestCount(info.UserId, info.PriceData.Quota)
++	model.UpdateChannelUsedQuota(info.ChannelId, info.PriceData.Quota)
++	gopool.Go(func() {
++		perfmetrics.RecordRelaySample(info, true, 0)
++	})
++}
+diff --git a/types/relay_format.go b/types/relay_format.go
+index 9b4c86f2493881048035bd1f2bc38819177293dc..31e5088aa178da236fdd0b7b2800b7920213f0ac 100644
+--- a/types/relay_format.go
++++ b/types/relay_format.go
+@@ -8,6 +8,7 @@ const (
+ 	RelayFormatGemini                                = "gemini"
+ 	RelayFormatOpenAIResponses                       = "openai_responses"
+ 	RelayFormatOpenAIResponsesCompaction             = "openai_responses_compaction"
++	RelayFormatAlphaSearch                           = "alpha_search"
+ 	RelayFormatOpenAIAudio                           = "openai_audio"
+ 	RelayFormatOpenAIImage                           = "openai_image"
+ 	RelayFormatOpenAIRealtime                        = "openai_realtime"

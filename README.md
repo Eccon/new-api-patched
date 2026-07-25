@@ -143,6 +143,16 @@ No Docker image is built.
   - Shows `actual_model_name` before the mapped-model fallback in the web usage-log UI.
   - Does not add or migrate any database columns.
 
+- `0013-add-openai-alpha-search-relay.patch`
+  - Adds the OpenAI-only `POST /v1/alpha/search` relay endpoint.
+  - Restricts normal selection, affinity selection, retries, and fixed-channel use to OpenAI channels.
+  - Forwards the original JSON request body unchanged unless channel model mapping replaces only `model`.
+  - Preserves provider and client query parameters, including the existing Cloudflare AI Gateway path convention.
+  - Reuses OpenAI authentication, header override, User-Agent, proxy, timeout, retry, and response handling rules.
+  - Passes successful non-stream `2xx` responses through without response-schema conversion and charges one model-aware `web_search` call.
+  - Does not add Codex backend routes, Codex account headers, or Codex-channel support.
+  - Verified by applying patches `0001` through `0013` in order to a clean upstream checkout, running `gofmt`, and running targeted Go tests for the affected packages.
+
 ## Version Handling
 
 The workflow sets `common.Version` through the full upstream module path:
