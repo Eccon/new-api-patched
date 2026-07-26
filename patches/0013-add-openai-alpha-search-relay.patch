@@ -1,6 +1,6 @@
 diff --git a/constant/alpha_search.go b/constant/alpha_search.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..c3f754fc7b0cfa93044dbd922f49f8ad7a9bac06
+index 00000000..c3f754fc
 --- /dev/null
 +++ b/constant/alpha_search.go
 @@ -0,0 +1,5 @@
@@ -10,7 +10,7 @@ index 0000000000000000000000000000000000000000..c3f754fc7b0cfa93044dbd922f49f8ad
 +
 +const ContextKeyAlphaSearchBillingFallback ContextKey = "alpha_search_billing_fallback"
 diff --git a/controller/relay.go b/controller/relay.go
-index 7d64641f1a6a76fe281ed89fc91551316cca3741..2f609bb8d4e85d8374a444066308dce254f35f6d 100644
+index 7d64641f..2f609bb8 100644
 --- a/controller/relay.go
 +++ b/controller/relay.go
 @@ -49,12 +49,49 @@ func relayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIErro
@@ -120,7 +120,7 @@ index 7d64641f1a6a76fe281ed89fc91551316cca3741..2f609bb8d4e85d8374a444066308dce2
  
 diff --git a/dto/alpha_search.go b/dto/alpha_search.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..f00b31675b237f403736ad7d12091a075fef25ee
+index 00000000..f00b3167
 --- /dev/null
 +++ b/dto/alpha_search.go
 @@ -0,0 +1,23 @@
@@ -148,7 +148,7 @@ index 0000000000000000000000000000000000000000..f00b31675b237f403736ad7d12091a07
 +	r.Model = modelName
 +}
 diff --git a/middleware/distributor.go b/middleware/distributor.go
-index 53ab136e4a7f744f92346e9c29278049e819d2dd..7bd3e343d88f1fb01cd9cf39a73040197c84edef 100644
+index 53ab136e..7bd3e343 100644
 --- a/middleware/distributor.go
 +++ b/middleware/distributor.go
 @@ -111,7 +111,7 @@ func Distribute() func(c *gin.Context) {
@@ -182,7 +182,7 @@ index 53ab136e4a7f744f92346e9c29278049e819d2dd..7bd3e343d88f1fb01cd9cf39a7304019
  // 根据 Content-Type 自动处理：
  // - application/json
 diff --git a/middleware/logger.go b/middleware/logger.go
-index 7f78d74233f7192a14d79325a74dcdb8643e8416..d5f15162833ac8dd09a7f60c6201fc7a1bc1e60d 100644
+index 7f78d742..d5f15162 100644
 --- a/middleware/logger.go
 +++ b/middleware/logger.go
 @@ -6,6 +6,7 @@ import (
@@ -202,7 +202,7 @@ index 7f78d74233f7192a14d79325a74dcdb8643e8416..d5f15162833ac8dd09a7f60c6201fc7a
  }
  
 diff --git a/model/ability.go b/model/ability.go
-index e67b28301e02467fa626d96f445dd736ba676657..e38c329bcfd0f1a3bff4d581d6675f75f1c76369 100644
+index e67b2830..e38c329b 100644
 --- a/model/ability.go
 +++ b/model/ability.go
 @@ -8,7 +8,6 @@ import (
@@ -342,7 +342,7 @@ index e67b28301e02467fa626d96f445dd736ba676657..e38c329bcfd0f1a3bff4d581d6675f75
  	}
 diff --git a/model/alpha_search_channel_test.go b/model/alpha_search_channel_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..005e62146dd9bd957862df78d7a297e70dc98c3e
+index 00000000..005e6214
 --- /dev/null
 +++ b/model/alpha_search_channel_test.go
 @@ -0,0 +1,49 @@
@@ -396,7 +396,7 @@ index 0000000000000000000000000000000000000000..005e62146dd9bd957862df78d7a297e7
 +	assert.True(t, ChannelSupportsRequestPath(&Channel{Type: constant.ChannelTypeOpenAI}, "/v1/responses", "gpt-5.6"))
 +}
 diff --git a/model/channel.go b/model/channel.go
-index 1de876877559299c4767d6e6b73322d8fb3a5b8d..a74036abf6431f3d497771e10bd99b17efe98c90 100644
+index 1de87687..a74036ab 100644
 --- a/model/channel.go
 +++ b/model/channel.go
 @@ -69,6 +69,23 @@ type ChannelInfo struct {
@@ -424,7 +424,7 @@ index 1de876877559299c4767d6e6b73322d8fb3a5b8d..a74036abf6431f3d497771e10bd99b17
  	SortBy    string
  	SortOrder string
 diff --git a/model/channel_cache.go b/model/channel_cache.go
-index 81923017d79cf4c740f5294d6a65774a9704294a..9c219c9f1c1b20587b2747406f702247d69b4bbe 100644
+index 81923017..9c219c9f 100644
 --- a/model/channel_cache.go
 +++ b/model/channel_cache.go
 @@ -209,9 +209,8 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
@@ -454,7 +454,7 @@ index 81923017d79cf4c740f5294d6a65774a9704294a..9c219c9f1c1b20587b2747406f702247
  		if config := channel2advancedCustomConfig[channelId]; config != nil && config.SupportsPathForModel(requestPath, model) {
 diff --git a/relay/alpha_search_handler.go b/relay/alpha_search_handler.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..2875c2d5639b338f74990939f92f799f9b21d405
+index 00000000..2875c2d5
 --- /dev/null
 +++ b/relay/alpha_search_handler.go
 @@ -0,0 +1,115 @@
@@ -575,7 +575,7 @@ index 0000000000000000000000000000000000000000..2875c2d5639b338f74990939f92f799f
 +}
 diff --git a/relay/alpha_search_handler_test.go b/relay/alpha_search_handler_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..5fbe003183c408b0fe81520a2562105cd764dbbe
+index 00000000..5fbe0031
 --- /dev/null
 +++ b/relay/alpha_search_handler_test.go
 @@ -0,0 +1,29 @@
@@ -609,7 +609,7 @@ index 0000000000000000000000000000000000000000..5fbe003183c408b0fe81520a2562105c
 +	assert.Equal(t, "OpenAI news", payload["commands"].(map[string]interface{})["search_query"].([]interface{})[0].(map[string]interface{})["q"])
 +}
 diff --git a/relay/channel/api_request_test.go b/relay/channel/api_request_test.go
-index 72951750ea862f43bc6a9de14e1d5151fa17b6b2..d4c84aeec9c5a84bd791602d0e29d4c7e3d941d8 100644
+index 72951750..d4c84aee 100644
 --- a/relay/channel/api_request_test.go
 +++ b/relay/channel/api_request_test.go
 @@ -298,6 +298,7 @@ func TestConfiguredUpstreamUserAgentOpenAIFormats(t *testing.T) {
@@ -621,7 +621,7 @@ index 72951750ea862f43bc6a9de14e1d5151fa17b6b2..d4c84aeec9c5a84bd791602d0e29d4c7
  		types.RelayFormatOpenAIImage,
  		types.RelayFormatOpenAIRealtime,
 diff --git a/relay/channel/openai/adaptor.go b/relay/channel/openai/adaptor.go
-index 3fd24665c9396af8dbe5e669e6292572d56de1f4..4abaf8fb323a7092754ccc71cee1c950e24c1141 100644
+index 3fd24665..4abaf8fb 100644
 --- a/relay/channel/openai/adaptor.go
 +++ b/relay/channel/openai/adaptor.go
 @@ -102,7 +102,48 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
@@ -675,7 +675,7 @@ index 3fd24665c9396af8dbe5e669e6292572d56de1f4..4abaf8fb323a7092754ccc71cee1c950
  			baseUrl := strings.TrimPrefix(info.ChannelBaseUrl, "https://")
 diff --git a/relay/channel/openai/alpha_search_test.go b/relay/channel/openai/alpha_search_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..ffa9024d105362a6ad45fd9a3f08003e2fe71fda
+index 00000000..ffa9024d
 --- /dev/null
 +++ b/relay/channel/openai/alpha_search_test.go
 @@ -0,0 +1,64 @@
@@ -744,7 +744,7 @@ index 0000000000000000000000000000000000000000..ffa9024d105362a6ad45fd9a3f08003e
 +	require.EqualError(t, err, "alpha search is only supported by OpenAI channels")
 +}
 diff --git a/relay/channel/upstream_user_agent.go b/relay/channel/upstream_user_agent.go
-index 2cafd9a109784bd92c20fae9dbe4490bf8bead78..633e62b112daf42b7187970a9dfb62527304309f 100644
+index 2cafd9a1..633e62b1 100644
 --- a/relay/channel/upstream_user_agent.go
 +++ b/relay/channel/upstream_user_agent.go
 @@ -29,6 +29,7 @@ func configuredUpstreamUserAgent(info *relaycommon.RelayInfo) string {
@@ -756,7 +756,7 @@ index 2cafd9a109784bd92c20fae9dbe4490bf8bead78..633e62b112daf42b7187970a9dfb6252
  		types.RelayFormatOpenAIImage,
  		types.RelayFormatOpenAIRealtime:
 diff --git a/relay/common/relay_info.go b/relay/common/relay_info.go
-index a5d3f16c0e63c71e15a382acfd2477181792c126..4f36fbe81a162dd5d626c1813c58249264b18fa3 100644
+index a5d3f16c..4f36fbe8 100644
 --- a/relay/common/relay_info.go
 +++ b/relay/common/relay_info.go
 @@ -499,6 +499,13 @@ func GenRelayInfoResponses(c *gin.Context, request *dto.OpenAIResponsesRequest)
@@ -787,7 +787,7 @@ index a5d3f16c0e63c71e15a382acfd2477181792c126..4f36fbe81a162dd5d626c1813c582492
  		info = genBaseRelayInfo(c, nil)
  		info.TaskRelayInfo = &TaskRelayInfo{}
 diff --git a/relay/common/request_conversion.go b/relay/common/request_conversion.go
-index 96b728d217de365718c3c46848640c4f167ba7a2..bd9948bf62df6907cea5295bada930c11df0926e 100644
+index 96b728d2..bd9948bf 100644
 --- a/relay/common/request_conversion.go
 +++ b/relay/common/request_conversion.go
 @@ -11,6 +11,8 @@ func GuessRelayFormatFromRequest(req any) (types.RelayFormat, bool) {
@@ -800,7 +800,7 @@ index 96b728d217de365718c3c46848640c4f167ba7a2..bd9948bf62df6907cea5295bada930c1
  		return types.RelayFormatClaude, true
  	case *dto.GeminiChatRequest, dto.GeminiChatRequest:
 diff --git a/relay/constant/relay_mode.go b/relay/constant/relay_mode.go
-index 25671567921346bbecf12df37fa23f9bbec71a0b..5bc7523f5ec35217c69eb6bcee12a5154954d9f4 100644
+index 25671567..5bc7523f 100644
 --- a/relay/constant/relay_mode.go
 +++ b/relay/constant/relay_mode.go
 @@ -3,6 +3,8 @@ package constant
@@ -832,7 +832,7 @@ index 25671567921346bbecf12df37fa23f9bbec71a0b..5bc7523f5ec35217c69eb6bcee12a515
  	} else if strings.HasPrefix(path, "/v1/responses") {
 diff --git a/relay/constant/relay_mode_test.go b/relay/constant/relay_mode_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..4a0bdc18ed03bd0f94b27fd1655b4fb0cd697953
+index 00000000..4a0bdc18
 --- /dev/null
 +++ b/relay/constant/relay_mode_test.go
 @@ -0,0 +1,15 @@
@@ -852,7 +852,7 @@ index 0000000000000000000000000000000000000000..4a0bdc18ed03bd0f94b27fd1655b4fb0
 +	assert.Equal(t, RelayModeUnknown, Path2RelayMode(appconstant.AlphaSearchPath+"/extra"))
 +}
 diff --git a/relay/helper/max_tokens_bounds_test.go b/relay/helper/max_tokens_bounds_test.go
-index 7cdcba874d5744ccaaeb013cf3ec485e1f9c57ae..2e26fa35a4feff7f99678759731674cfa319bc11 100644
+index 7cdcba87..2e26fa35 100644
 --- a/relay/helper/max_tokens_bounds_test.go
 +++ b/relay/helper/max_tokens_bounds_test.go
 @@ -69,4 +69,25 @@ func TestMaxTokensBounds(t *testing.T) {
@@ -882,7 +882,7 @@ index 7cdcba874d5744ccaaeb013cf3ec485e1f9c57ae..2e26fa35a4feff7f99678759731674cf
 +	})
  }
 diff --git a/relay/helper/price.go b/relay/helper/price.go
-index 2e8ebb2d2fc1ef48424df68d2450074830fbf23c..4ca0d69ff7d9fecbf649401a2ff7482fe3a1e1d2 100644
+index 2e8ebb2d..4ca0d69f 100644
 --- a/relay/helper/price.go
 +++ b/relay/helper/price.go
 @@ -1,7 +1,9 @@
@@ -940,7 +940,7 @@ index 2e8ebb2d2fc1ef48424df68d2450074830fbf23c..4ca0d69ff7d9fecbf649401a2ff7482f
  	if _, ok := ratio_setting.GetModelPrice(modelName, false); ok {
  		return true
 diff --git a/relay/helper/price_test.go b/relay/helper/price_test.go
-index ef396146a31ca330e430c8058a384a09e6c8d484..80d0f007c55c71e5099946e8df984dcf541ec789 100644
+index ef396146..80d0f007 100644
 --- a/relay/helper/price_test.go
 +++ b/relay/helper/price_test.go
 @@ -10,6 +10,7 @@ import (
@@ -1011,7 +1011,7 @@ index ef396146a31ca330e430c8058a384a09e6c8d484..80d0f007c55c71e5099946e8df984dcf
  	gin.SetMode(gin.TestMode)
  
 diff --git a/relay/helper/valid_request.go b/relay/helper/valid_request.go
-index afbd59ff968036bdf57503f219a3fa9560bac99a..740674bbe3993b2b0dad284d3c39881136dbf91f 100644
+index afbd59ff..740674bb 100644
 --- a/relay/helper/valid_request.go
 +++ b/relay/helper/valid_request.go
 @@ -38,6 +38,8 @@ func GetAndValidateRequest(c *gin.Context, format types.RelayFormat) (request dt
@@ -1045,7 +1045,7 @@ index afbd59ff968036bdf57503f219a3fa9560bac99a..740674bbe3993b2b0dad284d3c398811
  	request := &dto.OpenAIResponsesCompactionRequest{}
  	if err := common.UnmarshalBodyReusable(c, request); err != nil {
 diff --git a/router/relay-router.go b/router/relay-router.go
-index 17a13cad7fd6254cc316317f68de53d015beb0f3..ba67db6d4efcfb1a9c904ed77d00da195b16133d 100644
+index 17a13cad..ba67db6d 100644
 --- a/router/relay-router.go
 +++ b/router/relay-router.go
 @@ -104,6 +104,9 @@ func SetRelayRouter(router *gin.Engine) {
@@ -1060,10 +1060,10 @@ index 17a13cad7fd6254cc316317f68de53d015beb0f3..ba67db6d4efcfb1a9c904ed77d00da19
  		httpRouter.POST("/edits", func(c *gin.Context) {
 diff --git a/service/alpha_search_billing.go b/service/alpha_search_billing.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..2f0849eb7d6b6e5a846032699fd6e0dfe7e59eac
+index 00000000..43e099f8
 --- /dev/null
 +++ b/service/alpha_search_billing.go
-@@ -0,0 +1,65 @@
+@@ -0,0 +1,73 @@
 +package service
 +
 +import (
@@ -1103,6 +1103,14 @@ index 0000000000000000000000000000000000000000..2f0849eb7d6b6e5a846032699fd6e0df
 +		other["upstream_model_name"] = info.UpstreamModelName
 +	}
 +	attachQuotaSaturation(c, info, other)
++	if useChannel := c.GetStringSlice("use_channel"); len(useChannel) > 0 {
++		adminInfo, _ := other["admin_info"].(map[string]interface{})
++		if adminInfo == nil {
++			adminInfo = make(map[string]interface{})
++			other["admin_info"] = adminInfo
++		}
++		adminInfo["use_channel"] = useChannel
++	}
 +
 +	useTimeSeconds := 0
 +	if !info.StartTime.IsZero() {
@@ -1129,8 +1137,91 @@ index 0000000000000000000000000000000000000000..2f0849eb7d6b6e5a846032699fd6e0df
 +		perfmetrics.RecordRelaySample(info, true, 0)
 +	})
 +}
+diff --git a/service/alpha_search_billing_test.go b/service/alpha_search_billing_test.go
+new file mode 100644
+index 00000000..682d20be
+--- /dev/null
++++ b/service/alpha_search_billing_test.go
+@@ -0,0 +1,77 @@
++package service
++
++import (
++	"net/http"
++	"net/http/httptest"
++	"testing"
++	"time"
++
++	"github.com/QuantumNous/new-api/common"
++	"github.com/QuantumNous/new-api/constant"
++	"github.com/QuantumNous/new-api/model"
++	relaycommon "github.com/QuantumNous/new-api/relay/common"
++	"github.com/QuantumNous/new-api/types"
++
++	"github.com/gin-gonic/gin"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++func TestLogAlphaSearchConsumptionRecordsRetryChain(t *testing.T) {
++	truncate(t)
++
++	const (
++		userID         = 41
++		finalChannelID = 74
++		requestID      = "alpha-search-retry-log"
++	)
++	seedUser(t, userID, 10_000)
++	seedChannel(t, finalChannelID)
++
++	gin.SetMode(gin.TestMode)
++	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
++	ctx.Request = httptest.NewRequest(http.MethodPost, constant.AlphaSearchPath, nil)
++	ctx.Set("username", "test_user")
++	ctx.Set("token_name", "test_token")
++	ctx.Set(common.RequestIdKey, requestID)
++	ctx.Set("use_channel", []string{"78", "85", "74"})
++
++	info := &relaycommon.RelayInfo{
++		UserId:          userID,
++		OriginModelName: "gpt-5.6-sol",
++		UsingGroup:      "code",
++		StartTime:       time.Now().Add(-time.Second),
++		ChannelMeta: &relaycommon.ChannelMeta{
++			ChannelId: finalChannelID,
++		},
++		PriceData: types.PriceData{
++			ModelPrice: 0.004,
++			Quota:      2_000,
++			GroupRatioInfo: types.GroupRatioInfo{
++				GroupRatio: 0.4,
++			},
++		},
++		QuotaClamp: &common.QuotaClamp{
++			Op:       "QuotaFromFloat",
++			Kind:     common.QuotaClampOverflow,
++			Original: 1e30,
++			Clamped:  common.MaxQuota,
++		},
++	}
++
++	LogAlphaSearchConsumption(ctx, info)
++
++	var log model.Log
++	require.NoError(t, model.LOG_DB.Where("request_id = ?", requestID).First(&log).Error)
++	assert.Equal(t, finalChannelID, log.ChannelId)
++
++	other, err := common.StrToMap(log.Other)
++	require.NoError(t, err)
++	adminInfo, ok := other["admin_info"].(map[string]interface{})
++	require.True(t, ok)
++	assert.Equal(t, []interface{}{"78", "85", "74"}, adminInfo["use_channel"])
++
++	quotaSaturation, ok := adminInfo["quota_saturation"].(map[string]interface{})
++	require.True(t, ok)
++	assert.Equal(t, "QuotaFromFloat", quotaSaturation["op"])
++}
 diff --git a/types/relay_format.go b/types/relay_format.go
-index 9b4c86f2493881048035bd1f2bc38819177293dc..31e5088aa178da236fdd0b7b2800b7920213f0ac 100644
+index 9b4c86f2..31e5088a 100644
 --- a/types/relay_format.go
 +++ b/types/relay_format.go
 @@ -8,6 +8,7 @@ const (
