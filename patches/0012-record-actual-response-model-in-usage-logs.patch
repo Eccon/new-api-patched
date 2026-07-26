@@ -1,5 +1,5 @@
 diff --git a/relay/channel/openai/chat_via_responses.go b/relay/channel/openai/chat_via_responses.go
-index 1bc04f67a3488c4bb6638ade6c90570f9cdf1884..e9ba1fe2880d0dd697a85e41464c595bc2dcbf25 100644
+index 18758e728d41a8c953d2c5a9a7cc713a4a3fb953..22c18bf41706c76ebd3afa72050ebaf73d77975e 100644
 --- a/relay/channel/openai/chat_via_responses.go
 +++ b/relay/channel/openai/chat_via_responses.go
 @@ -36,6 +36,7 @@ func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
@@ -10,7 +10,7 @@ index 1bc04f67a3488c4bb6638ade6c90570f9cdf1884..e9ba1fe2880d0dd697a85e41464c595b
  
  	if oaiError := responsesResp.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
  		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
-@@ -105,6 +106,9 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
+@@ -110,6 +111,9 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
  			break
  		}
  		accumulator.ProcessEvent(&streamResp)
@@ -20,7 +20,7 @@ index 1bc04f67a3488c4bb6638ade6c90570f9cdf1884..e9ba1fe2880d0dd697a85e41464c595b
  		switch streamResp.Type {
  		case "response.completed", "response.done", "response.incomplete":
  			finalResponse = streamResp.Response
-@@ -229,6 +233,9 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
+@@ -279,6 +283,9 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
  			sr.Error(err)
  			return
  		}
@@ -31,10 +31,10 @@ index 1bc04f67a3488c4bb6638ade6c90570f9cdf1884..e9ba1fe2880d0dd697a85e41464c595b
  		if streamResp.Type == "response.error" || streamResp.Type == "response.failed" {
  			if streamResp.Response != nil {
 diff --git a/relay/channel/openai/helper.go b/relay/channel/openai/helper.go
-index ed1f59d896f9b8bfced62bebde5f259e8fd999a1..d2c5ea67c11c61388346c416c33aa40bc5d0db36 100644
+index d1f31b8f60526e6913ba07c3b7a11ebbe3d71fe6..a960220841baac7c85c63750d8e8a4488ed6bf57 100644
 --- a/relay/channel/openai/helper.go
 +++ b/relay/channel/openai/helper.go
-@@ -91,22 +91,22 @@ func ProcessStreamResponse(streamResponse dto.ChatCompletionsStreamResponse, res
+@@ -107,22 +107,22 @@ func ProcessStreamResponse(streamResponse dto.ChatCompletionsStreamResponse, res
  	return nil
  }
  
@@ -62,7 +62,7 @@ index ed1f59d896f9b8bfced62bebde5f259e8fd999a1..d2c5ea67c11c61388346c416c33aa40b
  }
  
  func processCompletionsStreamResponse(streamResponse dto.CompletionsStreamResponse, responseTextBuilder *strings.Builder) {
-@@ -128,7 +128,9 @@ func handleLastResponse(lastStreamData string, responseId *string, createAt *int
+@@ -144,7 +144,9 @@ func handleLastResponse(lastStreamData string, responseId *string, createAt *int
  	*responseId = lastStreamResponse.Id
  	*createAt = lastStreamResponse.Created
  	*systemFingerprint = lastStreamResponse.GetSystemFingerprint()
@@ -74,21 +74,21 @@ index ed1f59d896f9b8bfced62bebde5f259e8fd999a1..d2c5ea67c11c61388346c416c33aa40b
  	if service.ValidUsage(lastStreamResponse.Usage) {
  		*containStreamUsage = true
 diff --git a/relay/channel/openai/relay-openai.go b/relay/channel/openai/relay-openai.go
-index de40fe7071fc14e4042799851b6e6842ffee2420..c2c4c396cc8c5dc75961b9d51336afb45d8a56e0 100644
+index 17cad566a0e3c6ee2f5eea4e0940d4dbac4f3ea6..92b3ef281e4bc30187a67cfb00e0fef47b442a30 100644
 --- a/relay/channel/openai/relay-openai.go
 +++ b/relay/channel/openai/relay-openai.go
-@@ -118,6 +118,7 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
- 	var usage = &dto.Usage{}
- 	var lastStreamData string
+@@ -121,6 +121,7 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
  	var secondLastStreamData string // 存储倒数第二个stream data，用于音频模型
+ 	seenStreamToolCalls := make(map[string]struct{})
+ 	var streamFunctionCallNames []string
 +	capturedResponseModel := false
  
  	// 检查是否为音频模型
  	isAudioModel := strings.Contains(strings.ToLower(model), "audio")
-@@ -136,10 +137,16 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
- 			}
+@@ -140,10 +141,16 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
  
  			lastStreamData = data
+ 			collectStreamFunctionCallNames(data, seenStreamToolCalls, &streamFunctionCallNames)
 -			if err := processTokenData(info.RelayMode, data, &responseTextBuilder, &toolCount); err != nil {
 +			streamModel, err := processTokenData(info.RelayMode, data, &responseTextBuilder, &toolCount)
 +			if err != nil {
@@ -103,7 +103,7 @@ index de40fe7071fc14e4042799851b6e6842ffee2420..c2c4c396cc8c5dc75961b9d51336afb4
  		}
  	})
  
-@@ -215,6 +222,7 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
+@@ -248,6 +255,7 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
  	if err != nil {
  		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
  	}
@@ -112,7 +112,7 @@ index de40fe7071fc14e4042799851b6e6842ffee2420..c2c4c396cc8c5dc75961b9d51336afb4
  	if oaiError := simpleResponse.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
  		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 diff --git a/relay/channel/openai/relay_responses.go b/relay/channel/openai/relay_responses.go
-index 8c9d421d3d2bfac5a90189bfb695dedb69140cf1..7effcf181d34fc344f123e3703cc2a63593a18c1 100644
+index 85ffc06ae98f9a79096576b5626bc8031ab63d12..0795062c926696a7271f0065339828a3b3be9b36 100644
 --- a/relay/channel/openai/relay_responses.go
 +++ b/relay/channel/openai/relay_responses.go
 @@ -30,6 +30,7 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
@@ -123,7 +123,7 @@ index 8c9d421d3d2bfac5a90189bfb695dedb69140cf1..7effcf181d34fc344f123e3703cc2a63
  	if oaiError := responsesResponse.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
  		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
  	}
-@@ -94,6 +95,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+@@ -100,6 +101,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
  		if streamResponse.SequenceNumber != nil {
  			lastSequenceNumber = *streamResponse.SequenceNumber
  		}
@@ -132,9 +132,9 @@ index 8c9d421d3d2bfac5a90189bfb695dedb69140cf1..7effcf181d34fc344f123e3703cc2a63
 +		}
  		sendResponsesStreamData(c, streamResponse, data)
  		switch streamResponse.Type {
- 		case "response.completed":
+ 		case "response.completed", "response.done":
 diff --git a/relay/common/relay_info.go b/relay/common/relay_info.go
-index e938da61b50d99e49d8ac42dec94ba9b7ced1f10..2b0819aff483170309584cc4add58079b7c5266f 100644
+index 3fb0292b513c4d629ad07cc6548910a3df4393b3..96426e0b75f33fafe89ca648a20e128baafc1e49 100644
 --- a/relay/common/relay_info.go
 +++ b/relay/common/relay_info.go
 @@ -183,6 +183,7 @@ type RelayInfo struct {
@@ -145,7 +145,7 @@ index e938da61b50d99e49d8ac42dec94ba9b7ced1f10..2b0819aff483170309584cc4add58079
  	RequestURLPath         string
  	RequestHeaders         map[string]string
  	ShouldIncludeUsage     bool
-@@ -742,6 +743,20 @@ func (info *RelayInfo) GetEstimatePromptTokens() int {
+@@ -766,6 +767,20 @@ func (info *RelayInfo) GetEstimatePromptTokens() int {
  	return info.estimatePromptTokens
  }
  
@@ -206,10 +206,10 @@ index 207b0af5bfefcbf339547a4dff28cbf8f7b3c4ba..a5e50abe5cafb996e5fa88400d911dd9
  	isSystemPromptOverwritten := common.GetContextKeyBool(ctx, constant.ContextKeySystemPromptOverride)
  	if isSystemPromptOverwritten {
 diff --git a/web/src/features/usage-logs/components/dialogs/details-dialog.tsx b/web/src/features/usage-logs/components/dialogs/details-dialog.tsx
-index 41043efebe1232381006fcf2c6214a23fd779638..078a32110f43049ffdaf4bdca28d9a7c81c8a4b2 100644
+index e153ef456d953f9aed162eef8a5ebfbda29d6810..55d7317184c541f04efd8c060511624033bb44a3 100644
 --- a/web/src/features/usage-logs/components/dialogs/details-dialog.tsx
 +++ b/web/src/features/usage-logs/components/dialogs/details-dialog.tsx
-@@ -591,6 +591,9 @@ export function DetailsDialog(props: DetailsDialogProps) {
+@@ -614,6 +614,9 @@ export function DetailsDialog(props: DetailsDialogProps) {
    } else if (other?.reasoning_effort === 'medium') {
      reasoningEffortVariant = 'yellow'
    }
@@ -219,7 +219,7 @@ index 41043efebe1232381006fcf2c6214a23fd779638..078a32110f43049ffdaf4bdca28d9a7c
  
    return (
      <Dialog
-@@ -978,7 +981,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
+@@ -1064,7 +1067,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
          )}
  
          {/* Model mapping */}
@@ -228,7 +228,7 @@ index 41043efebe1232381006fcf2c6214a23fd779638..078a32110f43049ffdaf4bdca28d9a7c
            <DetailSection label={t('Model Mapping')}>
              <DetailRow
                label={t('Request Model')}
-@@ -987,7 +990,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
+@@ -1073,7 +1076,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
              />
              <DetailRow
                label={t('Actual Model')}
@@ -238,10 +238,10 @@ index 41043efebe1232381006fcf2c6214a23fd779638..078a32110f43049ffdaf4bdca28d9a7c
              />
            </DetailSection>
 diff --git a/web/src/features/usage-logs/lib/format.ts b/web/src/features/usage-logs/lib/format.ts
-index e00eb1b435a88fad701f662d8858094805d8f63b..fdff5c3500a94f11777649d1bf142ca063b55636 100644
+index c2d64887a6c10cd1422ab164d4003b7e22b6c7db..52ecdeb9a99fc9070cafd259964886f36b32d1f8 100644
 --- a/web/src/features/usage-logs/lib/format.ts
 +++ b/web/src/features/usage-logs/lib/format.ts
-@@ -159,6 +159,7 @@ export function formatModelName(log: UsageLog): {
+@@ -220,6 +220,7 @@ export function formatModelName(log: UsageLog): {
    actualModel?: string
  } {
    const other = parseLogOther(log.other)
@@ -249,7 +249,7 @@ index e00eb1b435a88fad701f662d8858094805d8f63b..fdff5c3500a94f11777649d1bf142ca0
    const isMapped = !!(
      other?.is_model_mapped &&
      other?.upstream_model_name &&
-@@ -168,7 +169,7 @@ export function formatModelName(log: UsageLog): {
+@@ -229,7 +230,7 @@ export function formatModelName(log: UsageLog): {
    return {
      name: log.model_name,
      isMapped,
@@ -259,10 +259,10 @@ index e00eb1b435a88fad701f662d8858094805d8f63b..fdff5c3500a94f11777649d1bf142ca0
  }
  
 diff --git a/web/src/features/usage-logs/types.ts b/web/src/features/usage-logs/types.ts
-index 7640261644627000927307710c2d83232946a238..71c254f2d0a86fd74a9ec18b458be73846583dfa 100644
+index a39433addc440099a50a8c4a1ab8c973ea7aac5f..5f61ac84e7bbc24e1548c7af7d3826e742eb4ad9 100644
 --- a/web/src/features/usage-logs/types.ts
 +++ b/web/src/features/usage-logs/types.ts
-@@ -164,6 +164,7 @@ export interface LogOtherData {
+@@ -185,6 +185,7 @@ export interface LogOtherData {
    cache_creation_ratio_1h?: number
    is_model_mapped?: boolean
    upstream_model_name?: string

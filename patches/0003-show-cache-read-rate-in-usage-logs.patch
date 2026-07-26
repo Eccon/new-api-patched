@@ -2,7 +2,7 @@ diff --git a/web/src/features/usage-logs/components/columns/common-logs-columns.
 index 07f54f747b00ff093e0a12d9986d8553e0c1c6b6..11a7f31ebb483c88ff110a413dc494f0b9979c65 100644
 --- a/web/src/features/usage-logs/components/columns/common-logs-columns.tsx
 +++ b/web/src/features/usage-logs/components/columns/common-logs-columns.tsx
-@@ -93,6 +93,29 @@ function getGroupRatio(other: LogOtherData | null): number | null {
+@@ -94,6 +94,29 @@ function getGroupRatio(other: LogOtherData | null): number | null {
    return null
  }
  
@@ -29,9 +29,9 @@ index 07f54f747b00ff093e0a12d9986d8553e0c1c6b6..11a7f31ebb483c88ff110a413dc494f0
 +  return fixed.endsWith('.0') ? `${Math.round(rate)}%` : `${fixed}%`
 +}
 +
- function splitQuotaDisplay(value: string): { prefix: string; amount: string } {
-   const match = value.match(/^([^0-9+\-.,\s]+)(.+)$/)
-   if (!match) return { prefix: '', amount: value }
+ function buildDetailSegments(
+   log: UsageLog,
+   other: LogOtherData | null,
 @@ -669,6 +692,11 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
          const cacheWriteTokens = hasSplitCache
            ? cacheWrite5m + cacheWrite1h
