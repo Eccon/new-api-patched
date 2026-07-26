@@ -1,8 +1,8 @@
 diff --git a/dto/openai_response.go b/dto/openai_response.go
-index e503f5f91c6952abb8daa9a48b54b129d5f531b0..342026980772cf3926fd865df052898edd468d9a 100644
+index 7959f0744649caa26e6d3b8b2492593f34587d77..92fa40c6cf4263b3ab1e6e12921ef012922ab49f 100644
 --- a/dto/openai_response.go
 +++ b/dto/openai_response.go
-@@ -390,10 +390,11 @@ const (
+@@ -384,10 +384,11 @@ const (
  
  // ResponsesStreamResponse 用于处理 /v1/responses 流式响应
  type ResponsesStreamResponse struct {
@@ -19,10 +19,10 @@ index e503f5f91c6952abb8daa9a48b54b129d5f531b0..342026980772cf3926fd865df052898e
  	// - response.function_call_arguments.done
  	OutputIndex  *int                           `json:"output_index,omitempty"`
 diff --git a/relay/channel/openai/helper.go b/relay/channel/openai/helper.go
-index d10176b58fe1bb47be414caa5d9690b0c73ee373..ed1f59d896f9b8bfced62bebde5f259e8fd999a1 100644
+index 840708eb3fea6fe83c4b4345bb1ccff934df5788..d1f31b8f60526e6913ba07c3b7a11ebbe3d71fe6 100644
 --- a/relay/channel/openai/helper.go
 +++ b/relay/channel/openai/helper.go
-@@ -208,3 +208,42 @@ func sendResponsesStreamData(c *gin.Context, streamResponse dto.ResponsesStreamR
+@@ -242,3 +242,42 @@ func sendResponsesStreamData(c *gin.Context, streamResponse dto.ResponsesStreamR
  	}
  	_ = helper.ResponseChunkData(c, streamResponse, data)
  }
@@ -66,20 +66,20 @@ index d10176b58fe1bb47be414caa5d9690b0c73ee373..ed1f59d896f9b8bfced62bebde5f259e
 +	}
 +}
 diff --git a/relay/channel/openai/relay_responses.go b/relay/channel/openai/relay_responses.go
-index 2665b8d027e9999c18d1b54953fc300cdb9a7823..8c9d421d3d2bfac5a90189bfb695dedb69140cf1 100644
+index 697cc9659f730245c7d63c1f0ed6fe81508fadbb..85ffc06ae98f9a79096576b5626bc8031ab63d12 100644
 --- a/relay/channel/openai/relay_responses.go
 +++ b/relay/channel/openai/relay_responses.go
-@@ -78,6 +78,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
- 
- 	var usage = &dto.Usage{}
+@@ -84,6 +84,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
  	var responseTextBuilder strings.Builder
+ 	imageCounter := &relaycommon.ImageGenerationCallCounter{}
+ 	imageCommitted := false
 +	sawTerminalEvent := false
 +	sawErrorEvent := false
 +	lastSequenceNumber := -1
  
  	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
  
-@@ -88,9 +91,13 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+@@ -94,9 +97,13 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
  			sr.Error(err)
  			return
  		}
@@ -88,21 +88,22 @@ index 2665b8d027e9999c18d1b54953fc300cdb9a7823..8c9d421d3d2bfac5a90189bfb695dedb
 +		}
  		sendResponsesStreamData(c, streamResponse, data)
  		switch streamResponse.Type {
- 		case "response.completed":
+ 		case "response.completed", "response.done":
 +			sawTerminalEvent = true
  			if streamResponse.Response != nil {
  				if streamResponse.Response.Usage != nil {
  					if streamResponse.Response.Usage.InputTokens != 0 {
-@@ -112,6 +119,8 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
- 					c.Set("image_generation_call_size", streamResponse.Response.GetSize())
- 				}
+@@ -131,7 +138,8 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+ 				imageCounter.Commit(info)
+ 				imageCommitted = true
  			}
+-		case "response.failed", "response.incomplete", "response.cancelled", "response.canceled":
 +		case "error", "response.error", "response.failed", "response.incomplete", "response.cancelled", "response.canceled":
 +			sawErrorEvent = true
- 		case "response.output_text.delta":
- 			// 处理输出文本
- 			responseTextBuilder.WriteString(streamResponse.Delta)
-@@ -130,6 +139,19 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+ 			if !imageCommitted {
+ 				imageCounter.Reset()
+ 				imageCounter.Commit(info)
+@@ -158,6 +166,19 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
  		}
  	})
  
