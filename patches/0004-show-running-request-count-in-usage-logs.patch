@@ -24,41 +24,29 @@ index ce9b4666fa5e7c376f3a74f4a48fd576dbe8ef1c..9dba0349e31bccbf7702b3ce9cea84d0
  		},
  	})
  	return
-@@ -141,9 +143,10 @@ func GetLogsSelfStat(c *gin.Context) {
- 		"success": true,
- 		"message": "",
- 		"data": gin.H{
--			"quota": quotaNum.Quota,
--			"rpm":   quotaNum.Rpm,
--			"tpm":   quotaNum.Tpm,
-+			"quota":              quotaNum.Quota,
-+			"rpm":                quotaNum.Rpm,
-+			"active_connections": middleware.GetStats().ActiveConnections,
-+			"tpm":                quotaNum.Tpm,
- 			//"token": tokenNum,
- 		},
- 	})
 diff --git a/web/src/features/usage-logs/components/common-logs-stats.tsx b/web/src/features/usage-logs/components/common-logs-stats.tsx
-index dd754e227acba7204f3d74a9831af25115e9c72b..0089bd8506d227efc6a5c5597d2358827fb11053 100644
+index dd754e227acba7204f3d74a9831af25115e9c72b..874c3d5285f8da4e20834aff66421e335cfaa43a 100644
 --- a/web/src/features/usage-logs/components/common-logs-stats.tsx
 +++ b/web/src/features/usage-logs/components/common-logs-stats.tsx
 @@ -73,6 +73,7 @@ export function CommonLogsStats() {
          : DEFAULT_LOG_STATS
      },
      placeholderData: (previousData) => previousData,
-+    refetchInterval: 5000,
++    refetchInterval: isAdmin ? 5000 : false,
    })
  
    if (isLoading) {
-@@ -92,6 +93,11 @@ export function CommonLogsStats() {
+@@ -92,6 +93,13 @@ export function CommonLogsStats() {
          value={sensitiveVisible ? formatLogQuota(stats?.quota || 0) : '••••'}
          accent='bg-sky-500/70'
        />
-+      <StatBadge
-+        label='RUN'
-+        value={stats?.active_connections || 0}
-+        accent='bg-emerald-500/70'
-+      />
++      {isAdmin && (
++        <StatBadge
++          label='RUN'
++          value={stats?.active_connections || 0}
++          accent='bg-emerald-500/70'
++        />
++      )}
        <StatBadge
          label={t('RPM')}
          value={stats?.rpm || 0}
@@ -103,7 +91,7 @@ index 7f96adef9b941826baa0e5686da845bbf040e801..7640261644627000927307710c2d8323
  export interface LogStatistics {
    quota: number
    rpm: number
-+  active_connections: number
++  active_connections?: number
    tpm: number
  }
  

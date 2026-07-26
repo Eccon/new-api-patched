@@ -73,9 +73,9 @@ No Docker image is built.
   - Does not add or migrate any database columns.
 
 - `0004-show-running-request-count-in-usage-logs.patch`
-  - Adds current running relay request count to `/api/log/stat` and `/api/log/self/stat`.
-  - Shows the value as `RUN` beside usage-log statistics in the web frontend.
-  - Refreshes usage-log statistics every 5 seconds in the web frontend.
+  - Adds the current running relay request count to the administrator-only `/api/log/stat` response.
+  - Shows the value as `RUN` only in the administrator usage-log view.
+  - Refreshes usage-log statistics every 5 seconds only in the administrator view.
   - Changes the default usage-log end time to the end of the current day.
   - Does not add or migrate any database columns.
 
