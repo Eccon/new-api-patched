@@ -144,15 +144,10 @@ No Docker image is built.
   - Does not add or migrate any database columns.
 
 - `0013-add-openai-alpha-search-relay.patch`
-  - Adds the OpenAI-only `POST /v1/alpha/search` relay endpoint.
-  - Restricts normal selection, affinity selection, retries, and fixed-channel use to OpenAI channels.
-  - Forwards the original JSON request body unchanged unless channel model mapping replaces only `model`.
-  - Preserves provider and client query parameters, including the existing Cloudflare AI Gateway path convention.
-  - Reuses OpenAI authentication, header override, User-Agent, proxy, timeout, retry, and response handling rules.
-  - Passes successful non-stream `2xx` responses through without response-schema conversion and charges one model-aware `web_search` call.
-  - Persists successful retry chains in the admin-only usage-log metadata without overwriting existing billing audit metadata.
-  - Does not add Codex backend routes, Codex account headers, or Codex-channel support.
-  - Verified by applying patches `0001` through `0013` in order to a clean upstream checkout, running `gofmt`, and running targeted Go tests for the affected packages, including a persisted successful-retry-chain regression.
+  - Extends the upstream `POST /v1/alpha/search` handler to allow ordinary OpenAI channels alongside Sub2API, Codex, and Advanced Custom channels.
+  - Reuses the upstream Alpha Search request mapping, OpenAI adaptor, response passthrough, billing, logging, and retry behavior unchanged.
+  - Lets an unsupported OpenAI-compatible provider return its upstream error and participate in the configured retry policy.
+  - Does not add endpoint-specific channel filtering or Alpha Search test files.
 
 ## Version Handling
 
