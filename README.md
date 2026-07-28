@@ -120,12 +120,17 @@ No Docker image is built.
   - Logs `relay request received` for text, Responses, and Gemini generate relay paths as soon as the route tag middleware runs.
   - Adds millisecond precision to normal application, system, and fatal log timestamps.
   - Adds optional relay preflight and upstream timing logs controlled by `RELAY_TIMING_LOG_ENABLED`.
+  - Uses Go HTTP trace hooks on the shared relay request path to capture DNS, connect, TLS, connection reuse, request-write, first-byte, and response-header timing.
+  - Logs successful local request-write completion and complete response-header receipt with channel, model, stream mode, retry index, write sequence, status, protocol, and elapsed durations.
+  - Treats request-write completion as a local transport event rather than an upstream acknowledgement; an upstream early response may be logged before request writing finishes.
+  - Reads late HTTP trace callbacks through a synchronized snapshot so stream probes and the final timing summary can use the newest available attempt data.
   - Splits preflight `model_request` timing into request body storage, body bytes access, body decode, and body reset phases.
   - Logs request body size and whether body storage is memory-backed or disk-backed when timing diagnostics are enabled.
   - Adds optional early SSE line probes controlled by `RELAY_TIMING_LOG_STREAM_PROBE_COUNT`.
   - Keeps `relay request received` always on for the narrowed relay paths so request arrival can be correlated even when timing diagnostics are disabled.
   - Logs failed upstream attempt timing before relay retry overwrites the final attempt timing.
   - Logs timing fields, event kind, line length, path, client IP, model/channel/status, connection reuse data, and upstream write error text when present.
+  - Covers requests sent through the shared relay `doRequest` path; SDK-managed and channel-specific auxiliary HTTP clients are outside these two transport event logs.
   - Does not log request bodies, response bodies, Authorization values, API keys, headers, or raw query strings; URL-like error text is masked before logging.
 
 - `0012-record-actual-response-model-in-usage-logs.patch`

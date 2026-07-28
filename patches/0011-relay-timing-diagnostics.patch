@@ -1,5 +1,5 @@
 diff --git a/common/constants.go b/common/constants.go
-index 02368c32a906f093bfd97f20bd1310b04a266ff4..d25a88f11da77bb2ac30396155472ebcea683a02 100644
+index 75a3a0da34d6819f91aa15c9716ad65e0bed2e08..7d79cf8f305ec4220dccd6377ea00d8a5ebad37d 100644
 --- a/common/constants.go
 +++ b/common/constants.go
 @@ -168,6 +168,8 @@ var RelayTimeout int // unit is second
@@ -176,7 +176,7 @@ index 2d6022f774eb5dbc45ec864d828267642ee5f39d..71902ccf4bd92f2d5e8b687643599130
  	os.Exit(1)
  }
 diff --git a/controller/relay.go b/controller/relay.go
-index 155e90ecd1b8f390c3af92fdbe81d4330c30bdce..01b012a9524ae383d5b10352157c9ad604993bdf 100644
+index 025b1d274c403cf4a8edd239d42c5cfeaa705969..c3a7c88ba2249f2fbdfa7d3d03e4a7c181483754 100644
 --- a/controller/relay.go
 +++ b/controller/relay.go
 @@ -68,7 +68,130 @@ func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewA
@@ -258,7 +258,7 @@ index 155e90ecd1b8f390c3af92fdbe81d4330c30bdce..01b012a9524ae383d5b10352157c9ad6
 +		bodyStorageType = "-"
 +	}
 +	logger.LogInfo(c, fmt.Sprintf(
-+		"relay preflight timing: format=%s channel=%d model=%s since_received{distribute_start=%s body_storage_start=%s body_storage=%s body_bytes=%s body_decode=%s body_reset=%s model_request=%s channel_selected=%s relay_enter=%s request_validated=%s relay_info=%s token_meta=%s sensitive_check=%s tokens=%s price=%s billing=%s} duration{before_distribute=%s model_prep=%s body_storage=%s body_bytes=%s body_decode=%s body_reset=%s model_extra=%s distribute_total=%s model_request=%s channel_select=%s setup_to_relay=%s request_validate=%s relay_info=%s token_meta=%s sensitive_check=%s token_estimate=%s price=%s billing=%s preflight_total=%s} body{size=%d storage=%s}",
++		"relay preflight timing: format=%s channel=%d model=%q since_received{distribute_start=%s body_storage_start=%s body_storage=%s body_bytes=%s body_decode=%s body_reset=%s model_request=%s channel_selected=%s relay_enter=%s request_validated=%s relay_info=%s token_meta=%s sensitive_check=%s tokens=%s price=%s billing=%s} duration{before_distribute=%s model_prep=%s body_storage=%s body_bytes=%s body_decode=%s body_reset=%s model_extra=%s distribute_total=%s model_request=%s channel_select=%s setup_to_relay=%s request_validate=%s relay_info=%s token_meta=%s sensitive_check=%s token_estimate=%s price=%s billing=%s preflight_total=%s} body{size=%d storage=%s}",
 +		relayFormat,
 +		common.GetContextKeyInt(c, constant.ContextKeyChannelId),
 +		relayInfo.OriginModelName,
@@ -568,10 +568,195 @@ index e1bf315a45e0ee409318275c7f3290d938a7b04e..c62680fe3dc545476c053cad12baea4c
  		c.Request = c.Request.WithContext(ctx)
  		c.Header(common.RequestIdKey, id)
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index df1459a8bf39eb0b2de94c3ad6cbafb5cad27b2e..fef0ad7c5e54a100399f4c846e7a083d7803e277 100644
+index 04f59146f0f7e9b0e360dd3c95af2d15c42171e1..d90a2a52725492a1b598f90ea443771a725ee73a 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
-@@ -554,6 +554,53 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -2,10 +2,12 @@ package channel
+ 
+ import (
+ 	"context"
++	"crypto/tls"
+ 	"errors"
+ 	"fmt"
+ 	"io"
+ 	"net/http"
++	"net/http/httptrace"
+ 	"regexp"
+ 	"strings"
+ 	"sync"
+@@ -479,6 +481,151 @@ func sendPingData(c *gin.Context, mutex *sync.Mutex) error {
+ func DoRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
+ 	return doRequest(c, req, info)
+ }
++
++type relayHTTPTrace struct {
++	mu         sync.Mutex
++	timing     common.RelayTimingInfo
++	logContext context.Context
++	channelID  int
++	model      string
++	stream     bool
++	retryIndex int
++	writeSeq   int
++}
++
++func newRelayHTTPTrace(c *gin.Context, info *common.RelayInfo) *relayHTTPTrace {
++	logContext := context.Background()
++	if c != nil {
++		if requestID := c.Value(common2.RequestIdKey); requestID != nil {
++			logContext = context.WithValue(logContext, common2.RequestIdKey, requestID)
++		}
++	}
++	return &relayHTTPTrace{
++		timing:     common.RelayTimingInfo{DoStart: time.Now()},
++		logContext: logContext,
++		channelID:  info.ChannelId,
++		model:      info.OriginModelName,
++		stream:     info.IsStream,
++		retryIndex: info.RetryIndex,
++	}
++}
++
++func (t *relayHTTPTrace) clientTrace() *httptrace.ClientTrace {
++	return &httptrace.ClientTrace{
++		DNSStart: func(httptrace.DNSStartInfo) {
++			t.mu.Lock()
++			if t.timing.DNSStart.IsZero() {
++				t.timing.DNSStart = time.Now()
++			}
++			t.mu.Unlock()
++		},
++		DNSDone: func(httptrace.DNSDoneInfo) {
++			t.mu.Lock()
++			t.timing.DNSDone = time.Now()
++			t.mu.Unlock()
++		},
++		ConnectStart: func(_, _ string) {
++			t.mu.Lock()
++			if t.timing.ConnectStart.IsZero() {
++				t.timing.ConnectStart = time.Now()
++			}
++			t.mu.Unlock()
++		},
++		ConnectDone: func(_, _ string, _ error) {
++			t.mu.Lock()
++			t.timing.ConnectDone = time.Now()
++			t.mu.Unlock()
++		},
++		TLSHandshakeStart: func() {
++			t.mu.Lock()
++			if t.timing.TLSStart.IsZero() {
++				t.timing.TLSStart = time.Now()
++			}
++			t.mu.Unlock()
++		},
++		TLSHandshakeDone: func(_ tls.ConnectionState, _ error) {
++			t.mu.Lock()
++			t.timing.TLSDone = time.Now()
++			t.mu.Unlock()
++		},
++		GotConn: func(connInfo httptrace.GotConnInfo) {
++			t.mu.Lock()
++			t.timing.GotConn = time.Now()
++			t.timing.ReusedConn = connInfo.Reused
++			t.timing.WasIdleConn = connInfo.WasIdle
++			t.timing.IdleTime = connInfo.IdleTime
++			t.mu.Unlock()
++		},
++		WroteRequest: func(writeInfo httptrace.WroteRequestInfo) {
++			now := time.Now()
++			t.mu.Lock()
++			t.timing.WroteRequest = now
++			t.writeSeq++
++			writeSeq := t.writeSeq
++			if writeInfo.Err != nil {
++				t.timing.WriteErr = writeInfo.Err.Error()
++			} else {
++				t.timing.WriteErr = ""
++			}
++			doStart := t.timing.DoStart
++			t.mu.Unlock()
++
++			// This confirms the local transport finished writing; it is not an upstream acknowledgement.
++			if writeInfo.Err == nil {
++				logger.LogInfo(t.logContext, fmt.Sprintf(
++					"relay upstream request written: channel=%d model=%q stream=%t retry=%d write_seq=%d since_do_start=%s",
++					t.channelID,
++					t.model,
++					t.stream,
++					t.retryIndex,
++					writeSeq,
++					relayAttemptTimingSince(doStart, now),
++				))
++			}
++		},
++		GotFirstResponseByte: func() {
++			t.mu.Lock()
++			t.timing.FirstByte = time.Now()
++			t.mu.Unlock()
++		},
++	}
++}
++
++func (t *relayHTTPTrace) finish(resp *http.Response) (common.RelayTimingInfo, int) {
++	t.mu.Lock()
++	defer t.mu.Unlock()
++	t.timing.DoReturn = time.Now()
++	if resp != nil {
++		t.timing.UpstreamStatus = resp.StatusCode
++	}
++	return t.timing, t.writeSeq
++}
++
++func (t *relayHTTPTrace) snapshot() common.RelayTimingInfo {
++	t.mu.Lock()
++	defer t.mu.Unlock()
++	return t.timing
++}
++
++func (t *relayHTTPTrace) logResponseHeaders(attempt common.RelayTimingInfo, writeSeq int, resp *http.Response) {
++	if resp == nil {
++		return
++	}
++	logger.LogInfo(t.logContext, fmt.Sprintf(
++		"relay upstream response headers received: channel=%d model=%q stream=%t retry=%d write_seq=%d status=%d protocol=%s since_do_start=%s since_request_written=%s first_byte_to_headers=%s",
++		t.channelID,
++		t.model,
++		t.stream,
++		t.retryIndex,
++		writeSeq,
++		resp.StatusCode,
++		resp.Proto,
++		relayAttemptTimingSince(attempt.DoStart, attempt.DoReturn),
++		relayAttemptTimingDuration(attempt.WroteRequest, attempt.DoReturn),
++		relayAttemptTimingDuration(attempt.FirstByte, attempt.DoReturn),
++	))
++}
++
+ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
+ 	client, err := service.GetHttpClientWithProxyForRelay(info.ChannelSetting.Proxy, info.ChannelSetting, info.IsStream)
+ 	if err != nil {
+@@ -517,7 +664,19 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+ 
+ 	applyDefaultUpstreamUserAgent(c, req, info)
+ 	logUpstreamUserAgent(c, req)
++	var requestTrace *relayHTTPTrace
++	if common2.RelayTimingLogEnabled {
++		requestTrace = newRelayHTTPTrace(c, info)
++		info.Timing.SetAttemptSnapshot(requestTrace.snapshot)
++		req = req.WithContext(httptrace.WithClientTrace(req.Context(), requestTrace.clientTrace()))
++	}
+ 	resp, err := client.Do(req)
++	if requestTrace != nil {
++		attempt, writeSeq := requestTrace.finish(resp)
++		info.Timing.SetAttempt(attempt)
++		requestTrace.logResponseHeaders(attempt, writeSeq, resp)
++		logRelayFailedAttemptTiming(c, info, attempt, err)
++	}
+ 	if err != nil {
+ 		if IsResponseHeaderTimeout(err) {
+ 			logger.LogError(c, "do request failed: response header timeout: "+err.Error())
+@@ -554,6 +713,53 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  	return resp, nil
  }
  
@@ -600,7 +785,7 @@ index df1459a8bf39eb0b2de94c3ad6cbafb5cad27b2e..fef0ad7c5e54a100399f4c846e7a083d
 +	writeErr := common2.MaskSensitiveInfo(attempt.WriteErr)
 +	errText := common2.MaskSensitiveInfo(err.Error())
 +	logger.LogInfo(c, fmt.Sprintf(
-+		"relay failed attempt timing: channel=%d model=%s stream=%t upstream_status=%d reused=%t was_idle=%t idle=%s write_err=%q error=%q since_attempt{got_conn=%s wrote_req=%s first_byte=%s do_return=%s} duration{dns=%s connect=%s tls=%s write_to_first_byte=%s do_total=%s}",
++		"relay failed attempt timing: channel=%d model=%q stream=%t upstream_status=%d reused=%t was_idle=%t idle=%s write_err=%q error=%q since_attempt{got_conn=%s wrote_req=%s first_byte=%s do_return=%s} duration{dns=%s connect=%s tls=%s write_to_first_byte=%s do_total=%s}",
 +		info.ChannelId,
 +		info.OriginModelName,
 +		info.IsStream,
@@ -625,11 +810,152 @@ index df1459a8bf39eb0b2de94c3ad6cbafb5cad27b2e..fef0ad7c5e54a100399f4c846e7a083d
  func IsResponseHeaderTimeout(err error) bool {
  	if err == nil {
  		return false
+diff --git a/relay/channel/api_request_test.go b/relay/channel/api_request_test.go
+index b98c9c967c1739a6abf35045dbcfcaa792b9ce38..a0cbb68fdc0b77fb06020c4276f39c6e7f282760 100644
+--- a/relay/channel/api_request_test.go
++++ b/relay/channel/api_request_test.go
+@@ -1,10 +1,15 @@
+ package channel
+ 
+ import (
++	"bytes"
+ 	"errors"
+ 	"fmt"
++	"io"
+ 	"net/http"
+ 	"net/http/httptest"
++	"net/http/httptrace"
++	"strings"
++	"sync"
+ 	"testing"
+ 
+ 	"github.com/QuantumNous/new-api/common"
+@@ -14,6 +19,23 @@ import (
+ 	"github.com/stretchr/testify/require"
+ )
+ 
++type synchronizedLogBuffer struct {
++	mu     sync.Mutex
++	buffer bytes.Buffer
++}
++
++func (b *synchronizedLogBuffer) Write(p []byte) (int, error) {
++	b.mu.Lock()
++	defer b.mu.Unlock()
++	return b.buffer.Write(p)
++}
++
++func (b *synchronizedLogBuffer) String() string {
++	b.mu.Lock()
++	defer b.mu.Unlock()
++	return b.buffer.String()
++}
++
+ func TestProcessHeaderOverride_ChannelTestSkipsPassthroughRules(t *testing.T) {
+ 	t.Parallel()
+ 
+@@ -332,3 +354,96 @@ func TestIsResponseHeaderTimeout(t *testing.T) {
+ 		})
+ 	}
+ }
++
++func TestDoRequestLogsRequestWriteAndResponseHeaders(t *testing.T) {
++	previousTimingLogEnabled := common.RelayTimingLogEnabled
++	common.RelayTimingLogEnabled = true
++	t.Cleanup(func() {
++		common.RelayTimingLogEnabled = previousTimingLogEnabled
++	})
++
++	var logs synchronizedLogBuffer
++	common.LogWriterMu.Lock()
++	previousWriter := gin.DefaultWriter
++	gin.DefaultWriter = &logs
++	common.LogWriterMu.Unlock()
++	t.Cleanup(func() {
++		common.LogWriterMu.Lock()
++		gin.DefaultWriter = previousWriter
++		common.LogWriterMu.Unlock()
++	})
++
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		_, _ = io.Copy(io.Discard, r.Body)
++		w.WriteHeader(http.StatusNoContent)
++	}))
++	t.Cleanup(server.Close)
++
++	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
++	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", http.NoBody)
++	request, err := http.NewRequest(http.MethodPost, server.URL, strings.NewReader(`{"model":"test-model"}`))
++	require.NoError(t, err)
++	info := &relaycommon.RelayInfo{
++		IsStream:        false,
++		OriginModelName: "test-model",
++		RetryIndex:      2,
++		ChannelMeta: &relaycommon.ChannelMeta{
++			ChannelId: 17,
++		},
++	}
++
++	response, err := doRequest(ctx, request, info)
++	require.NoError(t, err)
++	require.NotNil(t, response)
++	t.Cleanup(func() { _ = response.Body.Close() })
++
++	timing := info.Timing
++	require.False(t, timing.DoStart.IsZero())
++	require.False(t, timing.GotConn.IsZero())
++	require.False(t, timing.WroteRequest.IsZero())
++	require.False(t, timing.FirstByte.IsZero())
++	require.False(t, timing.DoReturn.IsZero())
++	require.False(t, timing.DoReturn.Before(timing.DoStart))
++	require.Equal(t, http.StatusNoContent, timing.UpstreamStatus)
++	require.Empty(t, timing.WriteErr)
++
++	logOutput := logs.String()
++	require.Regexp(t, `\[INFO\] \d{4}/\d{2}/\d{2} - \d{2}:\d{2}:\d{2}\.\d{3} \|`, logOutput)
++	requestWrittenAt := strings.Index(logOutput, `relay upstream request written: channel=17 model="test-model" stream=false retry=2 write_seq=1`)
++	responseHeadersAt := strings.Index(logOutput, `relay upstream response headers received: channel=17 model="test-model" stream=false retry=2 write_seq=1 status=204 protocol=HTTP/1.1`)
++	require.GreaterOrEqual(t, requestWrittenAt, 0)
++	require.GreaterOrEqual(t, responseHeadersAt, 0)
++}
++
++func TestRelayHTTPTraceCapturesLateWriteErrorWithoutSuccessLog(t *testing.T) {
++	var logs synchronizedLogBuffer
++	common.LogWriterMu.Lock()
++	previousWriter := gin.DefaultWriter
++	gin.DefaultWriter = &logs
++	common.LogWriterMu.Unlock()
++	t.Cleanup(func() {
++		common.LogWriterMu.Lock()
++		gin.DefaultWriter = previousWriter
++		common.LogWriterMu.Unlock()
++	})
++
++	info := &relaycommon.RelayInfo{
++		OriginModelName: "test-model",
++		ChannelMeta: &relaycommon.ChannelMeta{
++			ChannelId: 17,
++		},
++	}
++	trace := newRelayHTTPTrace(nil, info)
++	info.Timing.SetAttemptSnapshot(trace.snapshot)
++	attempt, writeSeq := trace.finish(nil)
++	info.Timing.SetAttempt(attempt)
++
++	writeErr := errors.New("request body read failed")
++	trace.clientTrace().WroteRequest(httptrace.WroteRequestInfo{Err: writeErr})
++	latestTiming := info.Timing.Snapshot()
++
++	require.Equal(t, 0, writeSeq)
++	require.Equal(t, writeErr.Error(), latestTiming.WriteErr)
++	require.False(t, latestTiming.WroteRequest.IsZero())
++	require.NotContains(t, logs.String(), "relay upstream request written")
++}
 diff --git a/relay/common/relay_info.go b/relay/common/relay_info.go
-index d8d45f993f6b772d447fe8ab97bf9f4b7e0322ba..3b40b5d97170860fa5698b597b5598e5e81eb95e 100644
+index d8d45f993f6b772d447fe8ab97bf9f4b7e0322ba..89927822a59f2a77189b53b6711002a55ca056d7 100644
 --- a/relay/common/relay_info.go
 +++ b/relay/common/relay_info.go
-@@ -80,6 +80,86 @@ type TokenCountMeta struct {
+@@ -80,6 +80,101 @@ type TokenCountMeta struct {
  	estimatePromptTokens int
  }
  
@@ -672,6 +998,7 @@ index d8d45f993f6b772d447fe8ab97bf9f4b7e0322ba..3b40b5d97170860fa5698b597b5598e5
 +	UpstreamStatus    int
 +	BodySizeBytes     int64
 +	BodyStorageType   string
++	attemptSnapshot   func() RelayTimingInfo
 +}
 +
 +func (t *RelayTimingInfo) ResetAttempt() {
@@ -713,10 +1040,24 @@ index d8d45f993f6b772d447fe8ab97bf9f4b7e0322ba..3b40b5d97170860fa5698b597b5598e5
 +	t.UpstreamStatus = attempt.UpstreamStatus
 +}
 +
++func (t *RelayTimingInfo) SetAttemptSnapshot(snapshot func() RelayTimingInfo) {
++	t.ResetAttempt()
++	t.attemptSnapshot = snapshot
++}
++
++func (t RelayTimingInfo) Snapshot() RelayTimingInfo {
++	attemptSnapshot := t.attemptSnapshot
++	t.attemptSnapshot = nil
++	if attemptSnapshot != nil {
++		t.SetAttempt(attemptSnapshot())
++	}
++	return t
++}
++
  type RelayInfo struct {
  	TokenId           int
  	TokenKey          string
-@@ -169,6 +249,7 @@ type RelayInfo struct {
+@@ -169,6 +264,7 @@ type RelayInfo struct {
  	BillingRequestInput   *billingexpr.RequestInput
  
  	Request dto.Request
@@ -724,7 +1065,7 @@ index d8d45f993f6b772d447fe8ab97bf9f4b7e0322ba..3b40b5d97170860fa5698b597b5598e5
  
  	// RequestConversionChain records request format conversions in order, e.g.
  	// ["openai", "openai_responses"] or ["openai", "claude"].
-@@ -809,8 +890,12 @@ func (info *RelayInfo) ConvOptions() *convmeta.Options {
+@@ -809,8 +905,12 @@ func (info *RelayInfo) ConvOptions() *convmeta.Options {
  }
  
  func (info *RelayInfo) SetFirstResponseTime() {
@@ -739,10 +1080,10 @@ index d8d45f993f6b772d447fe8ab97bf9f4b7e0322ba..3b40b5d97170860fa5698b597b5598e5
  	}
  }
 diff --git a/relay/helper/stream_scanner.go b/relay/helper/stream_scanner.go
-index f88bef5206fc531ad75757ba8bd00d334e18b3dd..344de22ac3948616e5e34511c91e1f4f204e707a 100644
+index f88bef5206fc531ad75757ba8bd00d334e18b3dd..af11631faaca0546a869c5a21d2b28078d78afc7 100644
 --- a/relay/helper/stream_scanner.go
 +++ b/relay/helper/stream_scanner.go
-@@ -33,6 +33,45 @@ const (
+@@ -33,6 +33,46 @@ const (
  	streamWriteTimeout = 30 * time.Second
  )
  
@@ -763,7 +1104,8 @@ index f88bef5206fc531ad75757ba8bd00d334e18b3dd..344de22ac3948616e5e34511c91e1f4f
 +	if common.RelayTimingLogStreamProbeCount <= 0 || info == nil {
 +		return
 +	}
-+	start := info.Timing.DoStart
++	timing := info.Timing.Snapshot()
++	start := timing.DoStart
 +	if start.IsZero() {
 +		start = info.StartTime
 +	}
@@ -772,8 +1114,8 @@ index f88bef5206fc531ad75757ba8bd00d334e18b3dd..344de22ac3948616e5e34511c91e1f4f
 +		sinceStart = fmt.Sprintf("%dms", receivedAt.Sub(start).Milliseconds())
 +	}
 +	sinceFirstByte := "-"
-+	if !info.Timing.FirstByte.IsZero() {
-+		sinceFirstByte = fmt.Sprintf("%dms", receivedAt.Sub(info.Timing.FirstByte).Milliseconds())
++	if !timing.FirstByte.IsZero() {
++		sinceFirstByte = fmt.Sprintf("%dms", receivedAt.Sub(timing.FirstByte).Milliseconds())
 +	}
 +	logger.LogInfo(c, fmt.Sprintf(
 +		"stream probe: index=%d since_start=%s since_first_byte=%s kind=%s len=%d",
@@ -788,7 +1130,7 @@ index f88bef5206fc531ad75757ba8bd00d334e18b3dd..344de22ac3948616e5e34511c91e1f4f
  func getScannerBufferSize() int {
  	if constant.StreamScannerMaxBufferMB > 0 {
  		return constant.StreamScannerMaxBufferMB << 20
-@@ -76,7 +115,10 @@ func ExtendWriteDeadline(c *gin.Context) {
+@@ -76,7 +116,10 @@ func ExtendWriteDeadline(c *gin.Context) {
  
  func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo, dataHandler func(data string, sr *StreamResult)) {
  
@@ -800,7 +1142,7 @@ index f88bef5206fc531ad75757ba8bd00d334e18b3dd..344de22ac3948616e5e34511c91e1f4f
  		return
  	}
  
-@@ -237,7 +279,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+@@ -237,7 +280,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
  			wg.Done()
  		}()
  
@@ -810,7 +1152,7 @@ index f88bef5206fc531ad75757ba8bd00d334e18b3dd..344de22ac3948616e5e34511c91e1f4f
  			// 检查是否需要停止
  			select {
  			case <-stopChan:
-@@ -249,6 +293,15 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+@@ -249,6 +294,15 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
  
  			ticker.Reset(streamingTimeout)
  			data := scanner.Text()
@@ -826,7 +1168,7 @@ index f88bef5206fc531ad75757ba8bd00d334e18b3dd..344de22ac3948616e5e34511c91e1f4f
  			logger.LogDebug(c, "stream scanner data: %s", data)
  
  			if len(data) < 6 {
-@@ -263,7 +316,14 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+@@ -263,7 +317,14 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
  				continue
  			}
  			if !strings.HasPrefix(data, "[DONE]") {
@@ -842,7 +1184,7 @@ index f88bef5206fc531ad75757ba8bd00d334e18b3dd..344de22ac3948616e5e34511c91e1f4f
  				info.ReceivedResponseCount++
  
  				select {
-@@ -276,6 +336,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+@@ -276,6 +337,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
  			} else {
  				info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
  				logger.LogDebug(c, "received [DONE], stopping scanner")
@@ -852,7 +1194,7 @@ index f88bef5206fc531ad75757ba8bd00d334e18b3dd..344de22ac3948616e5e34511c91e1f4f
  				return
  			}
  		}
-@@ -307,4 +370,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+@@ -307,4 +371,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
  	} else {
  		logger.LogError(c, fmt.Sprintf("stream ended: %s, received=%d", info.StreamStatus.Summary(), info.ReceivedResponseCount))
  	}
@@ -861,10 +1203,10 @@ index f88bef5206fc531ad75757ba8bd00d334e18b3dd..344de22ac3948616e5e34511c91e1f4f
 +	}
  }
 diff --git a/service/text_quota.go b/service/text_quota.go
-index b7578f732786f77425dc11e97edf3905828542c1..b55c5e1edcc81a41ee18e19fbc64adb4354a8605 100644
+index b7578f732786f77425dc11e97edf3905828542c1..81d0769b4d67a0fca4c646ab13f27562fc301736 100644
 --- a/service/text_quota.go
 +++ b/service/text_quota.go
-@@ -394,6 +394,78 @@ func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage)
+@@ -394,6 +394,79 @@ func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage)
  	return "openai"
  }
  
@@ -886,7 +1228,7 @@ index b7578f732786f77425dc11e97edf3905828542c1..b55c5e1edcc81a41ee18e19fbc64adb4
 +	if !common.RelayTimingLogEnabled || relayInfo == nil {
 +		return
 +	}
-+	t := relayInfo.Timing
++	t := relayInfo.Timing.Snapshot()
 +	start := t.RequestReceivedAt
 +	if start.IsZero() {
 +		start = t.RelayEnter
@@ -909,8 +1251,9 @@ index b7578f732786f77425dc11e97edf3905828542c1..b55c5e1edcc81a41ee18e19fbc64adb4
 +	if t.WasIdleConn {
 +		idle = fmt.Sprintf("%dms", t.IdleTime.Milliseconds())
 +	}
++	writeErr := common.MaskSensitiveInfo(t.WriteErr)
 +	logger.LogInfo(ctx, fmt.Sprintf(
-+		"relay timing: channel=%d model=%s stream=%t upstream_status=%d reused=%t was_idle=%t idle=%s write_err=%q since_start{do_start=%s got_conn=%s wrote_req=%s first_byte=%s do_return=%s first_data=%s stream_end=%s quota_log=%s} duration{pre_do=%s dns=%s connect=%s tls=%s write_to_first_byte=%s do_total=%s do_return_to_first_data=%s first_byte_to_first_data=%s first_data_to_stream_end=%s total=%s}",
++		"relay timing: channel=%d model=%q stream=%t upstream_status=%d reused=%t was_idle=%t idle=%s write_err=%q since_start{do_start=%s got_conn=%s wrote_req=%s first_byte=%s do_return=%s first_data=%s stream_end=%s quota_log=%s} duration{pre_do=%s dns=%s connect=%s tls=%s write_to_first_byte=%s do_total=%s do_return_to_first_data=%s first_byte_to_first_data=%s first_data_to_stream_end=%s total=%s}",
 +		relayInfo.ChannelId,
 +		relayInfo.OriginModelName,
 +		relayInfo.IsStream,
@@ -918,7 +1261,7 @@ index b7578f732786f77425dc11e97edf3905828542c1..b55c5e1edcc81a41ee18e19fbc64adb4
 +		t.ReusedConn,
 +		t.WasIdleConn,
 +		idle,
-+		t.WriteErr,
++		writeErr,
 +		relayTimingSince(start, t.DoStart),
 +		relayTimingSince(start, t.GotConn),
 +		relayTimingSince(start, t.WroteRequest),
@@ -943,7 +1286,7 @@ index b7578f732786f77425dc11e97edf3905828542c1..b55c5e1edcc81a41ee18e19fbc64adb4
  func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []string) {
  	originUsage := usage
  	billingUsage := effectiveBillingUsage(usage)
-@@ -522,6 +594,10 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
+@@ -522,6 +595,10 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
  	}
  
  	attachQuotaSaturation(ctx, relayInfo, other)
