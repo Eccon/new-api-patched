@@ -76,7 +76,7 @@ index f697f8555692c0a00f85a69d6409c3fe180f9c5f..72951750ea862f43bc6a9de14e1d5151
  
 +	"github.com/QuantumNous/new-api/common"
  	relaycommon "github.com/QuantumNous/new-api/relay/common"
-+	"github.com/QuantumNous/new-api/types"
++	"github.com/QuantumNous/new-api/relaykit/types"
  	"github.com/gin-gonic/gin"
  	"github.com/stretchr/testify/require"
  )
@@ -216,7 +216,7 @@ index 0000000000000000000000000000000000000000..2cafd9a109784bd92c20fae9dbe4490b
 +	"github.com/QuantumNous/new-api/common"
 +	"github.com/QuantumNous/new-api/logger"
 +	relaycommon "github.com/QuantumNous/new-api/relay/common"
-+	"github.com/QuantumNous/new-api/types"
++	"github.com/QuantumNous/new-api/relaykit/types"
 +
 +	"github.com/gin-gonic/gin"
 +)

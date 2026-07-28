@@ -2,12 +2,15 @@ diff --git a/relay/alpha_search_handler.go b/relay/alpha_search_handler.go
 index 299408fa41af3d343704329e95fc31e415228a6f..7565783801f6b7c6ba8d2dcf08401ec395e71823 100644
 --- a/relay/alpha_search_handler.go
 +++ b/relay/alpha_search_handler.go
-@@ -22,7 +22,7 @@ func AlphaSearchHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError
- 	info.InitChannelMeta(c)
- 
+@@ -24,6 +24,7 @@ func AlphaSearchHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError
  	switch info.ChannelType {
--	case constant.ChannelTypeSub2API, constant.ChannelTypeCodex, constant.ChannelTypeAdvancedCustom:
-+	case constant.ChannelTypeOpenAI, constant.ChannelTypeSub2API, constant.ChannelTypeCodex, constant.ChannelTypeAdvancedCustom:
+-	case constant.ChannelTypeSub2API,
+-		constant.ChannelTypeNewAPI,
+-		constant.ChannelTypeCodex,
+-		constant.ChannelTypeAdvancedCustom:
++	case constant.ChannelTypeOpenAI,
++		constant.ChannelTypeSub2API,
++		constant.ChannelTypeNewAPI,
++		constant.ChannelTypeCodex,
++		constant.ChannelTypeAdvancedCustom:
  	default:
- 		// Allow retry onto another channel that may support this endpoint.
- 		return types.NewError(

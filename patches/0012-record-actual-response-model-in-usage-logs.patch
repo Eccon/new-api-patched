@@ -163,9 +163,9 @@ index 3fb0292b513c4d629ad07cc6548910a3df4393b3..96426e0b75f33fafe89ca648a20e128b
 +	info.ResponseModelName = modelName
 +}
 +
- func (info *RelayInfo) SetFirstResponseTime() {
- 	info.SetFirstResponseTimeAt(time.Now())
- }
+ // ---------------------------------------------------------------------------
+ // convmeta.Meta implementation — the view format converters see. Keep these
+ // thin: they only expose protocol state, never billing/user fields.
 diff --git a/service/log_info_generate.go b/service/log_info_generate.go
 index 207b0af5bfefcbf339547a4dff28cbf8f7b3c4ba..a5e50abe5cafb996e5fa88400d911dd9e0fd0c8f 100644
 --- a/service/log_info_generate.go
@@ -206,7 +206,7 @@ index 207b0af5bfefcbf339547a4dff28cbf8f7b3c4ba..a5e50abe5cafb996e5fa88400d911dd9
  	isSystemPromptOverwritten := common.GetContextKeyBool(ctx, constant.ContextKeySystemPromptOverride)
  	if isSystemPromptOverwritten {
 diff --git a/web/src/features/usage-logs/components/dialogs/details-dialog.tsx b/web/src/features/usage-logs/components/dialogs/details-dialog.tsx
-index e153ef456d953f9aed162eef8a5ebfbda29d6810..55d7317184c541f04efd8c060511624033bb44a3 100644
+index e153ef456d953f9aed162eef8a5ebfbda29d6810..64c138295bf30b5c7f78b0a8dd3023787038f15d 100644
 --- a/web/src/features/usage-logs/components/dialogs/details-dialog.tsx
 +++ b/web/src/features/usage-logs/components/dialogs/details-dialog.tsx
 @@ -614,6 +614,9 @@ export function DetailsDialog(props: DetailsDialogProps) {
@@ -228,17 +228,17 @@ index e153ef456d953f9aed162eef8a5ebfbda29d6810..55d7317184c541f04efd8c0605116240
            <DetailSection label={t('Model Mapping')}>
              <DetailRow
                label={t('Request Model')}
-@@ -1073,7 +1076,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
+@@ -1073,7 +1076,3 @@ export function DetailsDialog(props: DetailsDialogProps) {
              />
-             <DetailRow
-               label={t('Actual Model')}
+-            <DetailRow
+-              label={t('Actual Model')}
 -              value={other.upstream_model_name}
-+              value={actualModel}
-               mono
-             />
+-              mono
+-            />
++            <DetailRow label={t('Actual Model')} value={actualModel} mono />
            </DetailSection>
 diff --git a/web/src/features/usage-logs/lib/format.ts b/web/src/features/usage-logs/lib/format.ts
-index c2d64887a6c10cd1422ab164d4003b7e22b6c7db..52ecdeb9a99fc9070cafd259964886f36b32d1f8 100644
+index c2d64887a6c10cd1422ab164d4003b7e22b6c7db..327942be1045cb97d6602fa9d6865bde27324325 100644
 --- a/web/src/features/usage-logs/lib/format.ts
 +++ b/web/src/features/usage-logs/lib/format.ts
 @@ -220,6 +220,7 @@ export function formatModelName(log: UsageLog): {
@@ -249,12 +249,13 @@ index c2d64887a6c10cd1422ab164d4003b7e22b6c7db..52ecdeb9a99fc9070cafd259964886f3
    const isMapped = !!(
      other?.is_model_mapped &&
      other?.upstream_model_name &&
-@@ -229,7 +230,7 @@ export function formatModelName(log: UsageLog): {
+@@ -229,7 +230,8 @@ export function formatModelName(log: UsageLog): {
    return {
      name: log.model_name,
      isMapped,
 -    actualModel: isMapped ? other.upstream_model_name : undefined,
-+    actualModel: actualModel || (isMapped ? other.upstream_model_name : undefined),
++    actualModel:
++      actualModel || (isMapped ? other.upstream_model_name : undefined),
    }
  }
  

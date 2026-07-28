@@ -94,7 +94,7 @@ index 87571fe..d111f35 100644
 +              value={
 +                <button
 +                  type='button'
-+                  className='max-w-full cursor-pointer break-all text-left hover:underline'
++                  className='max-w-full cursor-pointer text-left break-all hover:underline'
 +                  onClick={() => copyToClipboard(requestUserAgent)}
 +                >
 +                  {requestUserAgent}

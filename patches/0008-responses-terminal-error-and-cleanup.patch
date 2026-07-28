@@ -1,7 +1,7 @@
-diff --git a/dto/openai_response.go b/dto/openai_response.go
+diff --git a/relaykit/dto/openai_response.go b/relaykit/dto/openai_response.go
 index 7959f0744649caa26e6d3b8b2492593f34587d77..92fa40c6cf4263b3ab1e6e12921ef012922ab49f 100644
---- a/dto/openai_response.go
-+++ b/dto/openai_response.go
+--- a/relaykit/dto/openai_response.go
++++ b/relaykit/dto/openai_response.go
 @@ -384,10 +384,11 @@ const (
  
  // ResponsesStreamResponse 用于处理 /v1/responses 流式响应
