@@ -1,0 +1,334 @@
+diff --git a/common/constants.go b/common/constants.go
+index bd2fd17693db3636553b3199b795927b83a393a6..0909016b776d8c35ee9a5b45cbb6a094f6fe73d1 100644
+--- a/common/constants.go
++++ b/common/constants.go
+@@ -168,6 +168,13 @@ var RelayTimeout int // unit is second
+ var RelayIdleConnTimeout int // unit is second
+ var RelayMaxIdleConns int
+ var RelayMaxIdleConnsPerHost int
++var RelayDirectNetworkFamily = RelayDirectNetworkFamilyAuto
++
++const (
++	RelayDirectNetworkFamilyAuto     = "auto"
++	RelayDirectNetworkFamilyIPv4Only = "ipv4_only"
++	RelayDirectNetworkFamilyIPv6Only = "ipv6_only"
++)
+ 
+ var GeminiSafetySetting string
+ 
+diff --git a/common/init.go b/common/init.go
+index 0c505368d271772d782251281584f9d834bc1c85..11df7a183166c443f696b21602a305bf2db0fc90 100644
+--- a/common/init.go
++++ b/common/init.go
+@@ -112,6 +112,16 @@ func InitEnv() {
+ 	RelayIdleConnTimeout = GetEnvOrDefault("RELAY_IDLE_CONN_TIMEOUT", 90)
+ 	RelayMaxIdleConns = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS", 500)
+ 	RelayMaxIdleConnsPerHost = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS_PER_HOST", 100)
++	relayDirectNetworkFamilyRaw := GetEnvOrDefaultString("RELAY_DIRECT_NETWORK_FAMILY", RelayDirectNetworkFamilyAuto)
++	var relayDirectNetworkFamilyValid bool
++	RelayDirectNetworkFamily, relayDirectNetworkFamilyValid = normalizeRelayDirectNetworkFamily(relayDirectNetworkFamilyRaw)
++	if !relayDirectNetworkFamilyValid {
++		SysError(fmt.Sprintf(
++			"invalid RELAY_DIRECT_NETWORK_FAMILY=%q, using %q",
++			relayDirectNetworkFamilyRaw,
++			RelayDirectNetworkFamilyAuto,
++		))
++	}
+ 
+ 	// Initialize string variables with GetEnvOrDefaultString
+ 	GeminiSafetySetting = GetEnvOrDefaultString("GEMINI_SAFETY_SETTING", "BLOCK_NONE")
+@@ -139,6 +149,20 @@ func InitEnv() {
+ 	initConstantEnv()
+ }
+ 
++func normalizeRelayDirectNetworkFamily(value string) (string, bool) {
++	normalized := strings.ToLower(strings.TrimSpace(value))
++	switch normalized {
++	case "", RelayDirectNetworkFamilyAuto:
++		return RelayDirectNetworkFamilyAuto, true
++	case RelayDirectNetworkFamilyIPv4Only:
++		return RelayDirectNetworkFamilyIPv4Only, true
++	case RelayDirectNetworkFamilyIPv6Only:
++		return RelayDirectNetworkFamilyIPv6Only, true
++	default:
++		return RelayDirectNetworkFamilyAuto, false
++	}
++}
++
+ func initUserSessionSettings() {
+ 	UserSessionActiveLimit = positiveUserSessionEnv("USER_SESSION_ACTIVE_LIMIT", DefaultUserSessionActiveLimit)
+ 	UserSessionIssuanceLimit = positiveUserSessionEnv("USER_SESSION_ISSUANCE_LIMIT", DefaultUserSessionIssuanceLimit)
+diff --git a/common/relay_network_family_test.go b/common/relay_network_family_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..856a5b52cf6906effeff75fc34c1d7855dd818f1
+--- /dev/null
++++ b/common/relay_network_family_test.go
+@@ -0,0 +1,28 @@
++package common
++
++import "testing"
++
++func TestNormalizeRelayDirectNetworkFamily(t *testing.T) {
++	tests := []struct {
++		name  string
++		input string
++		want  string
++		valid bool
++	}{
++		{name: "empty", input: "", want: RelayDirectNetworkFamilyAuto, valid: true},
++		{name: "auto", input: "auto", want: RelayDirectNetworkFamilyAuto, valid: true},
++		{name: "ipv4 only", input: "ipv4_only", want: RelayDirectNetworkFamilyIPv4Only, valid: true},
++		{name: "ipv6 only", input: "ipv6_only", want: RelayDirectNetworkFamilyIPv6Only, valid: true},
++		{name: "normalizes case and space", input: " IPv4_ONLY ", want: RelayDirectNetworkFamilyIPv4Only, valid: true},
++		{name: "invalid", input: "ipv4_first", want: RelayDirectNetworkFamilyAuto, valid: false},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			got, valid := normalizeRelayDirectNetworkFamily(tt.input)
++			if got != tt.want || valid != tt.valid {
++				t.Fatalf("normalizeRelayDirectNetworkFamily(%q) = (%q, %t), want (%q, %t)", tt.input, got, valid, tt.want, tt.valid)
++			}
++		})
++	}
++}
+diff --git a/service/http_client.go b/service/http_client.go
+index f5c19eafedc80ec2b9995c0a97a4364080ac9483..169dc63a9f9cf04d2aaac245c775581c0fa512bb 100644
+--- a/service/http_client.go
++++ b/service/http_client.go
+@@ -287,6 +287,27 @@ func configureProxyTransport(transport *http.Transport, proxyURL *url.URL) error
+ 	}
+ }
+ 
++func applyRelayDirectNetworkFamily(transport *http.Transport) {
++	if transport == nil || transport.DialContext == nil {
++		return
++	}
++
++	var network string
++	switch common.RelayDirectNetworkFamily {
++	case common.RelayDirectNetworkFamilyIPv4Only:
++		network = "tcp4"
++	case common.RelayDirectNetworkFamilyIPv6Only:
++		network = "tcp6"
++	default:
++		return
++	}
++
++	baseDialContext := transport.DialContext
++	transport.DialContext = func(ctx context.Context, _ string, addr string) (net.Conn, error) {
++		return baseDialContext(ctx, network, addr)
++	}
++}
++
+ func newTransportFactory(proxyURL *url.URL, tlsConfig *tls.Config) (func() *http.Transport, error) {
+ 	// Validate proxy configuration once before creating shard transports.
+ 	if proxyURL != nil {
+@@ -301,6 +322,7 @@ func newTransportFactory(proxyURL *url.URL, tlsConfig *tls.Config) (func() *http
+ 			_ = configureProxyTransport(transport, proxyURL)
+ 		} else {
+ 			transport.Proxy = http.ProxyFromEnvironment
++			applyRelayDirectNetworkFamily(transport)
+ 		}
+ 		if tlsConfig != nil {
+ 			transport.TLSClientConfig = tlsConfig.Clone()
+diff --git a/service/http_client_transport_test.go b/service/http_client_transport_test.go
+index b2f83a1a0270b7db70b934c23364c66f2f2f1256..56989bba53f2e8e519b8754baa07afce5a0e76b3 100644
+--- a/service/http_client_transport_test.go
++++ b/service/http_client_transport_test.go
+@@ -1,13 +1,17 @@
+ package service
+ 
+ import (
++	"context"
+ 	"crypto/tls"
+ 	"crypto/x509"
+ 	"encoding/pem"
++	"errors"
+ 	"fmt"
+ 	"io"
++	"net"
+ 	"net/http"
+ 	"net/http/httptest"
++	"net/url"
+ 	"sync"
+ 	"sync/atomic"
+ 	"testing"
+@@ -46,6 +50,177 @@ func initDefaultHTTPClientFixture(t *testing.T) *http.Client {
+ 	return httpClient
+ }
+ 
++func TestApplyRelayDirectNetworkFamilyUsesInheritedDialContext(t *testing.T) {
++	previousFamily := common.RelayDirectNetworkFamily
++	t.Cleanup(func() {
++		common.RelayDirectNetworkFamily = previousFamily
++	})
++
++	tests := []struct {
++		name        string
++		family      string
++		wantNetwork string
++	}{
++		{name: "auto", family: common.RelayDirectNetworkFamilyAuto, wantNetwork: "tcp"},
++		{name: "ipv4 only", family: common.RelayDirectNetworkFamilyIPv4Only, wantNetwork: "tcp4"},
++		{name: "ipv6 only", family: common.RelayDirectNetworkFamilyIPv6Only, wantNetwork: "tcp6"},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			wantErr := errors.New("inherited dialer error")
++			ctx := context.WithValue(context.Background(), struct{}{}, "value")
++			var gotContext context.Context
++			var gotNetwork, gotAddress string
++			transport := &http.Transport{
++				DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
++					gotContext = ctx
++					gotNetwork = network
++					gotAddress = address
++					return nil, wantErr
++				},
++			}
++
++			common.RelayDirectNetworkFamily = tt.family
++			applyRelayDirectNetworkFamily(transport)
++			_, err := transport.DialContext(ctx, "tcp", "relay.example:443")
++
++			require.ErrorIs(t, err, wantErr)
++			assert.Same(t, ctx, gotContext)
++			assert.Equal(t, tt.wantNetwork, gotNetwork)
++			assert.Equal(t, "relay.example:443", gotAddress)
++		})
++	}
++}
++
++func TestApplyRelayDirectNetworkFamilyPreservesCancellation(t *testing.T) {
++	previousFamily := common.RelayDirectNetworkFamily
++	common.RelayDirectNetworkFamily = common.RelayDirectNetworkFamilyIPv4Only
++	t.Cleanup(func() {
++		common.RelayDirectNetworkFamily = previousFamily
++	})
++
++	type dialCall struct {
++		context context.Context
++		network string
++		address string
++	}
++	seenCall := make(chan dialCall, 1)
++	transport := &http.Transport{
++		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
++			seenCall <- dialCall{context: ctx, network: network, address: address}
++			<-ctx.Done()
++			return nil, ctx.Err()
++		},
++	}
++	applyRelayDirectNetworkFamily(transport)
++
++	ctx, cancel := context.WithCancel(context.Background())
++	errCh := make(chan error, 1)
++	go func() {
++		_, err := transport.DialContext(ctx, "tcp", "relay.example:443")
++		errCh <- err
++	}()
++
++	call := <-seenCall
++	assert.Same(t, ctx, call.context)
++	assert.Equal(t, "tcp4", call.network)
++	assert.Equal(t, "relay.example:443", call.address)
++	cancel()
++	require.ErrorIs(t, <-errCh, context.Canceled)
++}
++
++func TestDirectNetworkFamilyAppliesToEveryShard(t *testing.T) {
++	withRelayHTTPTransportSettings(t)
++	previousFamily := common.RelayDirectNetworkFamily
++	common.RelayDirectNetworkFamily = common.RelayDirectNetworkFamilyIPv4Only
++	t.Cleanup(func() {
++		common.RelayDirectNetworkFamily = previousFamily
++	})
++
++	client, err := newHTTPClientFromPolicy(HTTPTransportPolicy{
++		Protocol: dto.HTTPProtocolAuto,
++		Shards:   3,
++	}, nil, nil)
++	require.NoError(t, err)
++	sharded, ok := client.Transport.(*shardedRoundTripper)
++	require.True(t, ok)
++	require.Len(t, sharded.shards, 3)
++
++	for _, shard := range sharded.shards {
++		transport, ok := shard.(*http.Transport)
++		require.True(t, ok)
++		_, err := transport.DialContext(context.Background(), "tcp", "[::1]:443")
++		require.Error(t, err)
++		var opErr *net.OpError
++		require.ErrorAs(t, err, &opErr)
++		assert.Equal(t, "tcp4", opErr.Net)
++	}
++}
++
++func TestDirectNetworkFamilyLeavesExplicitProxyDialingUnchanged(t *testing.T) {
++	withRelayHTTPTransportSettings(t)
++	previousFamily := common.RelayDirectNetworkFamily
++	common.RelayDirectNetworkFamily = common.RelayDirectNetworkFamilyIPv4Only
++	t.Cleanup(func() {
++		common.RelayDirectNetworkFamily = previousFamily
++	})
++
++	proxyURLs := []string{
++		"http://proxy.example:8080",
++		"https://proxy.example:8443",
++		"socks5://127.0.0.1:1080",
++		"socks5h://127.0.0.1:1080",
++	}
++	for _, rawProxyURL := range proxyURLs {
++		t.Run(rawProxyURL, func(t *testing.T) {
++			proxyURL, err := url.Parse(rawProxyURL)
++			require.NoError(t, err)
++			factory, err := newTransportFactory(proxyURL, nil)
++			require.NoError(t, err)
++			transport := factory()
++
++			ctx, cancel := context.WithCancel(context.Background())
++			cancel()
++			_, err = transport.DialContext(ctx, "relay-test-unknown", "relay.example:443")
++			require.Error(t, err)
++			var opErr *net.OpError
++			require.ErrorAs(t, err, &opErr)
++			assert.Equal(t, "relay-test-unknown", opErr.Net)
++		})
++	}
++}
++
++func TestDirectNetworkFamilyLeavesSSRFProtectedDialingUnchanged(t *testing.T) {
++	previousFamily := common.RelayDirectNetworkFamily
++	common.RelayDirectNetworkFamily = common.RelayDirectNetworkFamilyIPv4Only
++	t.Cleanup(func() {
++		common.RelayDirectNetworkFamily = previousFamily
++	})
++
++	wantErr := errors.New("protected dialer error")
++	var gotNetwork, gotAddress string
++	client := newProtectedFetchHTTPClientWithDialer(
++		nil,
++		func(_ context.Context, network, address string) (net.Conn, error) {
++			gotNetwork = network
++			gotAddress = address
++			return nil, wantErr
++		},
++		func() (*common.SSRFProtection, bool, error) {
++			return nil, false, nil
++		},
++	)
++	roundTripper, ok := client.Transport.(*ssrfProtectedRoundTripper)
++	require.True(t, ok)
++	transport := roundTripper.transportFor(nil)
++
++	_, err := transport.DialContext(context.Background(), "tcp", "relay.example:443")
++	require.ErrorIs(t, err, wantErr)
++	assert.Equal(t, "tcp", gotNetwork)
++	assert.Equal(t, "relay.example:443", gotAddress)
++}
++
+ func TestShardedRoundTripperPerOriginRotation(t *testing.T) {
+ 	s := &shardedRoundTripper{n: 4}
+ 	originA := "https://a.example:443"

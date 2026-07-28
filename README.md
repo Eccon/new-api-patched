@@ -79,10 +79,11 @@ No Docker image is built.
   - Changes the default usage-log end time to the end of the current day.
   - Does not add or migrate any database columns.
 
-- `0005-force-default-relay-ipv4.patch`
-  - Forces the default relay HTTP client to dial upstream hosts through IPv4.
-  - Keeps HTTP/HTTPS and SOCKS proxy clients on their existing proxy-specific dialing behavior.
-  - Does not add any runtime environment variable.
+- `0005-configure-default-relay-network-family.patch`
+  - Adds `RELAY_DIRECT_NETWORK_FAMILY=auto|ipv4_only|ipv6_only` for relay clients without an explicit channel proxy.
+  - Leaves `auto` untouched; the `only` modes wrap the inherited `DialContext` on every direct HTTP/2 shard without replacing its timeout, keepalive, or context handling.
+  - Keeps explicit HTTP/HTTPS and SOCKS channel proxies, plus the SSRF-protected fetch client, on their existing dialing behavior.
+  - Treats an environment proxy as the dial target and requires a restart after changing the setting.
 
 - `0006-response-header-timeout-and-error-body-cleanup.patch`
   - Adds `RELAY_RESPONSE_HEADER_TIMEOUT` for bounding upstream response-header wait time.
