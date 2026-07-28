@@ -1,0 +1,63 @@
+diff --git a/service/error.go b/service/error.go
+index f14f1bba..9709a3de 100644
+--- a/service/error.go
++++ b/service/error.go
+@@ -86,12 +86,12 @@ func ClaudeErrorWrapperLocal(err error, code string, statusCode int) *dto.Claude
+ 
+ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFail bool) (newApiErr *types.NewAPIError) {
+ 	newApiErr = types.InitOpenAIError(types.ErrorCodeBadResponseStatusCode, resp.StatusCode)
++	defer CloseResponseBodyGracefully(resp)
+ 
+ 	responseBody, err := io.ReadAll(resp.Body)
+ 	if err != nil {
+ 		return
+ 	}
+-	CloseResponseBodyGracefully(resp)
+ 	var errResponse dto.GeneralErrorResponse
+ 	responseBodyText := string(responseBody)
+ 	responseBodyPreview := common.LocalLogPreview(responseBodyText)
+diff --git a/service/error_test.go b/service/error_test.go
+index 266d2a87..435dc085 100644
+--- a/service/error_test.go
++++ b/service/error_test.go
+@@ -3,6 +3,7 @@ package service
+ import (
+ 	"bytes"
+ 	"context"
++	"errors"
+ 	"fmt"
+ 	"io"
+ 	"net/http"
+@@ -15,6 +16,32 @@ import (
+ 	"github.com/stretchr/testify/require"
+ )
+ 
++type readFailingBody struct {
++	closeCalls int
++}
++
++func (b *readFailingBody) Read([]byte) (int, error) {
++	return 0, errors.New("read failed")
++}
++
++func (b *readFailingBody) Close() error {
++	b.closeCalls++
++	return nil
++}
++
++func TestRelayErrorHandlerClosesBodyWhenReadFails(t *testing.T) {
++	body := &readFailingBody{}
++	resp := &http.Response{
++		StatusCode: http.StatusBadGateway,
++		Body:       body,
++	}
++
++	newAPIError := RelayErrorHandler(context.Background(), resp, false)
++
++	require.NotNil(t, newAPIError)
++	require.Equal(t, 1, body.closeCalls)
++}
++
+ func TestResetStatusCode(t *testing.T) {
+ 	t.Parallel()
+ 

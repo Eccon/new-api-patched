@@ -1,0 +1,649 @@
+diff --git a/common/constants.go b/common/constants.go
+index 0909016b..75a3a0da 100644
+--- a/common/constants.go
++++ b/common/constants.go
+@@ -165,7 +165,9 @@ var UpstreamUserAgentGemini = ""
+ 
+ var RelayTimeout int // unit is second
+ 
+-var RelayIdleConnTimeout int // unit is second
++var RelayIdleConnTimeout int       // unit is second
++var RelayResponseHeaderTimeout int // unit is second
++var RelayNonStreamTimeout int      // unit is second
+ var RelayMaxIdleConns int
+ var RelayMaxIdleConnsPerHost int
+ var RelayDirectNetworkFamily = RelayDirectNetworkFamilyAuto
+diff --git a/common/init.go b/common/init.go
+index 11df7a18..262a6c0a 100644
+--- a/common/init.go
++++ b/common/init.go
+@@ -110,6 +110,8 @@ func InitEnv() {
+ 	BatchUpdateInterval = GetEnvOrDefault("BATCH_UPDATE_INTERVAL", 5)
+ 	RelayTimeout = GetEnvOrDefault("RELAY_TIMEOUT", 0)
+ 	RelayIdleConnTimeout = GetEnvOrDefault("RELAY_IDLE_CONN_TIMEOUT", 90)
++	RelayResponseHeaderTimeout = GetEnvOrDefault("RELAY_RESPONSE_HEADER_TIMEOUT", 0)
++	RelayNonStreamTimeout = GetEnvOrDefault("RELAY_NON_STREAM_TIMEOUT", -1)
+ 	RelayMaxIdleConns = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS", 500)
+ 	RelayMaxIdleConnsPerHost = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS_PER_HOST", 100)
+ 	relayDirectNetworkFamilyRaw := GetEnvOrDefaultString("RELAY_DIRECT_NETWORK_FAMILY", RelayDirectNetworkFamilyAuto)
+diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
+index 0784c80e..04f59146 100644
+--- a/relay/channel/api_request.go
++++ b/relay/channel/api_request.go
+@@ -480,12 +480,12 @@ func DoRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+ 	return doRequest(c, req, info)
+ }
+ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
+-	client, err := service.GetHttpClientWithProxySettings(info.ChannelSetting.Proxy, info.ChannelSetting)
++	client, err := service.GetHttpClientWithProxyForRelay(info.ChannelSetting.Proxy, info.ChannelSetting, info.IsStream)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("new proxy http client failed: %w", err)
+ 	}
+ 	if common2.DebugEnabled && req != nil && req.URL != nil {
+-		policy := service.NormalizeHTTPTransportPolicy(info.ChannelSetting)
++		policy := service.NormalizeRelayHTTPTransportPolicy(info.ChannelSetting, info.IsStream)
+ 		logger.LogDebug(c, fmt.Sprintf(
+ 			"http transport select: host=%s protocol=%s shards=%d policy=%s",
+ 			req.URL.Host,
+@@ -519,6 +519,14 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+ 	logUpstreamUserAgent(c, req)
+ 	resp, err := client.Do(req)
+ 	if err != nil {
++		if IsResponseHeaderTimeout(err) {
++			logger.LogError(c, "do request failed: response header timeout: "+err.Error())
++			return nil, types.NewError(
++				err,
++				types.ErrorCodeDoRequestFailed,
++				types.ErrOptionWithHideErrMsg("upstream error: response header timeout"),
++			)
++		}
+ 		logger.LogError(c, "do request failed: "+err.Error())
+ 		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
+ 	}
+@@ -526,7 +534,7 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+ 		return nil, errors.New("resp is nil")
+ 	}
+ 	if common2.DebugEnabled {
+-		policy := service.NormalizeHTTPTransportPolicy(info.ChannelSetting)
++		policy := service.NormalizeRelayHTTPTransportPolicy(info.ChannelSetting, info.IsStream)
+ 		logger.LogDebug(c, fmt.Sprintf(
+ 			"http transport negotiated: host=%s protocol=%s shards=%d policy=%s negotiated=%s",
+ 			req.URL.Host,
+@@ -546,6 +554,15 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+ 	return resp, nil
+ }
+ 
++func IsResponseHeaderTimeout(err error) bool {
++	if err == nil {
++		return false
++	}
++	msg := strings.ToLower(err.Error())
++	return strings.Contains(msg, "timeout awaiting response headers") ||
++		strings.Contains(msg, "response header timeout")
++}
++
+ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+ 	fullRequestURL, err := a.BuildRequestURL(info)
+ 	if err != nil {
+diff --git a/relay/channel/api_request_test.go b/relay/channel/api_request_test.go
+index b60ddd69..b98c9c96 100644
+--- a/relay/channel/api_request_test.go
++++ b/relay/channel/api_request_test.go
+@@ -1,6 +1,8 @@
+ package channel
+ 
+ import (
++	"errors"
++	"fmt"
+ 	"net/http"
+ 	"net/http/httptest"
+ 	"testing"
+@@ -309,3 +311,24 @@ func TestConfiguredUpstreamUserAgentOpenAIFormats(t *testing.T) {
+ 		})
+ 	}
+ }
++
++func TestIsResponseHeaderTimeout(t *testing.T) {
++	tests := []struct {
++		name string
++		err  error
++		want bool
++	}{
++		{name: "nil", err: nil, want: false},
++		{name: "http1 native", err: errors.New("net/http: timeout awaiting response headers"), want: true},
++		{name: "http2 native", err: errors.New("http2: response header timeout"), want: true},
++		{name: "wrapped", err: fmt.Errorf("request failed: %w", errors.New("timeout awaiting response headers")), want: true},
++		{name: "other timeout", err: errors.New("context deadline exceeded"), want: false},
++		{name: "ordinary failure", err: errors.New("connection reset by peer"), want: false},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			require.Equal(t, tt.want, IsResponseHeaderTimeout(tt.err))
++		})
++	}
++}
+diff --git a/relay/channel/aws/relay-aws.go b/relay/channel/aws/relay-aws.go
+index c502364c..c8ff9c7b 100644
+--- a/relay/channel/aws/relay-aws.go
++++ b/relay/channel/aws/relay-aws.go
+@@ -23,6 +23,7 @@ import (
+ 
+ 	"github.com/QuantumNous/new-api/setting/model_setting"
+ 	"github.com/aws/aws-sdk-go-v2/aws"
++	awsretry "github.com/aws/aws-sdk-go-v2/aws/retry"
+ 	"github.com/aws/aws-sdk-go-v2/credentials"
+ 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
+ 	bedrockruntimeTypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
+@@ -40,6 +41,8 @@ func getAwsErrorStatusCode(err error) int {
+ 	return http.StatusInternalServerError
+ }
+ 
++// TODO: Apply RELAY_NON_STREAM_TIMEOUT here for non-stream InvokeModel calls so
++// all AWS SDK retries share one deadline; http.Client.Timeout resets per attempt.
+ func newAwsInvokeContext() (context.Context, context.CancelFunc) {
+ 	if common.RelayTimeout <= 0 {
+ 		return context.Background(), func() {}
+@@ -47,11 +50,30 @@ func newAwsInvokeContext() (context.Context, context.CancelFunc) {
+ 	return context.WithTimeout(context.Background(), time.Duration(common.RelayTimeout)*time.Second)
+ }
+ 
++func newAwsResponseHeaderTimeoutRetryer() aws.Retryer {
++	return awsretry.NewStandard(func(options *awsretry.StandardOptions) {
++		timeoutRule := awsretry.IsErrorRetryableFunc(func(err error) aws.Ternary {
++			if channel.IsResponseHeaderTimeout(err) {
++				return aws.FalseTernary
++			}
++			return aws.UnknownTernary
++		})
++		options.Retryables = append(
++			[]awsretry.IsErrorRetryable{timeoutRule},
++			options.Retryables...,
++		)
++	})
++}
++
+ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.Client, error) {
+-	httpClient, err := service.GetHttpClientWithProxySettings(info.ChannelSetting.Proxy, info.ChannelSetting)
++	httpClient, err := service.GetHttpClientWithProxyForRelay(info.ChannelSetting.Proxy, info.ChannelSetting, info.IsStream)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("new proxy http client failed: %w", err)
+ 	}
++	var retryer aws.Retryer
++	if info.IsStream && common.RelayResponseHeaderTimeout > 0 {
++		retryer = newAwsResponseHeaderTimeoutRetryer()
++	}
+ 
+ 	awsSecret := strings.Split(info.ApiKey, "|")
+ 	var client *bedrockruntime.Client
+@@ -63,6 +85,7 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
+ 			Region:                  region,
+ 			BearerAuthTokenProvider: bearer.StaticTokenProvider{Token: bearer.Token{Value: apiKey}},
+ 			HTTPClient:              httpClient,
++			Retryer:                 retryer,
+ 		})
+ 	case 3:
+ 		ak := awsSecret[0]
+@@ -72,6 +95,7 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
+ 			Region:      region,
+ 			Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(ak, sk, "")),
+ 			HTTPClient:  httpClient,
++			Retryer:     retryer,
+ 		})
+ 	default:
+ 		return nil, errors.New("invalid aws secret key")
+diff --git a/relay/channel/aws/relay_aws_test.go b/relay/channel/aws/relay_aws_test.go
+index 92745ff4..55a4b64a 100644
+--- a/relay/channel/aws/relay_aws_test.go
++++ b/relay/channel/aws/relay_aws_test.go
+@@ -2,17 +2,105 @@ package aws
+ 
+ import (
+ 	"bytes"
++	"errors"
+ 	"net/http"
+ 	"net/http/httptest"
+ 	"testing"
+ 
+ 	"github.com/QuantumNous/new-api/common"
+ 	relaycommon "github.com/QuantumNous/new-api/relay/common"
++	"github.com/QuantumNous/new-api/relaykit/dto"
++	"github.com/QuantumNous/new-api/service"
+ 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
++	smithyhttp "github.com/aws/smithy-go/transport/http"
+ 	"github.com/gin-gonic/gin"
+ 	"github.com/stretchr/testify/require"
+ )
+ 
++func TestAwsResponseHeaderTimeoutRetryer(t *testing.T) {
++	retryer := newAwsResponseHeaderTimeoutRetryer()
++	require.Equal(t, 3, retryer.MaxAttempts())
++	require.False(t, retryer.IsErrorRetryable(&smithyhttp.RequestSendError{
++		Err: errors.New("net/http: timeout awaiting response headers"),
++	}))
++	require.True(t, retryer.IsErrorRetryable(&smithyhttp.RequestSendError{
++		Err: errors.New("connection reset by peer"),
++	}))
++}
++
++func TestNewAwsClientConfiguresResponseHeaderTimeoutRetryer(t *testing.T) {
++	previousTimeout := common.RelayResponseHeaderTimeout
++	t.Cleanup(func() {
++		common.RelayResponseHeaderTimeout = previousTimeout
++		service.ResetProxyClientCache()
++	})
++
++	tests := []struct {
++		name          string
++		stream        bool
++		timeout       int
++		wantRetryable bool
++	}{
++		{name: "stream timeout enabled", stream: true, timeout: 4, wantRetryable: false},
++		{name: "non-stream timeout enabled", stream: false, timeout: 4, wantRetryable: true},
++		{name: "stream timeout disabled", stream: true, timeout: 0, wantRetryable: true},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			common.RelayResponseHeaderTimeout = tt.timeout
++			service.ResetProxyClientCache()
++			info := &relaycommon.RelayInfo{
++				IsStream: tt.stream,
++				ChannelMeta: &relaycommon.ChannelMeta{
++					ApiKey: "access-key|secret-key|us-east-1",
++				},
++			}
++			client, err := newAwsClient(nil, info)
++			require.NoError(t, err)
++			headerTimeoutErr := &smithyhttp.RequestSendError{
++				Err: errors.New("net/http: timeout awaiting response headers"),
++			}
++			require.Equal(t, tt.wantRetryable, client.Options().Retryer.IsErrorRetryable(headerTimeoutErr))
++		})
++	}
++}
++
++func TestNewAwsClientUsesSettingsAwareRelayClient(t *testing.T) {
++	previousTimeout := common.RelayResponseHeaderTimeout
++	common.RelayResponseHeaderTimeout = 4
++	service.ResetProxyClientCache()
++	t.Cleanup(func() {
++		common.RelayResponseHeaderTimeout = previousTimeout
++		service.ResetProxyClientCache()
++	})
++
++	const proxyURL = "http://aws-policy-test.invalid:8080"
++	settings := dto.ChannelSettings{
++		Proxy:                 proxyURL,
++		HTTPProtocol:          dto.HTTPProtocolAuto,
++		HTTP2ConnectionShards: 2,
++	}
++	info := &relaycommon.RelayInfo{
++		IsStream: true,
++		ChannelMeta: &relaycommon.ChannelMeta{
++			ApiKey:         "access-key|secret-key|us-east-1",
++			ChannelSetting: settings,
++		},
++	}
++	expected, err := service.GetHttpClientWithProxyForRelay(proxyURL, settings, true)
++	require.NoError(t, err)
++	regular, err := service.GetHttpClientWithProxyForRelay(proxyURL, settings, false)
++	require.NoError(t, err)
++
++	client, err := newAwsClient(nil, info)
++	require.NoError(t, err)
++	actual, ok := client.Options().HTTPClient.(*http.Client)
++	require.True(t, ok)
++	require.Same(t, expected, actual)
++	require.NotSame(t, regular, actual)
++}
++
+ func TestDoAwsClientRequest_AppliesRuntimeHeaderOverrideToAnthropicBeta(t *testing.T) {
+ 	t.Parallel()
+ 
+diff --git a/service/http_client.go b/service/http_client.go
+index 169dc63a..09e88a67 100644
+--- a/service/http_client.go
++++ b/service/http_client.go
+@@ -386,7 +386,54 @@ func GetHttpClientWithProxy(rawProxyURL string) (*http.Client, error) {
+ // channel transport settings. Default auto + 1 shard shares the same client pool as
+ // GetHttpClientWithProxy / GetHttpClient for the empty-proxy case.
+ func GetHttpClientWithProxySettings(rawProxyURL string, settings dto.ChannelSettings) (*http.Client, error) {
++	return getHttpClientWithProxyPolicy(rawProxyURL, NormalizeHTTPTransportPolicy(settings))
++}
++
++// GetHttpClientWithProxyForRelay returns a policy-aware relay client with the
++// request-mode timeout while retaining the cached transport and connection pool.
++func GetHttpClientWithProxyForRelay(rawProxyURL string, settings dto.ChannelSettings, stream bool) (*http.Client, error) {
++	client, err := getHttpClientWithProxyPolicy(rawProxyURL, NormalizeRelayHTTPTransportPolicy(settings, stream))
++	if err != nil {
++		return nil, err
++	}
++	return relayHTTPClientWithTimeout(client, stream), nil
++}
++
++func relayHTTPClientTimeout(stream bool) time.Duration {
++	timeoutSeconds := common.RelayTimeout
++	if !stream && common.RelayNonStreamTimeout > 0 {
++		timeoutSeconds = common.RelayNonStreamTimeout
++		if common.RelayTimeout > 0 && timeoutSeconds > common.RelayTimeout {
++			timeoutSeconds = common.RelayTimeout
++		}
++	}
++	if timeoutSeconds <= 0 {
++		return 0
++	}
++	return time.Duration(timeoutSeconds) * time.Second
++}
++
++func relayHTTPClientWithTimeout(client *http.Client, stream bool) *http.Client {
++	timeout := relayHTTPClientTimeout(stream)
++	if client.Timeout == timeout {
++		return client
++	}
++	relayClient := *client
++	relayClient.Timeout = timeout
++	return &relayClient
++}
++
++// NormalizeRelayHTTPTransportPolicy adds request-mode-specific relay settings to
++// the normalized channel transport policy used for caching and diagnostics.
++func NormalizeRelayHTTPTransportPolicy(settings dto.ChannelSettings, stream bool) HTTPTransportPolicy {
+ 	policy := NormalizeHTTPTransportPolicy(settings)
++	if stream && common.RelayResponseHeaderTimeout > 0 {
++		policy.ResponseHeaderTimeout = time.Duration(common.RelayResponseHeaderTimeout) * time.Second
++	}
++	return policy
++}
++
++func getHttpClientWithProxyPolicy(rawProxyURL string, policy HTTPTransportPolicy) (*http.Client, error) {
+ 	trimmedProxyURL := strings.TrimSpace(rawProxyURL)
+ 
+ 	if trimmedProxyURL == "" {
+diff --git a/service/http_client_transport_test.go b/service/http_client_transport_test.go
+index 56989bba..8ef96cae 100644
+--- a/service/http_client_transport_test.go
++++ b/service/http_client_transport_test.go
+@@ -15,6 +15,7 @@ import (
+ 	"sync"
+ 	"sync/atomic"
+ 	"testing"
++	"time"
+ 
+ 	"github.com/QuantumNous/new-api/common"
+ 	"github.com/QuantumNous/new-api/relaykit/dto"
+@@ -27,13 +28,16 @@ func withRelayHTTPTransportSettings(t *testing.T) {
+ 	prevMaxIdle := common.RelayMaxIdleConns
+ 	prevPerHost := common.RelayMaxIdleConnsPerHost
+ 	prevTimeout := common.RelayIdleConnTimeout
++	prevResponseHeaderTimeout := common.RelayResponseHeaderTimeout
+ 	common.RelayMaxIdleConns = 500
+ 	common.RelayMaxIdleConnsPerHost = 100
+ 	common.RelayIdleConnTimeout = 90
++	common.RelayResponseHeaderTimeout = 0
+ 	t.Cleanup(func() {
+ 		common.RelayMaxIdleConns = prevMaxIdle
+ 		common.RelayMaxIdleConnsPerHost = prevPerHost
+ 		common.RelayIdleConnTimeout = prevTimeout
++		common.RelayResponseHeaderTimeout = prevResponseHeaderTimeout
+ 	})
+ }
+ 
+@@ -353,6 +357,52 @@ func TestFourShardHTTP2ReusesExactlyFourConnections(t *testing.T) {
+ 	assert.Len(t, addrs, 4, "four shards must establish and reuse exactly four connections")
+ }
+ 
++func TestShardedResponseHeaderTimeoutAppliesToHTTP2(t *testing.T) {
++	withRelayHTTPTransportSettings(t)
++
++	const shards = 2
++	var requestCount atomic.Int32
++	var nonHTTP2Count atomic.Uint32
++	server := startHTTP2TLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		requestNumber := requestCount.Add(1)
++		if r.ProtoMajor != 2 {
++			nonHTTP2Count.Add(1)
++		}
++		if requestNumber <= shards {
++			<-r.Context().Done()
++			return
++		}
++		w.WriteHeader(http.StatusOK)
++		_, _ = w.Write([]byte("ok"))
++	}))
++
++	policy := HTTPTransportPolicy{
++		Protocol:              dto.HTTPProtocolAuto,
++		Shards:                shards,
++		ResponseHeaderTimeout: 50 * time.Millisecond,
++	}
++	client := newHTTPClientWithPolicyAndTLS(policy, testTLSClientConfig(t, server))
++	client.Timeout = time.Second
++	t.Cleanup(client.CloseIdleConnections)
++
++	for i := 0; i < shards; i++ {
++		resp, err := client.Get(server.URL)
++		if resp != nil && resp.Body != nil {
++			_ = resp.Body.Close()
++		}
++		require.ErrorContains(t, err, "timeout awaiting response headers")
++	}
++	for i := 0; i < shards; i++ {
++		resp, err := client.Get(server.URL)
++		require.NoError(t, err)
++		assert.Equal(t, 2, resp.ProtoMajor)
++		drainClose(t, resp)
++	}
++
++	require.Equal(t, int32(shards*2), requestCount.Load())
++	assert.Zero(t, nonHTTP2Count.Load())
++}
++
+ func TestForcedHTTP1AgainstHTTP2Server(t *testing.T) {
+ 	withRelayHTTPTransportSettings(t)
+ 
+@@ -474,6 +524,154 @@ func TestHTTPClientCachePolicyAndCompatibility(t *testing.T) {
+ 	assert.NotSame(t, clientA, proxyHTTP1)
+ }
+ 
++func TestRelayHTTPClientCombinesShardsAndResponseHeaderTimeout(t *testing.T) {
++	initDefaultHTTPClientFixture(t)
++	settings := dto.ChannelSettings{HTTP2ConnectionShards: 8}
++
++	regular, err := GetHttpClientWithProxySettings("", settings)
++	require.NoError(t, err)
++
++	common.RelayResponseHeaderTimeout = 7
++	policy := NormalizeRelayHTTPTransportPolicy(settings, true)
++	assert.Equal(t, 7*time.Second, policy.ResponseHeaderTimeout)
++	assert.Contains(t, policy.String(), "response_header_timeout=7000000000")
++
++	stream, err := GetHttpClientWithProxyForRelay("", settings, true)
++	require.NoError(t, err)
++	streamAgain, err := GetHttpClientWithProxyForRelay("", settings, true)
++	require.NoError(t, err)
++	nonStream, err := GetHttpClientWithProxyForRelay("", settings, false)
++	require.NoError(t, err)
++
++	assert.NotSame(t, regular, stream)
++	assert.Same(t, stream, streamAgain)
++	assert.Same(t, regular, nonStream)
++
++	streamShards, ok := stream.Transport.(*shardedRoundTripper)
++	require.True(t, ok)
++	require.Len(t, streamShards.shards, 8)
++	for _, shard := range streamShards.shards {
++		transport, ok := shard.(*http.Transport)
++		require.True(t, ok)
++		assert.Equal(t, 7*time.Second, transport.ResponseHeaderTimeout)
++	}
++
++	regularShards, ok := regular.Transport.(*shardedRoundTripper)
++	require.True(t, ok)
++	require.Len(t, regularShards.shards, 8)
++	for _, shard := range regularShards.shards {
++		transport, ok := shard.(*http.Transport)
++		require.True(t, ok)
++		assert.Zero(t, transport.ResponseHeaderTimeout)
++	}
++}
++
++func TestRelayHTTPClientTimeoutSelection(t *testing.T) {
++	previousRelayTimeout := common.RelayTimeout
++	previousNonStreamTimeout := common.RelayNonStreamTimeout
++	t.Cleanup(func() {
++		common.RelayTimeout = previousRelayTimeout
++		common.RelayNonStreamTimeout = previousNonStreamTimeout
++	})
++
++	tests := []struct {
++		name             string
++		stream           bool
++		relayTimeout     int
++		nonStreamTimeout int
++		want             time.Duration
++	}{
++		{name: "stream uses relay timeout", stream: true, relayTimeout: 120, nonStreamTimeout: 30, want: 120 * time.Second},
++		{name: "stream ignores non-stream timeout", stream: true, relayTimeout: 0, nonStreamTimeout: 30, want: 0},
++		{name: "non-stream uses configured timeout", stream: false, relayTimeout: 120, nonStreamTimeout: 30, want: 30 * time.Second},
++		{name: "non-stream falls back to relay timeout", stream: false, relayTimeout: 45, nonStreamTimeout: -1, want: 45 * time.Second},
++		{name: "zero non-stream timeout falls back", stream: false, relayTimeout: 45, nonStreamTimeout: 0, want: 45 * time.Second},
++		{name: "relay timeout caps non-stream timeout", stream: false, relayTimeout: 20, nonStreamTimeout: 30, want: 20 * time.Second},
++		{name: "non-stream works without relay timeout", stream: false, relayTimeout: 0, nonStreamTimeout: 30, want: 30 * time.Second},
++		{name: "timeouts disabled", stream: false, relayTimeout: 0, nonStreamTimeout: -1, want: 0},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			common.RelayTimeout = tt.relayTimeout
++			common.RelayNonStreamTimeout = tt.nonStreamTimeout
++			assert.Equal(t, tt.want, relayHTTPClientTimeout(tt.stream))
++		})
++	}
++}
++
++func TestRelayHTTPClientNonStreamTimeoutSharesTransport(t *testing.T) {
++	previousRelayTimeout := common.RelayTimeout
++	previousNonStreamTimeout := common.RelayNonStreamTimeout
++	common.RelayTimeout = 120
++	common.RelayNonStreamTimeout = 30
++	t.Cleanup(func() {
++		common.RelayTimeout = previousRelayTimeout
++		common.RelayNonStreamTimeout = previousNonStreamTimeout
++	})
++	initDefaultHTTPClientFixture(t)
++
++	settings := dto.ChannelSettings{HTTP2ConnectionShards: 2}
++	regular, err := GetHttpClientWithProxySettings("", settings)
++	require.NoError(t, err)
++	stream, err := GetHttpClientWithProxyForRelay("", settings, true)
++	require.NoError(t, err)
++	nonStream, err := GetHttpClientWithProxyForRelay("", settings, false)
++	require.NoError(t, err)
++
++	assert.Same(t, regular, stream)
++	assert.NotSame(t, regular, nonStream)
++	assert.Same(t, regular.Transport, nonStream.Transport)
++	assert.Equal(t, 120*time.Second, stream.Timeout)
++	assert.Equal(t, 30*time.Second, nonStream.Timeout)
++	assert.Equal(t, 120*time.Second, regular.Timeout)
++}
++
++func TestRelayResponseHeaderTimeoutIsPartOfProxyCacheKey(t *testing.T) {
++	initDefaultHTTPClientFixture(t)
++	settings := dto.ChannelSettings{HTTPProtocol: dto.HTTPProtocolHTTP1}
++	proxyURL := "http://relay-timeout-proxy.example:8080"
++
++	regular, err := GetHttpClientWithProxySettings(proxyURL, settings)
++	require.NoError(t, err)
++
++	common.RelayResponseHeaderTimeout = 3
++	threeSeconds, err := GetHttpClientWithProxyForRelay(proxyURL, settings, true)
++	require.NoError(t, err)
++	threeSecondsAlias, err := GetHttpClientWithProxyForRelay(proxyURL+"/", settings, true)
++	require.NoError(t, err)
++	assert.NotSame(t, regular, threeSeconds)
++	assert.Same(t, threeSeconds, threeSecondsAlias)
++
++	threeSecondTransport, ok := threeSeconds.Transport.(*http.Transport)
++	require.True(t, ok)
++	assert.Equal(t, 3*time.Second, threeSecondTransport.ResponseHeaderTimeout)
++
++	common.RelayResponseHeaderTimeout = 5
++	fiveSeconds, err := GetHttpClientWithProxyForRelay(proxyURL, settings, true)
++	require.NoError(t, err)
++	assert.NotSame(t, threeSeconds, fiveSeconds)
++	fiveSecondTransport, ok := fiveSeconds.Transport.(*http.Transport)
++	require.True(t, ok)
++	assert.Equal(t, 5*time.Second, fiveSecondTransport.ResponseHeaderTimeout)
++
++	InvalidateProxyClient(proxyURL)
++	fiveSecondsAfterInvalidation, err := GetHttpClientWithProxyForRelay(proxyURL, settings, true)
++	require.NoError(t, err)
++	assert.NotSame(t, fiveSeconds, fiveSecondsAfterInvalidation)
++	fiveSecondTransport, ok = fiveSecondsAfterInvalidation.Transport.(*http.Transport)
++	require.True(t, ok)
++	assert.Equal(t, 5*time.Second, fiveSecondTransport.ResponseHeaderTimeout)
++	regularAfterInvalidation, err := GetHttpClientWithProxySettings(proxyURL, settings)
++	require.NoError(t, err)
++	assert.NotSame(t, regular, regularAfterInvalidation)
++
++	common.RelayResponseHeaderTimeout = 0
++	disabled, err := GetHttpClientWithProxyForRelay(proxyURL, settings, true)
++	require.NoError(t, err)
++	assert.Same(t, regularAfterInvalidation, disabled)
++}
++
+ func TestHTTPClientCacheConcurrentGetOrCreate(t *testing.T) {
+ 	initDefaultHTTPClientFixture(t)
+ 
+diff --git a/service/http_transport_policy.go b/service/http_transport_policy.go
+index c2e3d9a6..eb780b2e 100644
+--- a/service/http_transport_policy.go
++++ b/service/http_transport_policy.go
+@@ -5,6 +5,7 @@ import (
+ 	"fmt"
+ 	"strings"
+ 	"sync"
++	"time"
+ 
+ 	"github.com/QuantumNous/new-api/logger"
+ 	"github.com/QuantumNous/new-api/relaykit/dto"
+@@ -13,8 +14,9 @@ import (
+ // HTTPTransportPolicy is the runtime-normalized outbound HTTP transport policy
+ // for a channel. Unknown or out-of-range stored values are clamped safely.
+ type HTTPTransportPolicy struct {
+-	Protocol string // dto.HTTPProtocolAuto or dto.HTTPProtocolHTTP1
+-	Shards   int    // 1..dto.MaxHTTP2ConnectionShards
++	Protocol              string        // dto.HTTPProtocolAuto or dto.HTTPProtocolHTTP1
++	Shards                int           // 1..dto.MaxHTTP2ConnectionShards
++	ResponseHeaderTimeout time.Duration // zero disables the transport-level timeout
+ }
+ 
+ var httpTransportPolicyWarnings sync.Map
+@@ -83,7 +85,11 @@ func warnHTTPTransportPolicyOnce(field, value string) {
+ }
+ 
+ func (p HTTPTransportPolicy) cacheKeyPart() string {
+-	return fmt.Sprintf("%s|%d", p.Protocol, p.Shards)
++	key := fmt.Sprintf("%s|%d", p.Protocol, p.Shards)
++	if p.ResponseHeaderTimeout > 0 {
++		key += fmt.Sprintf("|response_header_timeout=%d", p.ResponseHeaderTimeout)
++	}
++	return key
+ }
+ 
+ func (p HTTPTransportPolicy) String() string {
+diff --git a/service/http_transport_sharded.go b/service/http_transport_sharded.go
+index d557c581..c5552aac 100644
+--- a/service/http_transport_sharded.go
++++ b/service/http_transport_sharded.go
+@@ -122,6 +122,7 @@ func applyHTTPTransportPolicy(transport *http.Transport, policy HTTPTransportPol
+ 	if transport == nil {
+ 		return
+ 	}
++	transport.ResponseHeaderTimeout = policy.ResponseHeaderTimeout
+ 	if policy.Protocol == dto.HTTPProtocolHTTP1 {
+ 		applyHTTP1Force(transport)
+ 		return

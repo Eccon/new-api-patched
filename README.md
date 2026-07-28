@@ -85,24 +85,16 @@ No Docker image is built.
   - Keeps explicit HTTP/HTTPS and SOCKS channel proxies, plus the SSRF-protected fetch client, on their existing dialing behavior.
   - Treats an environment proxy as the dial target and requires a restart after changing the setting.
 
-- `0006-response-header-timeout-and-error-body-cleanup.patch`
-  - Adds `RELAY_RESPONSE_HEADER_TIMEOUT` for bounding upstream response-header wait time.
-  - Adds `RELAY_NON_STREAM_TIMEOUT` for bounding total non-stream relay request time.
-  - Uses Go's native `http.Transport.ResponseHeaderTimeout`.
-  - Applies the timeout only to relay requests already known to be streaming.
-  - Also applies `RELAY_RESPONSE_HEADER_TIMEOUT` as a per-stream first-response timeout after the upstream attempt starts.
-  - Cancels the upstream stream attempt when no response begins within the configured timeout.
-  - Classifies both response-header and first-response timeout failures as `upstream error: response header timeout`.
-  - Avoids treating downstream client cancellation as an upstream first-response timeout.
-  - Keeps normal non-stream relay clients without a response-header timeout.
-  - Applies non-stream total timeout through request context and cancels it when the returned response body is closed.
-  - Keeps stream requests out of `RELAY_NON_STREAM_TIMEOUT`; stream total timeout still follows `RELAY_TIMEOUT`.
-  - Uses `RELAY_TIMEOUT` as the non-stream fallback when `RELAY_NON_STREAM_TIMEOUT` is unset, and as the hard cap when both are set.
-  - Binds upstream relay requests to the downstream request context, so client disconnects cancel the active upstream attempt.
-  - Applies the same relay timeout/client selection to AWS Bedrock relay paths.
-  - Uses separate cached clients for stream proxy requests so proxy traffic keeps connection pooling without mutating shared transports.
-  - Closes error-response bodies even when `io.ReadAll(resp.Body)` fails in `RelayErrorHandler`.
-  - Keeps existing `RELAY_TIMEOUT` global-cap semantics intact.
+- `0006-native-stream-response-header-timeout.patch`
+  - Adds `RELAY_RESPONSE_HEADER_TIMEOUT` for streaming relay requests using Go's native `http.Transport.ResponseHeaderTimeout` semantics.
+  - Applies the response-header timeout after the request body is written, without adding a separate first-response timer or binding the upstream request to the downstream context.
+  - Includes the timeout in the transport policy and proxy-client cache key, and applies it to every configured HTTP/2 shard.
+  - Classifies native HTTP/1 and HTTP/2 response-header timeout errors as `upstream error: response header timeout` while preserving the existing relay error code.
+  - Adds `RELAY_NON_STREAM_TIMEOUT` as the total `http.Client.Timeout` for non-stream relay attempts; `RELAY_TIMEOUT` remains the fallback and, when set, the upper bound.
+  - Keeps stream requests outside `RELAY_NON_STREAM_TIMEOUT`; their total client timeout continues to use `RELAY_TIMEOUT`.
+  - Reuses the normalized transport and connection pools when only the client-level total timeout differs.
+  - Applies the same client selection to AWS Bedrock and prevents the AWS SDK from internally retrying response-header timeout errors.
+  - Leaves the known AWS non-stream limitation documented in code: `RELAY_NON_STREAM_TIMEOUT` is per HTTP attempt and does not yet bound the SDK's complete retry cycle.
 
 - `0007-skip-retry-after-client-disconnect.patch`
   - Skips relay retry when the downstream request context is already done.
@@ -115,10 +107,10 @@ No Docker image is built.
   - Records stream inactivity timeout as `stream_inactivity_timeout` instead of the generic `timeout`.
   - Leaves `response.completed` streams without `[DONE]` unchanged.
 
-- `0009-response-header-timeout-log-reason.patch`
-  - Classifies Go/http2 response-header wait timeouts in relay logs.
-  - Keeps the existing `do_request_failed` error code so retry and auto-disable behavior stay unchanged.
-  - Changes the hidden upstream error message to `upstream error: response header timeout` for easier log diagnosis.
+- `0009-close-relay-error-response-body-on-read-failure.patch`
+  - Closes upstream error-response bodies even when reading the body fails.
+  - Keeps successful error-body parsing and error classification unchanged.
+  - Adds a regression test that verifies the body is closed exactly once on read failure.
 
 - `0010-release-memory-body-storage-buffers.patch`
   - Clears in-memory request-body buffer references when `memoryStorage.Close()` runs.
