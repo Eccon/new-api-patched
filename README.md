@@ -146,6 +146,12 @@ No Docker image is built.
   - Lets an unsupported OpenAI-compatible provider return its upstream error and participate in the configured retry policy.
   - Does not add endpoint-specific channel filtering or Alpha Search test files.
 
+- `0014-limit-log-cleanup-to-consumption-logs.patch`
+  - Limits asynchronous history-log cleanup counting and deletion to consumption logs.
+  - Preserves top-up, management, system, error, refund, login, and unknown log records regardless of their age.
+  - Applies the same filter to regular databases and the ClickHouse manual cleanup mutation.
+  - Leaves the cleanup API, task state, frontend, and separately configured ClickHouse automatic TTL unchanged.
+
 ## Version Handling
 
 The workflow sets `common.Version` through the full upstream module path:
