@@ -1,0 +1,317 @@
+diff --git a/pkg/perf_metrics/metrics.go b/pkg/perf_metrics/metrics.go
+index 33b79ee478e9239fb561fbf842fe990c7d5f1783..721f6a2b77c1fcbd4e873b9851c16b3ce13be06e 100644
+--- a/pkg/perf_metrics/metrics.go
++++ b/pkg/perf_metrics/metrics.go
+@@ -32,7 +32,7 @@ func RecordRelaySample(info *relaycommon.RelayInfo, success bool, outputTokens i
+ 	hasTtft := info.IsStream && info.HasSendResponse()
+ 	ttftMs := int64(0)
+ 	if hasTtft {
+-		ttftMs = info.FirstResponseTime.Sub(info.StartTime).Milliseconds()
++		ttftMs = info.FirstResponseTime.Sub(info.FirstResponseStartTime()).Milliseconds()
+ 	}
+ 	latencyMs := now.Sub(info.StartTime).Milliseconds()
+ 	generationMs := latencyMs
+diff --git a/pkg/perf_metrics/metrics_test.go b/pkg/perf_metrics/metrics_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..96b85f0c9a6d3f51700e55e20bab2a5966c6d4b6
+--- /dev/null
++++ b/pkg/perf_metrics/metrics_test.go
+@@ -0,0 +1,41 @@
++package perfmetrics
++
++import (
++	"testing"
++	"time"
++
++	relaycommon "github.com/QuantumNous/new-api/relay/common"
++	"github.com/stretchr/testify/require"
++)
++
++func TestRecordRelaySampleUsesFirstUpstreamDoForTTFT(t *testing.T) {
++	requestStart := time.Now().Add(-3 * time.Second)
++	firstDo := requestStart.Add(time.Second)
++	firstResponse := firstDo.Add(1500 * time.Millisecond)
++	info := &relaycommon.RelayInfo{
++		StartTime:         requestStart,
++		FirstResponseTime: firstResponse,
++		IsStream:          true,
++		OriginModelName:   "test-first-upstream-do-ttft",
++		UsingGroup:        "test",
++	}
++	info.MarkFirstUpstreamDoStart(firstDo)
++
++	RecordRelaySample(info, true, 0)
++
++	var recorded counters
++	found := false
++	hotBuckets.Range(func(rawKey, rawValue any) bool {
++		key := rawKey.(bucketKey)
++		if key.model != info.OriginModelName || key.group != info.UsingGroup {
++			return true
++		}
++		recorded = rawValue.(*atomicBucket).snapshot()
++		hotBuckets.Delete(rawKey)
++		found = true
++		return false
++	})
++	require.True(t, found)
++	require.Equal(t, int64(1500), recorded.ttftSumMs)
++	require.Equal(t, int64(1), recorded.ttftCount)
++}
+diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
+index d90a2a52725492a1b598f90ea443771a725ee73a..c5fefa5d39250ab0774172c625054705084aaed0 100644
+--- a/relay/channel/api_request.go
++++ b/relay/channel/api_request.go
+@@ -393,6 +393,7 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
+ 	targetReq := &http.Request{Header: targetHeader}
+ 	applyDefaultUpstreamUserAgent(c, targetReq, info)
+ 	logUpstreamUserAgent(c, targetReq)
++	info.PreserveLegacyFirstResponseStartTime()
+ 	targetConn, _, err := websocket.DefaultDialer.Dial(fullRequestURL, targetHeader)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("dial failed to %s: %w", common.SanitizeURLForLog(fullRequestURL), err)
+@@ -670,6 +671,7 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+ 		info.Timing.SetAttemptSnapshot(requestTrace.snapshot)
+ 		req = req.WithContext(httptrace.WithClientTrace(req.Context(), requestTrace.clientTrace()))
+ 	}
++	info.MarkFirstUpstreamDoStart(time.Now())
+ 	resp, err := client.Do(req)
+ 	if requestTrace != nil {
+ 		attempt, writeSeq := requestTrace.finish(resp)
+diff --git a/relay/channel/api_request_test.go b/relay/channel/api_request_test.go
+index a0cbb68fdc0b77fb06020c4276f39c6e7f282760..c7ad5ae5e046ff9ef919dc980fe927c00371f470 100644
+--- a/relay/channel/api_request_test.go
++++ b/relay/channel/api_request_test.go
+@@ -2,6 +2,7 @@ package channel
+ 
+ import (
+ 	"bytes"
++	"context"
+ 	"errors"
+ 	"fmt"
+ 	"io"
+@@ -11,6 +12,7 @@ import (
+ 	"strings"
+ 	"sync"
+ 	"testing"
++	"time"
+ 
+ 	"github.com/QuantumNous/new-api/common"
+ 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+@@ -415,6 +417,50 @@ func TestDoRequestLogsRequestWriteAndResponseHeaders(t *testing.T) {
+ 	require.GreaterOrEqual(t, responseHeadersAt, 0)
+ }
+ 
++func TestDoRequestRecordsFirstUpstreamStartWithoutTimingLogs(t *testing.T) {
++	previousTimingLogEnabled := common.RelayTimingLogEnabled
++	common.RelayTimingLogEnabled = false
++	t.Cleanup(func() {
++		common.RelayTimingLogEnabled = previousTimingLogEnabled
++	})
++
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		_, _ = io.Copy(io.Discard, r.Body)
++		w.WriteHeader(http.StatusNoContent)
++	}))
++	t.Cleanup(server.Close)
++
++	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
++	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", http.NoBody)
++	requestStart := time.Date(2020, time.January, 1, 0, 0, 0, 0, time.UTC)
++	info := &relaycommon.RelayInfo{
++		StartTime:       requestStart,
++		OriginModelName: "test-model",
++		ChannelMeta: &relaycommon.ChannelMeta{
++			ChannelId: 17,
++		},
++	}
++
++	cancelledContext, cancel := context.WithCancel(context.Background())
++	cancel()
++	request, err := http.NewRequestWithContext(cancelledContext, http.MethodPost, server.URL, strings.NewReader(`{"model":"test-model"}`))
++	require.NoError(t, err)
++	response, err := doRequest(ctx, request, info)
++	require.Error(t, err)
++	require.Nil(t, response)
++	firstDo := info.FirstResponseStartTime()
++	require.True(t, firstDo.After(requestStart))
++	require.True(t, info.Timing.DoStart.IsZero())
++
++	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", http.NoBody)
++	retryRequest, err := http.NewRequest(http.MethodPost, server.URL, strings.NewReader(`{"model":"test-model"}`))
++	require.NoError(t, err)
++	retryResponse, err := doRequest(ctx, retryRequest, info)
++	require.NoError(t, err)
++	require.NoError(t, retryResponse.Body.Close())
++	require.Equal(t, firstDo, info.FirstResponseStartTime())
++}
++
+ func TestRelayHTTPTraceCapturesLateWriteErrorWithoutSuccessLog(t *testing.T) {
+ 	var logs synchronizedLogBuffer
+ 	common.LogWriterMu.Lock()
+diff --git a/relay/channel/aws/relay-aws.go b/relay/channel/aws/relay-aws.go
+index c8ff9c7b0b3efc4c218871969a739dfd6b479f08..02007b4501a47cd5beb4bb66e840a39c0d372203 100644
+--- a/relay/channel/aws/relay-aws.go
++++ b/relay/channel/aws/relay-aws.go
+@@ -272,6 +272,7 @@ func awsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (
+ 	ctx, cancel := newAwsInvokeContext()
+ 	defer cancel()
+ 
++	info.PreserveLegacyFirstResponseStartTime()
+ 	awsResp, err := a.AwsClient.InvokeModelWithResponseStream(ctx, a.AwsReq.(*bedrockruntime.InvokeModelWithResponseStreamInput))
+ 	if err != nil {
+ 		statusCode := getAwsErrorStatusCode(err)
+diff --git a/relay/channel/volcengine/tts.go b/relay/channel/volcengine/tts.go
+index 6ea282757b4417202d9f30a17333b53885757ec7..b061c2524a77d47759e139ada4271a28be272d6e 100644
+--- a/relay/channel/volcengine/tts.go
++++ b/relay/channel/volcengine/tts.go
+@@ -209,6 +209,7 @@ func handleTTSWebSocketResponse(c *gin.Context, requestURL string, volcRequest V
+ 	header := http.Header{}
+ 	header.Set("Authorization", fmt.Sprintf("Bearer;%s", token))
+ 
++	info.PreserveLegacyFirstResponseStartTime()
+ 	conn, resp, dialErr := websocket.DefaultDialer.DialContext(context.Background(), requestURL, header)
+ 	if dialErr != nil {
+ 		if resp != nil {
+diff --git a/relay/channel/xunfei/adaptor.go b/relay/channel/xunfei/adaptor.go
+index d92029e26ebe6e48d51b0fb11858e52425cf4f35..23ace5606e61979ee2a3129e9f624b2a434bc480 100644
+--- a/relay/channel/xunfei/adaptor.go
++++ b/relay/channel/xunfei/adaptor.go
+@@ -88,6 +88,7 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
+ 	if a.request == nil {
+ 		return nil, types.NewError(errors.New("request is nil"), types.ErrorCodeInvalidRequest)
+ 	}
++	info.PreserveLegacyFirstResponseStartTime()
+ 	if info.IsStream {
+ 		usage, err = xunfeiStreamHandler(c, *a.request, splits[0], splits[1], splits[2])
+ 	} else {
+diff --git a/relay/common/relay_info.go b/relay/common/relay_info.go
+index 74c7c0acfbfeb5661bbd83deaa4ead68d27ce175..844556b6073876600c584948a5d717f3d7036a89 100644
+--- a/relay/common/relay_info.go
++++ b/relay/common/relay_info.go
+@@ -184,6 +184,7 @@ type RelayInfo struct {
+ 	UserGroup         string // 用户所在分组
+ 	TokenUnlimited    bool
+ 	StartTime         time.Time
++	responseStartTime time.Time
+ 	FirstResponseTime time.Time
+ 	isFirstResponse   bool
+ 	//SendLastReasoningResponse bool
+@@ -930,6 +931,23 @@ func (info *RelayInfo) SetFirstResponseTimeAt(t time.Time) {
+ 	}
+ }
+ 
++func (info *RelayInfo) MarkFirstUpstreamDoStart(t time.Time) {
++	if info.responseStartTime.IsZero() {
++		info.responseStartTime = t
++	}
++}
++
++func (info *RelayInfo) PreserveLegacyFirstResponseStartTime() {
++	info.MarkFirstUpstreamDoStart(info.StartTime)
++}
++
++func (info *RelayInfo) FirstResponseStartTime() time.Time {
++	if !info.responseStartTime.IsZero() {
++		return info.responseStartTime
++	}
++	return info.StartTime
++}
++
+ func (info *RelayInfo) HasSendResponse() bool {
+ 	return info.FirstResponseTime.After(info.StartTime)
+ }
+diff --git a/relay/common/relay_info_test.go b/relay/common/relay_info_test.go
+index 9e58f3f92d8bf2922eb06e73260a6b27c6ed0de7..b3241ffba33c239f96fb41ee46e3f63a7b831a1f 100644
+--- a/relay/common/relay_info_test.go
++++ b/relay/common/relay_info_test.go
+@@ -2,6 +2,7 @@ package common
+ 
+ import (
+ 	"testing"
++	"time"
+ 
+ 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
+ 	"github.com/QuantumNous/new-api/relaykit/types"
+@@ -9,6 +10,32 @@ import (
+ 	"github.com/stretchr/testify/require"
+ )
+ 
++func TestRelayInfoFirstResponseStartTimeUsesFirstUpstreamDo(t *testing.T) {
++	requestStart := time.Date(2026, time.July, 31, 8, 0, 0, 0, time.UTC)
++	firstDo := requestStart.Add(200 * time.Millisecond)
++	secondDo := requestStart.Add(40 * time.Second)
++	info := &RelayInfo{StartTime: requestStart}
++
++	require.Equal(t, requestStart, info.FirstResponseStartTime())
++
++	info.MarkFirstUpstreamDoStart(firstDo)
++	require.Equal(t, firstDo, info.FirstResponseStartTime())
++
++	info.MarkFirstUpstreamDoStart(secondDo)
++	require.Equal(t, firstDo, info.FirstResponseStartTime())
++}
++
++func TestRelayInfoFirstResponseStartTimePreservesLegacyFallback(t *testing.T) {
++	requestStart := time.Date(2026, time.July, 31, 8, 0, 0, 0, time.UTC)
++	secondAttemptDo := requestStart.Add(40 * time.Second)
++	info := &RelayInfo{StartTime: requestStart}
++
++	info.PreserveLegacyFirstResponseStartTime()
++	info.MarkFirstUpstreamDoStart(secondAttemptDo)
++
++	require.Equal(t, requestStart, info.FirstResponseStartTime())
++}
++
+ func TestRelayInfoGetFinalRequestRelayFormatPrefersExplicitFinal(t *testing.T) {
+ 	info := &RelayInfo{
+ 		RelayFormat:             types.RelayFormatOpenAI,
+diff --git a/service/log_info_generate.go b/service/log_info_generate.go
+index 7c858ebdf24961cee97578c214a9af039718a785..60be7f9cadb29fd15d8cdc298de004338dc16530 100644
+--- a/service/log_info_generate.go
++++ b/service/log_info_generate.go
+@@ -99,7 +99,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
+ 	other["cache_ratio"] = cacheRatio
+ 	other["model_price"] = modelPrice
+ 	other["user_group_ratio"] = userGroupRatio
+-	other["frt"] = float64(relayInfo.FirstResponseTime.UnixMilli() - relayInfo.StartTime.UnixMilli())
++	other["frt"] = float64(relayInfo.FirstResponseTime.UnixMilli() - relayInfo.FirstResponseStartTime().UnixMilli())
+ 	if relayInfo.ReasoningEffort != "" {
+ 		other["reasoning_effort"] = relayInfo.ReasoningEffort
+ 	}
+diff --git a/service/log_info_generate_test.go b/service/log_info_generate_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..a6afa4a7360afdc69a810ba5d28f56f994d74011
+--- /dev/null
++++ b/service/log_info_generate_test.go
+@@ -0,0 +1,30 @@
++package service
++
++import (
++	"net/http"
++	"net/http/httptest"
++	"testing"
++	"time"
++
++	relaycommon "github.com/QuantumNous/new-api/relay/common"
++	"github.com/gin-gonic/gin"
++	"github.com/stretchr/testify/require"
++)
++
++func TestGenerateTextOtherInfoUsesFirstUpstreamDoForFRT(t *testing.T) {
++	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
++	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", http.NoBody)
++	requestStart := time.Date(2026, time.July, 31, 8, 0, 0, 0, time.UTC)
++	firstDo := requestStart.Add(200 * time.Millisecond)
++	firstResponse := requestStart.Add(46*time.Second + 550*time.Millisecond)
++	info := &relaycommon.RelayInfo{
++		StartTime:         requestStart,
++		FirstResponseTime: firstResponse,
++		ChannelMeta:       &relaycommon.ChannelMeta{},
++	}
++	info.MarkFirstUpstreamDoStart(firstDo)
++
++	other := GenerateTextOtherInfo(ctx, info, 1, 1, 1, 0, 0, 0, 1)
++
++	require.Equal(t, float64(46350), other["frt"])
++}

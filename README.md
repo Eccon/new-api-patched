@@ -152,6 +152,12 @@ No Docker image is built.
   - Applies the same filter to regular databases and the ClickHouse manual cleanup mutation.
   - Leaves the cleanup API, task state, frontend, and separately configured ClickHouse automatic TTL unchanged.
 
+- `0015-first-response-from-first-upstream-do.patch`
+  - Measures usage-log FRT and performance-metric TTFT from the first shared relay HTTP `client.Do` instead of the post-selection request start time.
+  - Records the start independently of timing diagnostics and only once, so a failed first attempt and subsequent retry delay remain included.
+  - Keeps total request latency, usage duration, retry behavior, and first-response detection unchanged.
+  - Retains the legacy request-start fallback for SDK-managed and WebSocket relay paths while preventing a later shared HTTP retry from replacing that fallback.
+
 ## Version Handling
 
 The workflow sets `common.Version` through the full upstream module path:
