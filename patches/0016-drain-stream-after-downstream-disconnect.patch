@@ -1,0 +1,1575 @@
+diff --git a/controller/relay.go b/controller/relay.go
+index c3a7c88ba2249f2fbdfa7d3d03e4a7c181483754..6ef275dcf3318c748d531e72440cec7c7df37e39 100644
+--- a/controller/relay.go
++++ b/controller/relay.go
+@@ -216,6 +216,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+ 		if newAPIError != nil {
+ 			logger.LogError(c, fmt.Sprintf("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
+ 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
++			if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
++				return
++			}
++			if helper.IsStreamDeliveryDisconnected(c) {
++				return
++			}
+ 			switch relayFormat {
+ 			case types.RelayFormatOpenAIRealtime:
+ 				helper.WssError(c, ws, newAPIError.ToOpenAIError())
+@@ -396,6 +402,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+ 		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
+ 			break
+ 		}
++		helper.DeactivateStreamDrainForRetry(c)
+ 	}
+ 
+ 	useChannel := c.GetStringSlice("use_channel")
+@@ -491,6 +498,9 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
+ 	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
+ 		return false
+ 	}
++	if helper.IsStreamDeliveryDisconnected(c) {
++		return false
++	}
+ 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
+ 		return false
+ 	}
+diff --git a/controller/relay_stream_delivery_test.go b/controller/relay_stream_delivery_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..546301bd78fb434c1e74a933723ee8ed5cce72a7
+--- /dev/null
++++ b/controller/relay_stream_delivery_test.go
+@@ -0,0 +1,80 @@
++package controller
++
++import (
++	"context"
++	"errors"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"sync/atomic"
++	"testing"
++
++	"github.com/QuantumNous/new-api/common"
++	relayhelper "github.com/QuantumNous/new-api/relay/helper"
++	"github.com/QuantumNous/new-api/relaykit/types"
++
++	"github.com/gin-gonic/gin"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++type disconnectingRelayWriter struct {
++	gin.ResponseWriter
++	writes atomic.Int64
++}
++
++func (w *disconnectingRelayWriter) Write(p []byte) (int, error) {
++	w.writes.Add(1)
++	if strings.Contains(string(p), ": PING") {
++		return 0, errors.New("downstream write failed")
++	}
++	return w.ResponseWriter.Write(p)
++}
++
++func newDisconnectedRelayContext(t *testing.T, body string) (*gin.Context, *disconnectingRelayWriter) {
++	t.Helper()
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
++	c.Request.Header.Set("Content-Type", "application/json")
++	writer := &disconnectingRelayWriter{ResponseWriter: c.Writer}
++	c.Writer = writer
++	require.Error(t, relayhelper.PingData(c))
++	require.True(t, relayhelper.IsStreamDeliveryDisconnected(c))
++	require.NoError(t, c.Request.Context().Err())
++	return c, writer
++}
++
++func TestShouldRetryStopsAfterStreamDeliveryDisconnect(t *testing.T) {
++	c, _ := newDisconnectedRelayContext(t, `{}`)
++	retryable := types.NewError(errors.New("upstream failed"), types.ErrorCode("channel:test"))
++
++	assert.False(t, shouldRetry(c, retryable, 1))
++}
++
++func TestRelayDoesNotWriteFinalErrorAfterStreamDeliveryDisconnect(t *testing.T) {
++	c, writer := newDisconnectedRelayContext(t, `{`)
++	t.Cleanup(func() { common.CleanupBodyStorage(c) })
++	writesBeforeRelay := writer.writes.Load()
++
++	Relay(c, types.RelayFormatOpenAI)
++
++	assert.Equal(t, writesBeforeRelay, writer.writes.Load())
++}
++
++func TestRelayDoesNotWriteFinalErrorAfterContextCancel(t *testing.T) {
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	ctx, cancel := context.WithCancel(context.Background())
++	cancel()
++	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{`)).WithContext(ctx)
++	c.Request.Header.Set("Content-Type", "application/json")
++	writer := &disconnectingRelayWriter{ResponseWriter: c.Writer}
++	c.Writer = writer
++	t.Cleanup(func() { common.CleanupBodyStorage(c) })
++
++	Relay(c, types.RelayFormatOpenAI)
++
++	assert.False(t, relayhelper.IsStreamDeliveryDisconnected(c))
++	assert.Zero(t, writer.writes.Load())
++}
+diff --git a/relay/channel/openai/chat_via_responses.go b/relay/channel/openai/chat_via_responses.go
+index bcfd02113256bd24822be6df2f07b1fd1ecaaae9..4c855c99fb28e34b858057f278043a95e3ea223f 100644
+--- a/relay/channel/openai/chat_via_responses.go
++++ b/relay/channel/openai/chat_via_responses.go
+@@ -221,8 +221,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
+ 			streamErr = types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
+ 			return false
+ 		}
+-		c.Render(-1, common.CustomEvent{Data: "data: " + string(geminiResponseStr)})
+-		_ = helper.FlushWriter(c)
++		_ = helper.StringData(c, string(geminiResponseStr))
+ 		return true
+ 	}
+ 
+diff --git a/relay/channel/openai/chat_via_responses_test.go b/relay/channel/openai/chat_via_responses_test.go
+index df83b1d616b92b61699bc09e39dcb4b5bf1e9196..467cd2077d6b152afaa0ac3c97619248f1de8b93 100644
+--- a/relay/channel/openai/chat_via_responses_test.go
++++ b/relay/channel/openai/chat_via_responses_test.go
+@@ -1,6 +1,7 @@
+ package openai
+ 
+ import (
++	"context"
+ 	"io"
+ 	"net/http"
+ 	"net/http/httptest"
+@@ -10,6 +11,7 @@ import (
+ 	"github.com/QuantumNous/new-api/common"
+ 	"github.com/QuantumNous/new-api/constant"
+ 	relaycommon "github.com/QuantumNous/new-api/relay/common"
++	relayhelper "github.com/QuantumNous/new-api/relay/helper"
+ 	"github.com/QuantumNous/new-api/relaykit/types"
+ 	"github.com/gin-gonic/gin"
+ 	"github.com/stretchr/testify/assert"
+@@ -87,6 +89,46 @@ func TestOaiResponsesToChatStreamHandlerConvertsSSEOrderAndUsage(t *testing.T) {
+ 	)
+ }
+ 
++func TestOaiResponsesToChatStreamHandlerClientDisconnectDrainsFinalUsage(t *testing.T) {
++	oldMode := gin.Mode()
++	gin.SetMode(gin.TestMode)
++	t.Cleanup(func() { gin.SetMode(oldMode) })
++
++	oldTimeout := constant.StreamingTimeout
++	constant.StreamingTimeout = 30
++	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
++
++	body := strings.Join([]string{
++		`data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-test","created_at":1710000000}}`,
++		`data: {"type":"response.output_text.delta","delta":"hello"}`,
++		`data: {"type":"response.output_text.delta","delta":"after-disconnect"}`,
++		`data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":7,"output_tokens":11,"total_tokens":18}}}`,
++		`data: [DONE]`,
++		``,
++	}, "\n")
++
++	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
++	ctx, cancel := context.WithCancel(c.Request.Context())
++	t.Cleanup(cancel)
++	c.Request = c.Request.WithContext(ctx)
++	c.Writer = &cancelAfterWriter{ResponseWriter: c.Writer, needle: `"content":"hello"`, cancel: cancel}
++
++	usage, err := OaiResponsesToChatStreamHandler(c, info, resp)
++	require.Nil(t, err)
++	require.NotNil(t, usage)
++	require.Equal(t, 7, usage.PromptTokens)
++	require.Equal(t, 11, usage.CompletionTokens)
++	require.Equal(t, 18, usage.TotalTokens)
++	require.NotNil(t, info.StreamStatus)
++	require.Equal(t, relaycommon.StreamEndReasonDone, info.StreamStatus.EndReason)
++	require.True(t, relayhelper.IsStreamDeliveryDisconnected(c))
++
++	got := recorder.Body.String()
++	require.Contains(t, got, `"content":"hello"`)
++	require.NotContains(t, got, "after-disconnect")
++	require.NotContains(t, got, `"prompt_tokens":7`)
++}
++
+ func TestOaiResponsesToChatStreamHandlerConvertsClaudeSSETerminalsAndUsage(t *testing.T) {
+ 	oldMode := gin.Mode()
+ 	gin.SetMode(gin.TestMode)
+diff --git a/relay/channel/openai/helper.go b/relay/channel/openai/helper.go
+index 1f0f7689e3858c3a274b45ee469f7281d4593680..e3be0d21fac1f469aed5bef095631ee7b21d8093 100644
+--- a/relay/channel/openai/helper.go
++++ b/relay/channel/openai/helper.go
+@@ -85,8 +85,7 @@ func handleGeminiFormat(c *gin.Context, data string, info *relaycommon.RelayInfo
+ 	}
+ 
+ 	// send gemini format response
+-	c.Render(-1, common.CustomEvent{Data: "data: " + string(geminiResponseStr)})
+-	_ = helper.FlushWriter(c)
++	_ = helper.StringData(c, string(geminiResponseStr))
+ 	return nil
+ }
+ 
+@@ -233,8 +232,7 @@ func HandleFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, lastStream
+ 		}
+ 
+ 		// 发送最终的 Gemini 响应
+-		c.Render(-1, common.CustomEvent{Data: "data: " + string(geminiResponseStr)})
+-		_ = helper.FlushWriter(c)
++		_ = helper.StringData(c, string(geminiResponseStr))
+ 	}
+ }
+ 
+@@ -274,9 +272,7 @@ func sendResponsesErrorEvent(c *gin.Context, reason string, sequenceNumber int)
+ 	}
+ 
+ 	helper.ExtendWriteDeadline(c)
+-	c.Render(-1, common.CustomEvent{Data: "event: error\n"})
+-	c.Render(-1, common.CustomEvent{Data: "data: " + string(jsonData)})
+-	if err := helper.FlushWriter(c); err != nil {
++	if err := helper.ResponseChunkData(c, dto.ResponsesStreamResponse{Type: "error"}, string(jsonData)); err != nil {
+ 		if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
+ 			return
+ 		}
+diff --git a/relay/channel/openai/image_stream_test.go b/relay/channel/openai/image_stream_test.go
+index 1adde5c94c9a76268c41d2b395a79e25c30108a3..40e250aeb347123a944872a61f19f71060131324 100644
+--- a/relay/channel/openai/image_stream_test.go
++++ b/relay/channel/openai/image_stream_test.go
+@@ -2,16 +2,19 @@ package openai
+ 
+ import (
+ 	"context"
++	"fmt"
+ 	"io"
+ 	"net/http"
+ 	"net/http/httptest"
+ 	"strings"
+ 	"sync"
+ 	"testing"
++	"time"
+ 
+ 	"github.com/QuantumNous/new-api/constant"
+ 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+ 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
++	relayhelper "github.com/QuantumNous/new-api/relay/helper"
+ 	"github.com/gin-gonic/gin"
+ 	"github.com/stretchr/testify/require"
+ )
+@@ -139,40 +142,6 @@ func TestOpenaiImageStreamHandlerUsesCompletedEventCount(t *testing.T) {
+ 	require.Equal(t, 2.0, info.PriceData.OtherRatios()["n"])
+ }
+ 
+-// blockingBody serves one SSE chunk, then blocks until Close (the scanner's
+-// cleanup) and returns EOF — keeping the upstream "open" while the client-side
+-// disconnect is simulated elsewhere.
+-type blockingBody struct {
+-	mu     sync.Mutex
+-	sent   bool
+-	chunk  []byte
+-	closed chan struct{}
+-}
+-
+-func (b *blockingBody) Read(p []byte) (int, error) {
+-	b.mu.Lock()
+-	if !b.sent {
+-		b.sent = true
+-		n := copy(p, b.chunk)
+-		b.mu.Unlock()
+-		return n, nil
+-	}
+-	b.mu.Unlock()
+-	<-b.closed
+-	return 0, io.EOF
+-}
+-
+-func (b *blockingBody) Close() error {
+-	b.mu.Lock()
+-	defer b.mu.Unlock()
+-	select {
+-	case <-b.closed:
+-	default:
+-		close(b.closed)
+-	}
+-	return nil
+-}
+-
+ // cancelAfterWriter cancels the request context right after the payload
+ // containing needle has been written to the client, simulating a client that
+ // disconnects after receiving that event. Cancelling from the write side (not
+@@ -208,19 +177,13 @@ func newDisconnectingImageStream(t *testing.T, sseBody, disconnectAfter string)
+ 	t.Cleanup(cancel)
+ 	c.Request = c.Request.WithContext(ctx)
+ 	c.Writer = &cancelAfterWriter{ResponseWriter: c.Writer, needle: disconnectAfter, cancel: cancel}
+-	resp.Body = &blockingBody{
+-		chunk:  []byte(sseBody),
+-		closed: make(chan struct{}),
+-	}
++	resp.Body = io.NopCloser(strings.NewReader(sseBody))
+ 	return c, recorder, resp, info
+ }
+ 
+-// TestOpenaiImageStreamHandlerClientDisconnectKeepsRequestedCount guards the
+-// billing invariant: completed-event counting must not lower the charge when
+-// the client aborts the stream. Upstream already generated (and charged for)
+-// all requested images, so a disconnect after the first completed event keeps
+-// the requested n instead of dropping it to 1.
+-func TestOpenaiImageStreamHandlerClientDisconnectKeepsRequestedCount(t *testing.T) {
++// TestOpenaiImageStreamHandlerClientDisconnectDrainsCompletedCount verifies
++// that a client disconnect does not hide later completed events from billing.
++func TestOpenaiImageStreamHandlerClientDisconnectDrainsCompletedCount(t *testing.T) {
+ 	oldMode := gin.Mode()
+ 	gin.SetMode(gin.TestMode)
+ 	t.Cleanup(func() { gin.SetMode(oldMode) })
+@@ -229,7 +192,16 @@ func TestOpenaiImageStreamHandlerClientDisconnectKeepsRequestedCount(t *testing.
+ 	constant.StreamingTimeout = 30
+ 	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+ 
+-	body := "data: {\"type\":\"image_generation.completed\",\"b64_json\":\"first\"}\n\n"
++	body := strings.Join([]string{
++		`data: {"type":"image_generation.completed","b64_json":"first"}`,
++		``,
++		`data: {"type":"image_generation.completed","b64_json":"second"}`,
++		``,
++		`data: {"type":"image_generation.completed","b64_json":"third"}`,
++		``,
++		`data: [DONE]`,
++		``,
++	}, "\n")
+ 	c, recorder, resp, info := newDisconnectingImageStream(t, body, "first")
+ 	info.PriceData.UsePrice = true
+ 	info.PriceData.AddOtherRatio("n", 3)
+@@ -239,13 +211,62 @@ func TestOpenaiImageStreamHandlerClientDisconnectKeepsRequestedCount(t *testing.
+ 	require.Nil(t, err)
+ 	require.NotNil(t, usage)
+ 	require.NotNil(t, info.StreamStatus)
+-	// A client abort surfaces as client_gone (main-loop ctx watch) or
+-	// handler_stop (failed client write); both must be treated as untrusted.
+-	require.Contains(t,
+-		[]relaycommon.StreamEndReason{relaycommon.StreamEndReasonClientGone, relaycommon.StreamEndReasonHandlerStop},
+-		info.StreamStatus.EndReason)
++	require.Equal(t, relaycommon.StreamEndReasonDone, info.StreamStatus.EndReason)
++	require.True(t, relayhelper.IsStreamDeliveryDisconnected(c))
+ 	require.Contains(t, recorder.Body.String(), `"b64_json":"first"`)
+-	require.Equal(t, 3.0, info.PriceData.OtherRatios()["n"], "client abort must not reduce the billed image count")
++	require.NotContains(t, recorder.Body.String(), `"b64_json":"second"`)
++	require.NotContains(t, recorder.Body.String(), `"b64_json":"third"`)
++	require.Equal(t, 3.0, info.PriceData.OtherRatios()["n"], "drained completed events must determine the billed image count")
++}
++
++func TestOpenaiImageStreamHandlerClientDisconnectKeepsRequestedCountOnDrainTimeout(t *testing.T) {
++	oldMode := gin.Mode()
++	gin.SetMode(gin.TestMode)
++	t.Cleanup(func() { gin.SetMode(oldMode) })
++
++	oldTimeout := constant.StreamingTimeout
++	constant.StreamingTimeout = 1
++	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
++
++	pr, pw := io.Pipe()
++	t.Cleanup(func() {
++		_ = pr.Close()
++		_ = pw.Close()
++	})
++	c, recorder, resp, info := newImageTestContext(t, "", "text/event-stream", true)
++	ctx, cancel := context.WithCancel(c.Request.Context())
++	t.Cleanup(cancel)
++	c.Request = c.Request.WithContext(ctx)
++	c.Writer = &cancelAfterWriter{ResponseWriter: c.Writer, needle: `"b64_json":"first"`, cancel: cancel}
++	resp.Body = pr
++	info.PriceData.UsePrice = true
++	info.PriceData.AddOtherRatio("n", 3)
++
++	done := make(chan error, 1)
++	go func() {
++		_, relayErr := OpenaiImageStreamHandler(c, info, resp)
++		if relayErr != nil {
++			done <- relayErr
++			return
++		}
++		done <- nil
++	}()
++
++	_, err := fmt.Fprint(pw, "data: {\"type\":\"image_generation.completed\",\"b64_json\":\"first\"}\n\n")
++	require.NoError(t, err)
++	require.Eventually(t, func() bool { return ctx.Err() != nil }, 2*time.Second, 10*time.Millisecond)
++
++	select {
++	case relayErr := <-done:
++		require.NoError(t, relayErr)
++	case <-time.After(3 * time.Second):
++		t.Fatal("stream drain did not stop at the existing inactivity timeout")
++	}
++
++	require.Equal(t, relaycommon.StreamEndReasonTimeout, info.StreamStatus.EndReason)
++	require.True(t, relayhelper.IsStreamDeliveryDisconnected(c))
++	require.Contains(t, recorder.Body.String(), `"b64_json":"first"`)
++	require.Equal(t, 3.0, info.PriceData.OtherRatios()["n"], "an incomplete drain must not lower the requested image count")
+ }
+ 
+ // TestOpenaiImageStreamHandlerClientDisconnectRaisesCount covers the other
+@@ -267,7 +288,7 @@ func TestOpenaiImageStreamHandlerClientDisconnectRaisesCount(t *testing.T) {
+ 		``,
+ 		``,
+ 	}, "\n")
+-	c, _, resp, info := newDisconnectingImageStream(t, body, "second")
++	c, recorder, resp, info := newDisconnectingImageStream(t, body, "first")
+ 	info.PriceData.UsePrice = true
+ 	info.PriceData.AddOtherRatio("n", 1)
+ 
+@@ -276,10 +297,11 @@ func TestOpenaiImageStreamHandlerClientDisconnectRaisesCount(t *testing.T) {
+ 	require.Nil(t, err)
+ 	require.NotNil(t, usage)
+ 	require.NotNil(t, info.StreamStatus)
+-	require.Contains(t,
+-		[]relaycommon.StreamEndReason{relaycommon.StreamEndReasonClientGone, relaycommon.StreamEndReasonHandlerStop},
+-		info.StreamStatus.EndReason)
+-	require.Equal(t, 2.0, info.PriceData.OtherRatios()["n"], "completed events beyond the recorded n must raise the charge even on abort")
++	require.Equal(t, relaycommon.StreamEndReasonEOF, info.StreamStatus.EndReason)
++	require.True(t, relayhelper.IsStreamDeliveryDisconnected(c))
++	require.Contains(t, recorder.Body.String(), `"b64_json":"first"`)
++	require.NotContains(t, recorder.Body.String(), `"b64_json":"second"`)
++	require.Equal(t, 2.0, info.PriceData.OtherRatios()["n"], "drained completed events beyond recorded n must raise the charge")
+ }
+ 
+ // TestOpenaiImageStreamHandlerWrapsJSONResponse covers the non-SSE fallback:
+diff --git a/relay/channel/openai/relay_image.go b/relay/channel/openai/relay_image.go
+index 1e6be0dd4cbef13c0ef1f7756a7263d183e0ae4c..3048bf7c9fea1d92fd186efbe4efaec5a9893f3c 100644
+--- a/relay/channel/openai/relay_image.go
++++ b/relay/channel/openai/relay_image.go
+@@ -146,13 +146,10 @@ func OpenaiImageStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+ 	}
+ 
+ 	applyUsagePostProcessing(info, usage, lastStreamData)
+-	// Only trust completedImages when upstream finished the stream (done/eof).
+-	// On client-side aborts (client_gone, or handler_stop from a failed client
+-	// write) the counter undercounts what upstream actually generated and
+-	// charged, so keep the requested n — otherwise a client could pay for one
+-	// image by disconnecting right after the first completed event. The abort
+-	// guard only blocks lowering the charge: if completed events already
+-	// exceed the recorded n, bill the higher actual count regardless.
++	// Only trust completedImages when the upstream drain finished normally.
++	// If the drain ends on a scanner error or inactivity timeout, keep the
++	// requested n because the observed count may be incomplete. An observed
++	// count above requested n still raises the charge regardless.
+ 	if info.StreamStatus != nil {
+ 		upstreamFinished := info.StreamStatus.EndReason == relaycommon.StreamEndReasonDone ||
+ 			info.StreamStatus.EndReason == relaycommon.StreamEndReasonEOF
+diff --git a/relay/helper/common.go b/relay/helper/common.go
+index fa363569c4155a0b33335177cd62c36510ff361c..8a1bd5a23de9087d71056e8f06d1da802a009583 100644
+--- a/relay/helper/common.go
++++ b/relay/helper/common.go
+@@ -25,9 +25,25 @@ func FlushWriter(c *gin.Context) (err error) {
+ 		return nil
+ 	}
+ 
++	if shouldSuppressStreamWrite(c) {
++		return nil
++	}
+ 	if requestContextDone(c) {
++		if isStreamDrainActive(c) {
++			markStreamDeliveryDisconnected(c)
++			return nil
++		}
+ 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
+ 	}
++	if isStreamDrainActive(c) {
++		if err := flushStreamWriter(c.Writer); err != nil {
++			if errors.Is(err, http.ErrNotSupported) {
++				return errors.New("streaming error: flusher not found")
++			}
++			return handleStreamWriteError(c, fmt.Errorf("flush stream response failed: %w", err))
++		}
++		return nil
++	}
+ 
+ 	flusher, ok := c.Writer.(http.Flusher)
+ 	if !ok {
+@@ -59,7 +75,13 @@ func SetEventStreamHeaders(c *gin.Context) {
+ }
+ 
+ func ClaudeData(c *gin.Context, resp dto.ClaudeResponse) error {
++	if shouldSuppressStreamWrite(c) {
++		return nil
++	}
+ 	if requestContextDone(c) {
++		if isStreamDrainActive(c) {
++			markStreamDeliveryDisconnected(c)
++		}
+ 		return nil
+ 	}
+ 
+@@ -67,30 +89,57 @@ func ClaudeData(c *gin.Context, resp dto.ClaudeResponse) error {
+ 	if err != nil {
+ 		common.SysError("error marshalling stream response: " + err.Error())
+ 	} else {
+-		c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
+-		c.Render(-1, common.CustomEvent{Data: "data: " + string(jsonData)})
++		if err := writeStreamEvent(c, fmt.Sprintf("event: %s\n", resp.Type)); err != nil {
++			return handleStreamWriteError(c, err)
++		}
++		if err := writeStreamEvent(c, "data: "+string(jsonData)); err != nil {
++			return handleStreamWriteError(c, err)
++		}
+ 	}
+ 	_ = FlushWriter(c)
+ 	return nil
+ }
+ 
+ func ClaudeChunkData(c *gin.Context, resp dto.ClaudeResponse, data string) {
++	if shouldSuppressStreamWrite(c) {
++		return
++	}
+ 	if requestContextDone(c) {
++		if isStreamDrainActive(c) {
++			markStreamDeliveryDisconnected(c)
++		}
+ 		return
+ 	}
+ 
+-	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
+-	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("data: %s\n", data)})
++	if err := writeStreamEvent(c, fmt.Sprintf("event: %s\n", resp.Type)); err != nil {
++		_ = handleStreamWriteError(c, err)
++		return
++	}
++	if err := writeStreamEvent(c, fmt.Sprintf("data: %s\n", data)); err != nil {
++		_ = handleStreamWriteError(c, err)
++		return
++	}
+ 	_ = FlushWriter(c)
+ }
+ 
+ func ResponseChunkData(c *gin.Context, resp dto.ResponsesStreamResponse, data string) error {
++	if shouldSuppressStreamWrite(c) {
++		return nil
++	}
+ 	if requestContextDone(c) {
++		if isStreamDrainActive(c) {
++			markStreamDeliveryDisconnected(c)
++			return nil
++		}
+ 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
+ 	}
+ 
+-	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
+-	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("data: %s", data)})
++	if err := writeStreamEvent(c, fmt.Sprintf("event: %s\n", resp.Type)); err != nil {
++		return handleStreamWriteError(c, err)
++	}
++	if err := writeStreamEvent(c, fmt.Sprintf("data: %s", data)); err != nil {
++		return handleStreamWriteError(c, err)
++	}
+ 	return FlushWriter(c)
+ }
+ 
+@@ -99,27 +148,56 @@ func StringData(c *gin.Context, str string) error {
+ 		return errors.New("context or writer is nil")
+ 	}
+ 
++	if shouldSuppressStreamWrite(c) {
++		return nil
++	}
+ 	if requestContextDone(c) {
++		if isStreamDrainActive(c) {
++			markStreamDeliveryDisconnected(c)
++			return nil
++		}
+ 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
+ 	}
+ 
+-	c.Render(-1, common.CustomEvent{Data: "data: " + str})
++	if err := writeStreamEvent(c, "data: "+str); err != nil {
++		return handleStreamWriteError(c, err)
++	}
+ 	return FlushWriter(c)
+ }
+ 
+-func PingData(c *gin.Context) error {
++func PingData(c *gin.Context) (err error) {
++	defer func() {
++		if r := recover(); r != nil {
++			err = fmt.Errorf("ping delivery panic recovered: %v", r)
++		}
++	}()
++
+ 	if c == nil || c.Writer == nil {
+ 		return errors.New("context or writer is nil")
+ 	}
+ 
++	if shouldSuppressStreamWrite(c) {
++		return nil
++	}
+ 	if requestContextDone(c) {
++		if isStreamDrainActive(c) {
++			markStreamDeliveryDisconnected(c)
++		}
+ 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
+ 	}
+ 
+ 	if _, err := c.Writer.Write([]byte(": PING\n\n")); err != nil {
++		markStreamDeliveryDisconnected(c)
+ 		return fmt.Errorf("write ping data failed: %w", err)
+ 	}
+-	return FlushWriter(c)
++	if err := flushStreamWriter(c.Writer); err != nil {
++		if errors.Is(err, http.ErrNotSupported) {
++			return errors.New("streaming error: flusher not found")
++		}
++		markStreamDeliveryDisconnected(c)
++		return fmt.Errorf("flush ping data failed: %w", err)
++	}
++	return nil
+ }
+ 
+ func ObjectData(c *gin.Context, object interface{}) error {
+diff --git a/relay/helper/stream_delivery.go b/relay/helper/stream_delivery.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..c42bc4b219332b194d6b6fafe0bb1492efd92a2a
+--- /dev/null
++++ b/relay/helper/stream_delivery.go
+@@ -0,0 +1,177 @@
++package helper
++
++import (
++	"errors"
++	"fmt"
++	"io"
++	"net/http"
++	"strings"
++	"sync/atomic"
++
++	"github.com/QuantumNous/new-api/common"
++
++	"github.com/gin-gonic/gin"
++)
++
++const streamDeliveryStateKey = "relay_stream_delivery_state"
++
++type streamDeliveryState struct {
++	active       atomic.Bool
++	disconnected atomic.Bool
++}
++
++func enableStreamDrainOnDisconnect(c *gin.Context) {
++	if c == nil {
++		return
++	}
++	state := getStreamDeliveryState(c)
++	if state == nil {
++		state = &streamDeliveryState{}
++		c.Set(streamDeliveryStateKey, state)
++	}
++	state.active.Store(true)
++}
++
++func getStreamDeliveryState(c *gin.Context) *streamDeliveryState {
++	if c == nil {
++		return nil
++	}
++	value, exists := c.Get(streamDeliveryStateKey)
++	if !exists {
++		return nil
++	}
++	state, _ := value.(*streamDeliveryState)
++	return state
++}
++
++func isStreamDrainActive(c *gin.Context) bool {
++	state := getStreamDeliveryState(c)
++	return state != nil && state.active.Load()
++}
++
++func shouldSuppressStreamWrite(c *gin.Context) bool {
++	state := getStreamDeliveryState(c)
++	if state == nil || !state.active.Load() {
++		return false
++	}
++	if requestContextDone(c) {
++		state.markDisconnected()
++	}
++	return state.disconnected.Load()
++}
++
++func markStreamDeliveryDisconnected(c *gin.Context) {
++	if c == nil {
++		return
++	}
++	state := getStreamDeliveryState(c)
++	if state == nil {
++		state = &streamDeliveryState{}
++		c.Set(streamDeliveryStateKey, state)
++	}
++	state.markDisconnected()
++}
++
++func (s *streamDeliveryState) markDisconnected() {
++	if s == nil {
++		return
++	}
++	s.disconnected.Store(true)
++}
++
++func handleStreamWriteError(c *gin.Context, err error) error {
++	if err == nil {
++		return nil
++	}
++	state := getStreamDeliveryState(c)
++	if state == nil || !state.active.Load() {
++		return err
++	}
++	state.markDisconnected()
++	return nil
++}
++
++// writeStreamEvent preserves common.CustomEvent's SSE framing while returning
++// writer errors for streams that opted into drain-on-disconnect handling.
++func writeStreamEvent(c *gin.Context, data string) error {
++	if c == nil || c.Writer == nil {
++		return errors.New("context or writer is nil")
++	}
++	state := getStreamDeliveryState(c)
++	if state == nil || !state.active.Load() {
++		c.Render(-1, common.CustomEvent{Data: data})
++		return nil
++	}
++	if shouldSuppressStreamWrite(c) {
++		return nil
++	}
++
++	header := c.Writer.Header()
++	header["Content-Type"] = []string{"text/event-stream"}
++	if _, exists := header["Cache-Control"]; !exists {
++		header["Cache-Control"] = []string{"no-cache"}
++	}
++
++	encoded := strings.ReplaceAll(data, "\r", "\\r")
++	if strings.HasPrefix(data, "data") {
++		encoded += "\n\n"
++	}
++	n, err := c.Writer.Write([]byte(encoded))
++	if err != nil {
++		return fmt.Errorf("write stream event failed: %w", err)
++	}
++	if n != len(encoded) {
++		return io.ErrShortWrite
++	}
++	return nil
++}
++
++func flushStreamWriter(w http.ResponseWriter) error {
++	if flusher, ok := w.(interface{ FlushError() error }); ok {
++		return flusher.FlushError()
++	}
++	if unwrapper, ok := w.(interface{ Unwrap() http.ResponseWriter }); ok {
++		err := http.NewResponseController(unwrapper.Unwrap()).Flush()
++		if err == nil || !errors.Is(err, http.ErrNotSupported) {
++			return err
++		}
++	}
++	if flusher, ok := w.(http.Flusher); ok {
++		flusher.Flush()
++		return nil
++	}
++	return http.ErrNotSupported
++}
++
++// IsStreamDeliveryDisconnected reports whether downstream delivery for the
++// shared stream stopped because its request was canceled or a write failed.
++func IsStreamDeliveryDisconnected(c *gin.Context) bool {
++	state := getStreamDeliveryState(c)
++	return state != nil && state.disconnected.Load()
++}
++
++// DeactivateStreamDrainForRetry prevents a later relay attempt from inheriting
++// drain behavior that was enabled by a shared scanner in the previous attempt.
++func DeactivateStreamDrainForRetry(c *gin.Context) {
++	state := getStreamDeliveryState(c)
++	if state == nil || state.disconnected.Load() {
++		return
++	}
++	state.active.Store(false)
++}
++
++func shouldWriteStreamResponse(c *gin.Context) bool {
++	if c == nil || c.Writer == nil {
++		return false
++	}
++	if shouldSuppressStreamWrite(c) {
++		return false
++	}
++	if requestContextDone(c) {
++		if isStreamDrainActive(c) {
++			markStreamDeliveryDisconnected(c)
++		}
++		return false
++	}
++	return true
++}
+diff --git a/relay/helper/stream_scanner.go b/relay/helper/stream_scanner.go
+index af11631faaca0546a869c5a21d2b28078d78afc7..918f19d23a19e7da396c98adcc89a004ee2e9b39 100644
+--- a/relay/helper/stream_scanner.go
++++ b/relay/helper/stream_scanner.go
+@@ -125,6 +125,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+ 
+ 	// 无条件新建 StreamStatus
+ 	info.StreamStatus = relaycommon.NewStreamStatus()
++	enableStreamDrainOnDisconnect(c)
+ 
+ 	ctx, cancel := context.WithCancel(context.Background())
+ 
+@@ -211,16 +212,25 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+ 			for {
+ 				select {
+ 				case <-pingTicker.C:
+-					var err error
++					var (
++						err              error
++						deliveryDisabled bool
++					)
+ 					func() {
+ 						writeMutex.Lock()
+ 						defer writeMutex.Unlock()
++						if !shouldWriteStreamResponse(c) {
++							deliveryDisabled = true
++							return
++						}
+ 						ExtendWriteDeadline(c)
+ 						err = PingData(c)
+ 					}()
++					if deliveryDisabled {
++						return
++					}
+ 					if err != nil {
+ 						logger.LogError(c, "ping data error: "+err.Error())
+-						info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonPingFail, err)
+ 						return
+ 					}
+ 					logger.LogDebug(c, "ping data sent")
+@@ -257,7 +267,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+ 			func() {
+ 				writeMutex.Lock()
+ 				defer writeMutex.Unlock()
+-				ExtendWriteDeadline(c)
++				if shouldWriteStreamResponse(c) {
++					ExtendWriteDeadline(c)
++				}
+ 				dataHandler(data, sr)
+ 			}()
+ 			if sr.IsStopped() {
+@@ -353,19 +365,30 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+ 		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonEOF, nil)
+ 	})
+ 
+-	// 主循环等待完成或超时
+-	select {
+-	case <-ticker.C:
+-		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonTimeout, nil)
+-	case <-stopChan:
+-		// EndReason already set by the goroutine that triggered stopChan
+-	case <-c.Request.Context().Done():
+-		// 客户端断开：立即 cleanup 关闭上游 resp.Body，解除 scanner 阻塞并让上游停止生成，
+-		// 避免为已放弃的请求继续消费上游 token。
+-		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, c.Request.Context().Err())
++	// 客户端断开后停止下游投递，但继续排空当前上游以收集最终 usage。
++	clientDone := c.Request.Context().Done()
++waitForStream:
++	for {
++		select {
++		case <-ticker.C:
++			info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonTimeout, nil)
++			break waitForStream
++		case <-stopChan:
++			// EndReason already set by the goroutine that triggered stopChan.
++			break waitForStream
++		case <-clientDone:
++			markStreamDeliveryDisconnected(c)
++			clientDone = nil
++		}
++	}
++	if requestContextDone(c) {
++		markStreamDeliveryDisconnected(c)
+ 	}
+ 
+ 	cleanup()
++	if requestContextDone(c) {
++		markStreamDeliveryDisconnected(c)
++	}
+ 	if info.StreamStatus.IsNormalEnd() && !info.StreamStatus.HasErrors() {
+ 		logger.LogInfo(c, fmt.Sprintf("stream ended: %s", info.StreamStatus.Summary()))
+ 	} else {
+diff --git a/relay/helper/stream_scanner_test.go b/relay/helper/stream_scanner_test.go
+index a211951287d230f628d05db14f8576bb0e0b75d2..3aa587f2ade437f385e82030b855a931d35d82f8 100644
+--- a/relay/helper/stream_scanner_test.go
++++ b/relay/helper/stream_scanner_test.go
+@@ -2,7 +2,9 @@ package helper
+ 
+ import (
+ 	"bufio"
++	"bytes"
+ 	"context"
++	"errors"
+ 	"fmt"
+ 	"io"
+ 	"net/http"
+@@ -15,6 +17,7 @@ import (
+ 
+ 	"github.com/QuantumNous/new-api/constant"
+ 	relaycommon "github.com/QuantumNous/new-api/relay/common"
++	"github.com/QuantumNous/new-api/relaykit/dto"
+ 	"github.com/QuantumNous/new-api/setting/operation_setting"
+ 	"github.com/gin-gonic/gin"
+ 	"github.com/stretchr/testify/assert"
+@@ -211,12 +214,7 @@ func TestStreamScannerHandler_DataWithExtraSpaces(t *testing.T) {
+ 	assert.Equal(t, "{\"trimmed\":true}", got)
+ }
+ 
+-// TestStreamScannerHandler_ClientCancelAbortsUpstreamAndReturns pins the
+-// disconnect contract: when the client goes away, the handler must return
+-// promptly (all goroutines joined, so the gin.Context can never leak into a
+-// pooled reuse), the upstream body must be closed to stop token generation,
+-// and no data received after the disconnect may be processed or written.
+-func TestStreamScannerHandler_ClientCancelAbortsUpstreamAndReturns(t *testing.T) {
++func TestStreamScannerHandler_ClientCancelDrainsUpstreamWithoutFurtherWrites(t *testing.T) {
+ 	ctx, cancel := context.WithCancel(context.Background())
+ 	defer cancel()
+ 
+@@ -237,6 +235,7 @@ func TestStreamScannerHandler_ClientCancelAbortsUpstreamAndReturns(t *testing.T)
+ 	}
+ 
+ 	var count atomic.Int64
++	var usageSeen atomic.Bool
+ 	firstHandled := make(chan struct{})
+ 	done := make(chan struct{})
+ 	go func() {
+@@ -246,6 +245,9 @@ func TestStreamScannerHandler_ClientCancelAbortsUpstreamAndReturns(t *testing.T)
+ 			if data == "first" {
+ 				close(firstHandled)
+ 			}
++			if data == "usage" {
++				usageSeen.Store(true)
++			}
+ 		})
+ 		close(done)
+ 	}()
+@@ -261,26 +263,608 @@ func TestStreamScannerHandler_ClientCancelAbortsUpstreamAndReturns(t *testing.T)
+ 
+ 	cancel()
+ 
+-	// The handler must return without any further upstream input: cleanup
+-	// closes resp.Body, which unblocks the scanner goroutine.
++	require.Eventually(t, func() bool { return IsStreamDeliveryDisconnected(c) }, 2*time.Second, 10*time.Millisecond)
++	select {
++	case <-done:
++		t.Fatal("handler returned before the upstream stream ended")
++	default:
++	}
++
++	_, err = fmt.Fprint(pw, "data: second\ndata: usage\ndata: [DONE]\n")
++	require.NoError(t, err, "upstream must remain readable after client disconnect")
++
+ 	select {
+ 	case <-done:
+ 	case <-time.After(2 * time.Second):
+-		t.Fatal("handler did not return after client disconnect")
++		t.Fatal("handler did not return after upstream completion")
+ 	}
+ 
+-	// Upstream read side must be closed so the provider stops generating
+-	// (and billing) for a request nobody is listening to.
+-	_, err = fmt.Fprint(pw, "data: second\n")
+-	require.ErrorIs(t, err, io.ErrClosedPipe, "upstream body should be closed after client disconnect")
++	_, err = fmt.Fprint(pw, "data: after_done\n")
++	require.ErrorIs(t, err, io.ErrClosedPipe, "upstream body should close after completion")
+ 
+-	assert.Equal(t, int64(1), count.Load(), "no chunk after disconnect should be processed")
++	assert.Equal(t, int64(3), count.Load(), "chunks after disconnect must still be processed")
++	assert.True(t, usageSeen.Load(), "final usage data must be processed after disconnect")
+ 	require.NotNil(t, info.StreamStatus)
+-	assert.Equal(t, relaycommon.StreamEndReasonClientGone, info.StreamStatus.EndReason)
++	assert.Equal(t, relaycommon.StreamEndReasonDone, info.StreamStatus.EndReason)
++	assert.True(t, IsStreamDeliveryDisconnected(c))
+ 
+ 	body := recorder.Body.String()
+ 	assert.Contains(t, body, "first")
+ 	assert.NotContains(t, body, "second")
++	assert.NotContains(t, body, "usage")
++}
++
++func TestStreamScannerHandler_ClientCancelPreservesUpstreamReadError(t *testing.T) {
++	ctx, cancel := context.WithCancel(context.Background())
++	defer cancel()
++
++	pr, pw := io.Pipe()
++	t.Cleanup(func() {
++		_ = pr.Close()
++		_ = pw.Close()
++	})
++
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
++	info := &relaycommon.RelayInfo{DisablePing: true, ChannelMeta: &relaycommon.ChannelMeta{}}
++	firstHandled := make(chan struct{})
++	done := make(chan struct{})
++
++	go func() {
++		StreamScannerHandler(c, &http.Response{Body: pr}, info, func(data string, sr *StreamResult) {
++			_ = StringData(c, data)
++			if data == "first" {
++				close(firstHandled)
++			}
++		})
++		close(done)
++	}()
++
++	_, err := fmt.Fprint(pw, "data: first\n")
++	require.NoError(t, err)
++	select {
++	case <-firstHandled:
++	case <-time.After(2 * time.Second):
++		t.Fatal("timed out waiting for first chunk")
++	}
++
++	cancel()
++	require.Eventually(t, func() bool { return IsStreamDeliveryDisconnected(c) }, 2*time.Second, 10*time.Millisecond)
++	upstreamErr := errors.New("upstream stream reset")
++	require.NoError(t, pw.CloseWithError(upstreamErr))
++
++	select {
++	case <-done:
++	case <-time.After(2 * time.Second):
++		t.Fatal("handler did not return after upstream read error")
++	}
++
++	assert.Equal(t, relaycommon.StreamEndReasonScannerErr, info.StreamStatus.EndReason)
++	assert.ErrorIs(t, info.StreamStatus.EndError, upstreamErr)
++	assert.True(t, IsStreamDeliveryDisconnected(c))
++}
++
++func TestStreamScannerHandler_ClientCancelBeforeHandlerErrorMarksDelivery(t *testing.T) {
++	ctx, cancel := context.WithCancel(context.Background())
++	defer cancel()
++
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
++	info := &relaycommon.RelayInfo{DisablePing: true, ChannelMeta: &relaycommon.ChannelMeta{}}
++	pr, pw := io.Pipe()
++	t.Cleanup(func() {
++		_ = pr.Close()
++		_ = pw.Close()
++	})
++	resp := &http.Response{Body: pr}
++	handlerErr := errors.New("response conversion failed")
++	writeDone := make(chan error, 1)
++	go func() {
++		_, err := fmt.Fprint(pw, "data: stop\n")
++		writeDone <- err
++	}()
++
++	StreamScannerHandler(c, resp, info, func(data string, sr *StreamResult) {
++		cancel()
++		sr.Stop(handlerErr)
++	})
++	require.NoError(t, <-writeDone)
++
++	assert.ErrorIs(t, ctx.Err(), context.Canceled)
++	assert.True(t, IsStreamDeliveryDisconnected(c))
++	assert.Equal(t, relaycommon.StreamEndReasonHandlerStop, info.StreamStatus.EndReason)
++	assert.ErrorIs(t, info.StreamStatus.EndError, handlerErr)
++	assert.Empty(t, recorder.Body.String())
++}
++
++func TestStreamScannerHandler_ClientCancelStillHonorsStreamingTimeout(t *testing.T) {
++	oldTimeout := constant.StreamingTimeout
++	constant.StreamingTimeout = 1
++	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
++
++	ctx, cancel := context.WithCancel(context.Background())
++	defer cancel()
++
++	pr, pw := io.Pipe()
++	t.Cleanup(func() {
++		_ = pr.Close()
++		_ = pw.Close()
++	})
++
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
++	info := &relaycommon.RelayInfo{DisablePing: true, ChannelMeta: &relaycommon.ChannelMeta{}}
++	firstHandled := make(chan struct{})
++	done := make(chan struct{})
++
++	go func() {
++		StreamScannerHandler(c, &http.Response{Body: pr}, info, func(data string, sr *StreamResult) {
++			_ = StringData(c, data)
++			if data == "first" {
++				close(firstHandled)
++			}
++		})
++		close(done)
++	}()
++
++	_, err := fmt.Fprint(pw, "data: first\n")
++	require.NoError(t, err)
++	select {
++	case <-firstHandled:
++	case <-time.After(2 * time.Second):
++		t.Fatal("timed out waiting for first chunk")
++	}
++
++	cancel()
++	require.Eventually(t, func() bool { return IsStreamDeliveryDisconnected(c) }, 2*time.Second, 10*time.Millisecond)
++
++	select {
++	case <-done:
++	case <-time.After(3 * time.Second):
++		t.Fatal("streaming timeout did not stop the disconnected drain")
++	}
++
++	assert.Equal(t, relaycommon.StreamEndReasonTimeout, info.StreamStatus.EndReason)
++	assert.True(t, IsStreamDeliveryDisconnected(c))
++}
++
++type failingPingWriter struct {
++	gin.ResponseWriter
++	err       error
++	attempted chan struct{}
++	release   <-chan struct{}
++	once      sync.Once
++}
++
++type failingDataWriter struct {
++	gin.ResponseWriter
++	err      error
++	needle   []byte
++	attempts atomic.Int64
++}
++
++type cancelAfterStreamWriteWriter struct {
++	gin.ResponseWriter
++	needle []byte
++	cancel context.CancelFunc
++	writes atomic.Int64
++}
++
++type flushErrorHTTPWriter struct {
++	http.ResponseWriter
++	err     error
++	flushes atomic.Int64
++}
++
++func (w *flushErrorHTTPWriter) FlushError() error {
++	w.flushes.Add(1)
++	return w.err
++}
++
++type flushErrorGinWriter struct {
++	gin.ResponseWriter
++	underlying http.ResponseWriter
++	writes     atomic.Int64
++}
++
++type unsupportedFlushGinWriter struct {
++	gin.ResponseWriter
++}
++
++type panickingPingWriter struct {
++	gin.ResponseWriter
++}
++
++type cancelOnSecondErrContext struct {
++	context.Context
++	done  chan struct{}
++	once  sync.Once
++	calls atomic.Int64
++}
++
++func (c *cancelOnSecondErrContext) Done() <-chan struct{} {
++	return c.done
++}
++
++func (c *cancelOnSecondErrContext) Err() error {
++	if c.calls.Add(1) < 2 {
++		return nil
++	}
++	c.once.Do(func() { close(c.done) })
++	return context.Canceled
++}
++
++func (w *flushErrorGinWriter) Write(p []byte) (int, error) {
++	w.writes.Add(1)
++	return w.ResponseWriter.Write(p)
++}
++
++func (w *flushErrorGinWriter) Unwrap() http.ResponseWriter {
++	return w.underlying
++}
++
++func (w *unsupportedFlushGinWriter) FlushError() error {
++	return http.ErrNotSupported
++}
++
++func (w *panickingPingWriter) Write([]byte) (int, error) {
++	panic("writer implementation panic")
++}
++
++func (w *failingDataWriter) Write(p []byte) (int, error) {
++	w.attempts.Add(1)
++	if bytes.Contains(p, w.needle) {
++		return 0, w.err
++	}
++	return w.ResponseWriter.Write(p)
++}
++
++func (w *cancelAfterStreamWriteWriter) Write(p []byte) (int, error) {
++	w.writes.Add(1)
++	n, err := w.ResponseWriter.Write(p)
++	if bytes.Contains(p, w.needle) {
++		w.cancel()
++	}
++	return n, err
++}
++
++func (w *failingPingWriter) Write(p []byte) (int, error) {
++	if bytes.Contains(p, []byte(": PING")) {
++		w.once.Do(func() { close(w.attempted) })
++		<-w.release
++		return 0, w.err
++	}
++	return w.ResponseWriter.Write(p)
++}
++
++func TestStreamScannerHandler_PingWriteFailureDrainsUpstream(t *testing.T) {
++	setting := operation_setting.GetGeneralSetting()
++	oldEnabled := setting.PingIntervalEnabled
++	oldSeconds := setting.PingIntervalSeconds
++	setting.PingIntervalEnabled = true
++	setting.PingIntervalSeconds = 1
++	t.Cleanup(func() {
++		setting.PingIntervalEnabled = oldEnabled
++		setting.PingIntervalSeconds = oldSeconds
++	})
++
++	oldTimeout := constant.StreamingTimeout
++	constant.StreamingTimeout = 5
++	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
++
++	pr, pw := io.Pipe()
++	t.Cleanup(func() {
++		_ = pr.Close()
++		_ = pw.Close()
++	})
++
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
++	pingAttempted := make(chan struct{})
++	releasePing := make(chan struct{})
++	t.Cleanup(func() {
++		select {
++		case <-releasePing:
++		default:
++			close(releasePing)
++		}
++	})
++	c.Writer = &failingPingWriter{
++		ResponseWriter: c.Writer,
++		err:            errors.New("client connection closed"),
++		attempted:      pingAttempted,
++		release:        releasePing,
++	}
++	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}}
++	var usageSeen atomic.Bool
++	var disconnectedBeforeUsage atomic.Bool
++	done := make(chan struct{})
++
++	go func() {
++		StreamScannerHandler(c, &http.Response{Body: pr}, info, func(data string, sr *StreamResult) {
++			_ = StringData(c, data)
++			if data == "usage" {
++				usageSeen.Store(true)
++				disconnectedBeforeUsage.Store(IsStreamDeliveryDisconnected(c))
++			}
++		})
++		close(done)
++	}()
++
++	select {
++	case <-pingAttempted:
++	case <-time.After(3 * time.Second):
++		t.Fatal("timed out waiting for failed ping write")
++	}
++
++	upstreamWrite := make(chan error, 1)
++	go func() {
++		_, err := fmt.Fprint(pw, "data: usage\ndata: [DONE]\n")
++		upstreamWrite <- err
++	}()
++	select {
++	case err := <-upstreamWrite:
++		require.NoError(t, err)
++	case <-time.After(2 * time.Second):
++		t.Fatal("scanner did not read upstream while ping write was blocked")
++	}
++	close(releasePing)
++	require.Eventually(t, func() bool { return IsStreamDeliveryDisconnected(c) }, 2*time.Second, 10*time.Millisecond)
++
++	select {
++	case <-done:
++	case <-time.After(2 * time.Second):
++		t.Fatal("handler did not finish after upstream completion")
++	}
++
++	assert.True(t, usageSeen.Load())
++	assert.True(t, disconnectedBeforeUsage.Load(), "delivery must be disabled before the next callback acquires the write lock")
++	assert.Equal(t, relaycommon.StreamEndReasonDone, info.StreamStatus.EndReason)
++	assert.True(t, IsStreamDeliveryDisconnected(c))
++	assert.NotContains(t, recorder.Body.String(), "usage")
++}
++
++func TestStreamScannerHandler_PreScannerPingFailureCarriesIntoDrain(t *testing.T) {
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
++	pingAttempted := make(chan struct{})
++	releasePing := make(chan struct{})
++	close(releasePing)
++	c.Writer = &failingPingWriter{
++		ResponseWriter: c.Writer,
++		err:            errors.New("client connection closed before response headers"),
++		attempted:      pingAttempted,
++		release:        releasePing,
++	}
++
++	require.Error(t, PingData(c))
++	assert.True(t, IsStreamDeliveryDisconnected(c))
++	assert.NoError(t, c.Request.Context().Err())
++	select {
++	case <-pingAttempted:
++	default:
++		t.Fatal("pre-scanner ping was not attempted")
++	}
++
++	info := &relaycommon.RelayInfo{DisablePing: true, ChannelMeta: &relaycommon.ChannelMeta{}}
++	var usageSeen atomic.Bool
++	resp := &http.Response{Body: io.NopCloser(strings.NewReader("data: usage\ndata: [DONE]\n"))}
++
++	StreamScannerHandler(c, resp, info, func(data string, sr *StreamResult) {
++		_ = StringData(c, data)
++		if data == "usage" {
++			usageSeen.Store(true)
++		}
++	})
++
++	assert.True(t, usageSeen.Load())
++	assert.Equal(t, relaycommon.StreamEndReasonDone, info.StreamStatus.EndReason)
++	assert.True(t, IsStreamDeliveryDisconnected(c))
++	assert.Empty(t, recorder.Body.String())
++}
++
++func TestPingData_NonIOFailuresDoNotMarkDisconnected(t *testing.T) {
++	t.Run("unsupported flush", func(t *testing.T) {
++		recorder := httptest.NewRecorder()
++		c, _ := gin.CreateTestContext(recorder)
++		c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
++		c.Writer = &unsupportedFlushGinWriter{ResponseWriter: c.Writer}
++
++		err := PingData(c)
++		require.ErrorContains(t, err, "flusher not found")
++		assert.False(t, IsStreamDeliveryDisconnected(c))
++	})
++
++	t.Run("writer panic", func(t *testing.T) {
++		recorder := httptest.NewRecorder()
++		c, _ := gin.CreateTestContext(recorder)
++		c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
++		c.Writer = &panickingPingWriter{ResponseWriter: c.Writer}
++
++		err := PingData(c)
++		require.ErrorContains(t, err, "panic recovered")
++		assert.False(t, IsStreamDeliveryDisconnected(c))
++	})
++}
++
++func TestStreamScannerHandler_PreScannerPingFlushFailureCarriesIntoDrain(t *testing.T) {
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
++	unwrapper := c.Writer.(interface{ Unwrap() http.ResponseWriter })
++	flushTarget := &flushErrorHTTPWriter{
++		ResponseWriter: unwrapper.Unwrap(),
++		err:            errors.New("client connection closed during pre-scanner ping flush"),
++	}
++	c.Writer = &flushErrorGinWriter{ResponseWriter: c.Writer, underlying: flushTarget}
++
++	require.Error(t, PingData(c))
++	assert.True(t, IsStreamDeliveryDisconnected(c))
++	assert.NoError(t, c.Request.Context().Err())
++
++	info := &relaycommon.RelayInfo{DisablePing: true, ChannelMeta: &relaycommon.ChannelMeta{}}
++	var usageSeen atomic.Bool
++	resp := &http.Response{Body: io.NopCloser(strings.NewReader("data: usage\ndata: [DONE]\n"))}
++
++	StreamScannerHandler(c, resp, info, func(data string, sr *StreamResult) {
++		_ = StringData(c, data)
++		if data == "usage" {
++			usageSeen.Store(true)
++		}
++	})
++
++	assert.True(t, usageSeen.Load())
++	assert.Equal(t, relaycommon.StreamEndReasonDone, info.StreamStatus.EndReason)
++	assert.True(t, IsStreamDeliveryDisconnected(c))
++	assert.Contains(t, recorder.Body.String(), ": PING")
++	assert.NotContains(t, recorder.Body.String(), "usage")
++}
++
++func TestStreamScannerHandler_DataWriteFailureDrainsUpstream(t *testing.T) {
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
++	writer := &failingDataWriter{
++		ResponseWriter: c.Writer,
++		err:            errors.New("client connection closed during data write"),
++		needle:         []byte("data: first"),
++	}
++	c.Writer = writer
++	info := &relaycommon.RelayInfo{DisablePing: true, ChannelMeta: &relaycommon.ChannelMeta{}}
++	var usageSeen atomic.Bool
++	var disconnectedBeforeUsage atomic.Bool
++	resp := &http.Response{Body: io.NopCloser(strings.NewReader("data: first\ndata: usage\ndata: [DONE]\n"))}
++
++	StreamScannerHandler(c, resp, info, func(data string, sr *StreamResult) {
++		_ = StringData(c, data)
++		if data == "usage" {
++			usageSeen.Store(true)
++			disconnectedBeforeUsage.Store(IsStreamDeliveryDisconnected(c))
++		}
++	})
++
++	assert.True(t, usageSeen.Load())
++	assert.True(t, disconnectedBeforeUsage.Load(), "disconnect state must be visible before the next callback")
++	assert.Equal(t, int64(1), writer.attempts.Load(), "writes after the first failure must be suppressed")
++	assert.Equal(t, relaycommon.StreamEndReasonDone, info.StreamStatus.EndReason)
++	assert.True(t, IsStreamDeliveryDisconnected(c))
++	assert.NoError(t, c.Request.Context().Err(), "writer failure must work before request cancellation is visible")
++	assert.Empty(t, recorder.Body.String())
++}
++
++func TestStreamScannerHandler_FlushFailureDrainsUpstream(t *testing.T) {
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
++	unwrapper := c.Writer.(interface{ Unwrap() http.ResponseWriter })
++	flushTarget := &flushErrorHTTPWriter{
++		ResponseWriter: unwrapper.Unwrap(),
++		err:            errors.New("client connection closed during flush"),
++	}
++	writer := &flushErrorGinWriter{ResponseWriter: c.Writer, underlying: flushTarget}
++	c.Writer = writer
++	info := &relaycommon.RelayInfo{DisablePing: true, ChannelMeta: &relaycommon.ChannelMeta{}}
++	var usageSeen atomic.Bool
++	var disconnectedBeforeUsage atomic.Bool
++	resp := &http.Response{Body: io.NopCloser(strings.NewReader("data: first\ndata: usage\ndata: [DONE]\n"))}
++
++	StreamScannerHandler(c, resp, info, func(data string, sr *StreamResult) {
++		_ = StringData(c, data)
++		if data == "usage" {
++			usageSeen.Store(true)
++			disconnectedBeforeUsage.Store(IsStreamDeliveryDisconnected(c))
++		}
++	})
++
++	assert.True(t, usageSeen.Load())
++	assert.True(t, disconnectedBeforeUsage.Load(), "flush failure must be visible before the next callback")
++	assert.Equal(t, int64(1), writer.writes.Load(), "writes after the failed flush must be suppressed")
++	assert.Equal(t, int64(1), flushTarget.flushes.Load())
++	assert.Equal(t, relaycommon.StreamEndReasonDone, info.StreamStatus.EndReason)
++	assert.True(t, IsStreamDeliveryDisconnected(c))
++	assert.NoError(t, c.Request.Context().Err())
++	assert.Contains(t, recorder.Body.String(), "first")
++	assert.NotContains(t, recorder.Body.String(), "usage")
++}
++
++func TestStringData_PreservesCustomEventFraming(t *testing.T) {
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
++	enableStreamDrainOnDisconnect(c)
++
++	require.NoError(t, StringData(c, "first\r\nsecond"))
++	assert.Equal(t, "data: first\\r\nsecond\n\n", recorder.Body.String())
++	assert.Equal(t, "text/event-stream", recorder.Header().Get("Content-Type"))
++	assert.Equal(t, "no-cache", recorder.Header().Get("Cache-Control"))
++}
++
++func TestStringData_CancelBetweenChecksIsSuppressedWhileDraining(t *testing.T) {
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	stagedContext := &cancelOnSecondErrContext{Context: context.Background(), done: make(chan struct{})}
++	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(stagedContext)
++	enableStreamDrainOnDisconnect(c)
++
++	require.NoError(t, StringData(c, "must-not-be-written"))
++	assert.GreaterOrEqual(t, stagedContext.calls.Load(), int64(2))
++	assert.True(t, IsStreamDeliveryDisconnected(c))
++	assert.Empty(t, recorder.Body.String())
++}
++
++func TestResponseChunkData_CancelBetweenEventAndDataSuppressesSecondWrite(t *testing.T) {
++	ctx, cancel := context.WithCancel(context.Background())
++	defer cancel()
++
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(ctx)
++	writer := &cancelAfterStreamWriteWriter{ResponseWriter: c.Writer, needle: []byte("event: response.output_text.delta"), cancel: cancel}
++	c.Writer = writer
++	enableStreamDrainOnDisconnect(c)
++
++	err := ResponseChunkData(c, dto.ResponsesStreamResponse{Type: "response.output_text.delta"}, `{"type":"response.output_text.delta","delta":"must-not-be-written"}`)
++	require.NoError(t, err)
++	assert.Equal(t, int64(1), writer.writes.Load())
++	assert.True(t, IsStreamDeliveryDisconnected(c))
++	assert.Contains(t, recorder.Body.String(), "event: response.output_text.delta")
++	assert.NotContains(t, recorder.Body.String(), "must-not-be-written")
++}
++
++func TestStringData_CanceledContextOutsideScannerStillReturnsError(t *testing.T) {
++	ctx, cancel := context.WithCancel(context.Background())
++	cancel()
++
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
++
++	err := StringData(c, "data")
++	require.Error(t, err)
++	assert.ErrorIs(t, err, context.Canceled)
++	assert.Empty(t, recorder.Body.String())
++}
++
++func TestDeactivateStreamDrainForRetryRestoresLegacyContextError(t *testing.T) {
++	ctx, cancel := context.WithCancel(context.Background())
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
++	info := &relaycommon.RelayInfo{DisablePing: true, ChannelMeta: &relaycommon.ChannelMeta{}}
++
++	StreamScannerHandler(c, &http.Response{Body: io.NopCloser(strings.NewReader("data: [DONE]\n"))}, info, func(data string, sr *StreamResult) {})
++	DeactivateStreamDrainForRetry(c)
++	cancel()
++
++	err := StringData(c, "manual-retry-output")
++	require.ErrorIs(t, err, context.Canceled)
++	assert.False(t, IsStreamDeliveryDisconnected(c))
++	assert.Empty(t, recorder.Body.String())
+ }
+ 
+ // ---------- Ping tests ----------

@@ -158,6 +158,13 @@ No Docker image is built.
   - Keeps total request latency, usage duration, retry behavior, and first-response detection unchanged.
   - Retains the legacy request-start fallback for SDK-managed and WebSocket relay paths while preventing a later shared HTTP retry from replacing that fallback.
 
+- `0016-drain-stream-after-downstream-disconnect.patch`
+  - Stops downstream SSE writes after request cancellation or a confirmed Write/Flush failure while continuing to drain the current shared HTTP stream for final usage and billing data.
+  - Preserves the actual upstream terminal reason, prevents futile relay retries and final error writes to the disconnected client, and clears the drain behavior before a permitted retry can switch to a manual scanner.
+  - Applies only to the shared `StreamScannerHandler` paths; SDK-managed, WebSocket, and manual scanner implementations retain their existing lifecycle behavior.
+  - Keeps connected-client SSE framing unchanged and retains conservative image-count billing when the upstream drain ends before `done` or EOF.
+  - Does not bind the upstream request to the downstream context, persist a downstream-disconnect log field, add a database migration, or add a separate absolute drain deadline.
+
 ## Version Handling
 
 The workflow sets `common.Version` through the full upstream module path:
