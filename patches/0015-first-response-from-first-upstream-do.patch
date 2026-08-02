@@ -1,5 +1,5 @@
 diff --git a/pkg/perf_metrics/metrics.go b/pkg/perf_metrics/metrics.go
-index 33b79ee478e9239fb561fbf842fe990c7d5f1783..721f6a2b77c1fcbd4e873b9851c16b3ce13be06e 100644
+index 33b79ee4..721f6a2b 100644
 --- a/pkg/perf_metrics/metrics.go
 +++ b/pkg/perf_metrics/metrics.go
 @@ -32,7 +32,7 @@ func RecordRelaySample(info *relaycommon.RelayInfo, success bool, outputTokens i
@@ -13,7 +13,7 @@ index 33b79ee478e9239fb561fbf842fe990c7d5f1783..721f6a2b77c1fcbd4e873b9851c16b3c
  	generationMs := latencyMs
 diff --git a/pkg/perf_metrics/metrics_test.go b/pkg/perf_metrics/metrics_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..96b85f0c9a6d3f51700e55e20bab2a5966c6d4b6
+index 00000000..96b85f0c
 --- /dev/null
 +++ b/pkg/perf_metrics/metrics_test.go
 @@ -0,0 +1,41 @@
@@ -59,7 +59,7 @@ index 0000000000000000000000000000000000000000..96b85f0c9a6d3f51700e55e20bab2a59
 +	require.Equal(t, int64(1), recorded.ttftCount)
 +}
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index d90a2a52725492a1b598f90ea443771a725ee73a..c5fefa5d39250ab0774172c625054705084aaed0 100644
+index d90a2a52..c5fefa5d 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
 @@ -393,6 +393,7 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
@@ -79,7 +79,7 @@ index d90a2a52725492a1b598f90ea443771a725ee73a..c5fefa5d39250ab0774172c625054705
  	if requestTrace != nil {
  		attempt, writeSeq := requestTrace.finish(resp)
 diff --git a/relay/channel/api_request_test.go b/relay/channel/api_request_test.go
-index a0cbb68fdc0b77fb06020c4276f39c6e7f282760..c7ad5ae5e046ff9ef919dc980fe927c00371f470 100644
+index a0cbb68f..c7ad5ae5 100644
 --- a/relay/channel/api_request_test.go
 +++ b/relay/channel/api_request_test.go
 @@ -2,6 +2,7 @@ package channel
@@ -150,19 +150,19 @@ index a0cbb68fdc0b77fb06020c4276f39c6e7f282760..c7ad5ae5e046ff9ef919dc980fe927c0
  	var logs synchronizedLogBuffer
  	common.LogWriterMu.Lock()
 diff --git a/relay/channel/aws/relay-aws.go b/relay/channel/aws/relay-aws.go
-index c8ff9c7b0b3efc4c218871969a739dfd6b479f08..02007b4501a47cd5beb4bb66e840a39c0d372203 100644
+index a79616d1..967b3243 100644
 --- a/relay/channel/aws/relay-aws.go
 +++ b/relay/channel/aws/relay-aws.go
-@@ -272,6 +272,7 @@ func awsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (
- 	ctx, cancel := newAwsInvokeContext()
+@@ -286,6 +286,7 @@ func awsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (
+ 	ctx, cancel := newAwsInvokeContext(requestContext)
  	defer cancel()
  
 +	info.PreserveLegacyFirstResponseStartTime()
  	awsResp, err := a.AwsClient.InvokeModelWithResponseStream(ctx, a.AwsReq.(*bedrockruntime.InvokeModelWithResponseStreamInput))
  	if err != nil {
- 		statusCode := getAwsErrorStatusCode(err)
+ 		return newAwsInvokeError(requestContext, err, "InvokeModelWithResponseStream"), nil
 diff --git a/relay/channel/volcengine/tts.go b/relay/channel/volcengine/tts.go
-index 6ea282757b4417202d9f30a17333b53885757ec7..b061c2524a77d47759e139ada4271a28be272d6e 100644
+index 6ea28275..b061c252 100644
 --- a/relay/channel/volcengine/tts.go
 +++ b/relay/channel/volcengine/tts.go
 @@ -209,6 +209,7 @@ func handleTTSWebSocketResponse(c *gin.Context, requestURL string, volcRequest V
@@ -174,10 +174,10 @@ index 6ea282757b4417202d9f30a17333b53885757ec7..b061c2524a77d47759e139ada4271a28
  	if dialErr != nil {
  		if resp != nil {
 diff --git a/relay/channel/xunfei/adaptor.go b/relay/channel/xunfei/adaptor.go
-index d92029e26ebe6e48d51b0fb11858e52425cf4f35..23ace5606e61979ee2a3129e9f624b2a434bc480 100644
+index 2f8112f4..661addb9 100644
 --- a/relay/channel/xunfei/adaptor.go
 +++ b/relay/channel/xunfei/adaptor.go
-@@ -88,6 +88,7 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
+@@ -87,6 +87,7 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
  	if a.request == nil {
  		return nil, types.NewError(errors.New("request is nil"), types.ErrorCodeInvalidRequest)
  	}
@@ -186,7 +186,7 @@ index d92029e26ebe6e48d51b0fb11858e52425cf4f35..23ace5606e61979ee2a3129e9f624b2a
  		usage, err = xunfeiStreamHandler(c, *a.request, splits[0], splits[1], splits[2])
  	} else {
 diff --git a/relay/common/relay_info.go b/relay/common/relay_info.go
-index 74c7c0acfbfeb5661bbd83deaa4ead68d27ce175..844556b6073876600c584948a5d717f3d7036a89 100644
+index 9bb660e2..f82a3b74 100644
 --- a/relay/common/relay_info.go
 +++ b/relay/common/relay_info.go
 @@ -184,6 +184,7 @@ type RelayInfo struct {
@@ -197,7 +197,7 @@ index 74c7c0acfbfeb5661bbd83deaa4ead68d27ce175..844556b6073876600c584948a5d717f3
  	FirstResponseTime time.Time
  	isFirstResponse   bool
  	//SendLastReasoningResponse bool
-@@ -930,6 +931,23 @@ func (info *RelayInfo) SetFirstResponseTimeAt(t time.Time) {
+@@ -931,6 +932,23 @@ func (info *RelayInfo) SetFirstResponseTimeAt(t time.Time) {
  	}
  }
  
@@ -222,7 +222,7 @@ index 74c7c0acfbfeb5661bbd83deaa4ead68d27ce175..844556b6073876600c584948a5d717f3
  	return info.FirstResponseTime.After(info.StartTime)
  }
 diff --git a/relay/common/relay_info_test.go b/relay/common/relay_info_test.go
-index 9e58f3f92d8bf2922eb06e73260a6b27c6ed0de7..b3241ffba33c239f96fb41ee46e3f63a7b831a1f 100644
+index 9e58f3f9..b3241ffb 100644
 --- a/relay/common/relay_info_test.go
 +++ b/relay/common/relay_info_test.go
 @@ -2,6 +2,7 @@ package common
@@ -267,7 +267,7 @@ index 9e58f3f92d8bf2922eb06e73260a6b27c6ed0de7..b3241ffba33c239f96fb41ee46e3f63a
  	info := &RelayInfo{
  		RelayFormat:             types.RelayFormatOpenAI,
 diff --git a/service/log_info_generate.go b/service/log_info_generate.go
-index 7c858ebdf24961cee97578c214a9af039718a785..60be7f9cadb29fd15d8cdc298de004338dc16530 100644
+index 7c858ebd..60be7f9c 100644
 --- a/service/log_info_generate.go
 +++ b/service/log_info_generate.go
 @@ -99,7 +99,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
@@ -281,7 +281,7 @@ index 7c858ebdf24961cee97578c214a9af039718a785..60be7f9cadb29fd15d8cdc298de00433
  	}
 diff --git a/service/log_info_generate_test.go b/service/log_info_generate_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..a6afa4a7360afdc69a810ba5d28f56f994d74011
+index 00000000..a6afa4a7
 --- /dev/null
 +++ b/service/log_info_generate_test.go
 @@ -0,0 +1,30 @@
