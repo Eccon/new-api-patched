@@ -1,0 +1,33 @@
+diff --git a/relay/helper/common.go b/relay/helper/common.go
+index 8a1bd5a2..b08b57e4 100644
+--- a/relay/helper/common.go
++++ b/relay/helper/common.go
+@@ -186,7 +186,7 @@ func PingData(c *gin.Context) (err error) {
+ 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
+ 	}
+ 
+-	if _, err := c.Writer.Write([]byte(": PING\n\n")); err != nil {
++	if _, err := c.Writer.Write([]byte(": PING\nevent: ping\ndata: {\"type\":\"ping\"}\n\n")); err != nil {
+ 		markStreamDeliveryDisconnected(c)
+ 		return fmt.Errorf("write ping data failed: %w", err)
+ 	}
+diff --git a/relay/helper/stream_scanner_test.go b/relay/helper/stream_scanner_test.go
+index 3aa587f2..a3e80cfd 100644
+--- a/relay/helper/stream_scanner_test.go
++++ b/relay/helper/stream_scanner_test.go
+@@ -692,6 +692,15 @@ func TestPingData_NonIOFailuresDoNotMarkDisconnected(t *testing.T) {
+ 	})
+ }
+ 
++func TestPingDataWritesLegacyAndTypedEvent(t *testing.T) {
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
++
++	require.NoError(t, PingData(c))
++	assert.Equal(t, ": PING\nevent: ping\ndata: {\"type\":\"ping\"}\n\n", recorder.Body.String())
++}
++
+ func TestStreamScannerHandler_PreScannerPingFlushFailureCarriesIntoDrain(t *testing.T) {
+ 	recorder := httptest.NewRecorder()
+ 	c, _ := gin.CreateTestContext(recorder)

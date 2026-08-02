@@ -165,6 +165,11 @@ No Docker image is built.
   - Keeps connected-client SSE framing unchanged and retains conservative image-count billing when the upstream drain ends before `done` or EOF.
   - Does not bind the upstream request to the downstream context, persist a downstream-disconnect log field, add a database migration, or add a separate absolute drain deadline.
 
+- `0017-typed-sse-ping-event.patch`
+  - Keeps the legacy `: PING` SSE comment while adding a typed `event: ping` with `data: {"type":"ping"}`.
+  - Sends the fields as one complete SSE event ending with the required blank line.
+  - Leaves the configured ping interval, flush behavior, and disconnect handling unchanged.
+
 ## Version Handling
 
 The workflow sets `common.Version` through the full upstream module path:
