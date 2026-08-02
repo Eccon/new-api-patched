@@ -124,7 +124,7 @@ index b60ddd69..b98c9c96 100644
 +	}
 +}
 diff --git a/relay/channel/aws/relay-aws.go b/relay/channel/aws/relay-aws.go
-index c502364c..c8ff9c7b 100644
+index c4751b5a..a79616d1 100644
 --- a/relay/channel/aws/relay-aws.go
 +++ b/relay/channel/aws/relay-aws.go
 @@ -23,6 +23,7 @@ import (
@@ -141,11 +141,11 @@ index c502364c..c8ff9c7b 100644
  
 +// TODO: Apply RELAY_NON_STREAM_TIMEOUT here for non-stream InvokeModel calls so
 +// all AWS SDK retries share one deadline; http.Client.Timeout resets per attempt.
- func newAwsInvokeContext() (context.Context, context.CancelFunc) {
+ func newAwsInvokeContext(parent context.Context) (context.Context, context.CancelFunc) {
  	if common.RelayTimeout <= 0 {
- 		return context.Background(), func() {}
-@@ -47,11 +50,30 @@ func newAwsInvokeContext() (context.Context, context.CancelFunc) {
- 	return context.WithTimeout(context.Background(), time.Duration(common.RelayTimeout)*time.Second)
+ 		return context.WithCancel(parent)
+@@ -60,11 +63,30 @@ func newAwsInvokeError(requestContext context.Context, err error, operation stri
+ 	)
  }
  
 +func newAwsResponseHeaderTimeoutRetryer() aws.Retryer {
@@ -176,7 +176,7 @@ index c502364c..c8ff9c7b 100644
  
  	awsSecret := strings.Split(info.ApiKey, "|")
  	var client *bedrockruntime.Client
-@@ -63,6 +85,7 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
+@@ -76,6 +98,7 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
  			Region:                  region,
  			BearerAuthTokenProvider: bearer.StaticTokenProvider{Token: bearer.Token{Value: apiKey}},
  			HTTPClient:              httpClient,
@@ -184,7 +184,7 @@ index c502364c..c8ff9c7b 100644
  		})
  	case 3:
  		ak := awsSecret[0]
-@@ -72,6 +95,7 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
+@@ -85,6 +108,7 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
  			Region:      region,
  			Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(ak, sk, "")),
  			HTTPClient:  httpClient,
@@ -193,25 +193,22 @@ index c502364c..c8ff9c7b 100644
  	default:
  		return nil, errors.New("invalid aws secret key")
 diff --git a/relay/channel/aws/relay_aws_test.go b/relay/channel/aws/relay_aws_test.go
-index 92745ff4..55a4b64a 100644
+index 22d83738..39180dc9 100644
 --- a/relay/channel/aws/relay_aws_test.go
 +++ b/relay/channel/aws/relay_aws_test.go
-@@ -2,17 +2,105 @@ package aws
- 
- import (
- 	"bytes"
-+	"errors"
- 	"net/http"
- 	"net/http/httptest"
- 	"testing"
- 
- 	"github.com/QuantumNous/new-api/common"
+@@ -15,16 +15,67 @@ import (
  	relaycommon "github.com/QuantumNous/new-api/relay/common"
-+	"github.com/QuantumNous/new-api/relaykit/dto"
+ 	"github.com/QuantumNous/new-api/relaykit/dto"
+ 	relaytypes "github.com/QuantumNous/new-api/relaykit/types"
 +	"github.com/QuantumNous/new-api/service"
+ 	"github.com/aws/aws-sdk-go-v2/aws"
+ 	"github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream"
+ 	"github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream/eventstreamapi"
+ 	"github.com/aws/aws-sdk-go-v2/credentials"
  	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 +	smithyhttp "github.com/aws/smithy-go/transport/http"
  	"github.com/gin-gonic/gin"
+ 	"github.com/stretchr/testify/assert"
  	"github.com/stretchr/testify/require"
  )
  
@@ -264,6 +261,13 @@ index 92745ff4..55a4b64a 100644
 +	}
 +}
 +
+ const awsTestModel = "anthropic.claude-3-5-sonnet-20240620-v1:0"
+ 
+ type awsHTTPClientFunc func(*http.Request) (*http.Response, error)
+@@ -141,6 +192,41 @@ func newAwsStreamResponse(request *http.Request, body io.ReadCloser) *http.Respo
+ 	}
+ }
+ 
 +func TestNewAwsClientUsesSettingsAwareRelayClient(t *testing.T) {
 +	previousTimeout := common.RelayResponseHeaderTimeout
 +	common.RelayResponseHeaderTimeout = 4
