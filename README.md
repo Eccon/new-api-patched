@@ -170,6 +170,12 @@ No Docker image is built.
   - Sends the fields as one complete SSE event ending with the required blank line.
   - Leaves the configured ping interval, flush behavior, and disconnect handling unchanged.
 
+- `0018-rewrite-responses-overload-error.patch`
+  - Rewrites `response.failed.response.error.code` from `server_is_overloaded` to the retryable `server_error` code in Responses SSE streams.
+  - Leaves the preceding top-level `error` event and all other `response.failed` error codes unchanged.
+  - Records the matched upstream overload as a stream error so usage logs remain visibly failed even when the upstream then ends with EOF.
+  - Applies uniformly to Responses clients without buffering earlier stream events or changing the remaining payload fields.
+
 ## Version Handling
 
 The workflow sets `common.Version` through the full upstream module path:
