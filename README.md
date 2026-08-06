@@ -60,6 +60,8 @@ No Docker image is built.
     - `UPSTREAM_USER_AGENT_GEMINI`
   - Keeps channel/header override User-Agent higher priority.
   - Falls back to the incoming request User-Agent when no env User-Agent is configured.
+  - Includes OpenAI Alpha Search in the OpenAI User-Agent family.
+  - Clears the response-derived final request format at the start of each channel attempt so normal cross-protocol retries use the current conversion.
 
 - `0002-custom-request-user-agent-log-display.patch`
   - Stores the incoming request User-Agent once in `logs.other.request_user_agent`.
