@@ -1,0 +1,2131 @@
+diff --git a/relay/responses_adaptor_ownership_test.go b/relay/responses_adaptor_ownership_test.go
+new file mode 100644
+index 00000000..8a4201f1
+--- /dev/null
++++ b/relay/responses_adaptor_ownership_test.go
+@@ -0,0 +1,272 @@
++package relay
++
++import (
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
++	"testing"
++
++	"github.com/QuantumNous/new-api/common"
++	"github.com/QuantumNous/new-api/constant"
++	relaycommon "github.com/QuantumNous/new-api/relay/common"
++	relayconstant "github.com/QuantumNous/new-api/relay/constant"
++	"github.com/QuantumNous/new-api/relaykit/dto"
++	"github.com/QuantumNous/new-api/relaykit/relayconvert"
++	"github.com/QuantumNous/new-api/relaykit/types"
++	"github.com/gin-gonic/gin"
++	"github.com/stretchr/testify/require"
++)
++
++type rawResponsesAdaptorContractCase struct {
++	name        string
++	apiType     int
++	channelType int
++	model       string
++	configure   func(*relaycommon.RelayInfo)
++	validate    func(*testing.T, dto.OpenAIResponsesRequest)
++}
++
++func rawResponsesAdaptorContractCases() []rawResponsesAdaptorContractCase {
++	reasoningSuffixValidation := func(wantModel, wantEffort string) func(*testing.T, dto.OpenAIResponsesRequest) {
++		return func(t *testing.T, converted dto.OpenAIResponsesRequest) {
++			t.Helper()
++			require.Equal(t, wantModel, converted.Model)
++			require.NotNil(t, converted.Reasoning)
++			require.Equal(t, wantEffort, converted.Reasoning.Effort)
++		}
++	}
++
++	return []rawResponsesAdaptorContractCase{
++		{
++			name:        "OpenAI",
++			apiType:     constant.APITypeOpenAI,
++			channelType: constant.ChannelTypeOpenAI,
++			model:       "gpt-5-high",
++			validate:    reasoningSuffixValidation("gpt-5", "high"),
++		},
++		{
++			name:        "OpenRouter",
++			apiType:     constant.APITypeOpenRouter,
++			channelType: constant.ChannelTypeOpenRouter,
++			model:       "gpt-5-high",
++			validate:    reasoningSuffixValidation("gpt-5", "high"),
++		},
++		{
++			name:        "Xinference",
++			apiType:     constant.APITypeXinference,
++			channelType: constant.ChannelTypeXinference,
++			model:       "gpt-5-high",
++			validate:    reasoningSuffixValidation("gpt-5", "high"),
++		},
++		{
++			name:        "DeepSeek",
++			apiType:     constant.APITypeDeepSeek,
++			channelType: constant.ChannelTypeDeepSeek,
++			model:       "deepseek-v4-chat-max",
++			validate:    reasoningSuffixValidation("deepseek-v4-chat", "max"),
++		},
++		{
++			name:        "Codex",
++			apiType:     constant.APITypeCodex,
++			channelType: constant.ChannelTypeCodex,
++			model:       "gpt-5",
++			configure: func(info *relaycommon.RelayInfo) {
++				info.ChannelSetting.SystemPrompt = "channel system prompt"
++				info.ChannelSetting.SystemPromptOverride = true
++			},
++			validate: func(t *testing.T, converted dto.OpenAIResponsesRequest) {
++				t.Helper()
++				require.JSONEq(t, `"channel system prompt\noriginal instructions"`, string(converted.Instructions))
++				require.JSONEq(t, `false`, string(converted.Store))
++				require.Nil(t, converted.MaxOutputTokens)
++				require.Nil(t, converted.Temperature)
++			},
++		},
++		{
++			name:        "AdvancedCustom",
++			apiType:     constant.APITypeAdvancedCustom,
++			channelType: constant.ChannelTypeAdvancedCustom,
++			model:       "gpt-5-high",
++			configure: func(info *relaycommon.RelayInfo) {
++				info.ChannelOtherSettings.AdvancedCustom = &dto.AdvancedCustomConfig{
++					Routes: []dto.AdvancedCustomRoute{
++						{
++							IncomingPath: "/v1/responses",
++							UpstreamPath: "/v1/responses",
++							Converter:    relayconvert.ConverterNone,
++						},
++					},
++				}
++			},
++			validate: reasoningSuffixValidation("gpt-5", "high"),
++		},
++		{name: "Sub2API", apiType: constant.APITypeSub2API, channelType: constant.ChannelTypeSub2API, model: "gpt-5"},
++		{name: "NewAPI", apiType: constant.APITypeNewAPI, channelType: constant.ChannelTypeNewAPI, model: "gpt-5"},
++		{name: "xAI", apiType: constant.APITypeXai, channelType: constant.ChannelTypeXai, model: "grok-4"},
++		{name: "Ali", apiType: constant.APITypeAli, channelType: constant.ChannelTypeAli, model: "qwen-plus"},
++		{name: "Cloudflare", apiType: constant.APITypeCloudflare, channelType: constant.ChannelCloudflare, model: "gpt-5"},
++		{name: "Perplexity", apiType: constant.APITypePerplexity, channelType: constant.ChannelTypePerplexity, model: "sonar"},
++		{name: "VolcEngine", apiType: constant.APITypeVolcEngine, channelType: constant.ChannelTypeVolcEngine, model: "doubao-seed"},
++	}
++}
++
++func TestRawResponsesAdaptorsPreserveCanonicalOwnership(t *testing.T) {
++	cases := rawResponsesAdaptorContractCases()
++	testedAPITypes := make(map[int]struct{}, len(cases))
++	for _, testCase := range cases {
++		testCase := testCase
++		t.Run(testCase.name, func(t *testing.T) {
++			require.True(t, supportsRawResponsesAPIType(testCase.apiType))
++			if _, duplicate := testedAPITypes[testCase.apiType]; duplicate {
++				t.Fatalf("API type %d has duplicate ownership test cases", testCase.apiType)
++			}
++			testedAPITypes[testCase.apiType] = struct{}{}
++
++			canonical := responsesAdaptorOwnershipFixture(testCase.model)
++			before, err := common.DeepCopy(canonical)
++			require.NoError(t, err)
++			requireResponsesOwnershipSnapshotIndependent(t, canonical, before)
++
++			convertedRequest := convertRawResponsesAdaptorContractCase(t, testCase, canonical)
++			if testCase.validate != nil {
++				testCase.validate(t, convertedRequest)
++			}
++
++			require.Equal(t, *before, *canonical, "adaptor mutated the canonical Responses request")
++		})
++	}
++
++	for apiType := 0; apiType < constant.APITypeDummy; apiType++ {
++		if supportsRawResponsesAPIType(apiType) {
++			_, covered := testedAPITypes[apiType]
++			require.True(t, covered, "raw Responses API type %d is missing an ownership contract test", apiType)
++		}
++	}
++}
++
++// This guards the adaptor mutation field set, not the patch-count threshold or
++// whether a particular request ultimately takes the raw path.
++func TestRawResponsesAdaptorsKeepMutationsAudited(t *testing.T) {
++	for _, testCase := range rawResponsesAdaptorContractCases() {
++		testCase := testCase
++		t.Run(testCase.name, func(t *testing.T) {
++			canonical := responsesAdaptorOwnershipFixture(testCase.model)
++			convertedRequest := convertRawResponsesAdaptorContractCase(t, testCase, canonical)
++
++			_, audited, err := buildResponsesJSONPatches(canonical, &convertedRequest)
++			require.NoError(t, err)
++			require.True(t, audited,
++				"adaptor changed a field outside the audited patch set; typed fallback preserves correctness, but raw eligibility must be reviewed",
++			)
++		})
++	}
++}
++
++func convertRawResponsesAdaptorContractCase(
++	t *testing.T,
++	testCase rawResponsesAdaptorContractCase,
++	canonical *dto.OpenAIResponsesRequest,
++) dto.OpenAIResponsesRequest {
++	t.Helper()
++	attempt, err := cloneOpenAIResponsesAttempt(canonical)
++	require.NoError(t, err)
++
++	info := responsesAdaptorOwnershipRelayInfo(testCase.apiType, testCase.channelType, testCase.model)
++	if testCase.configure != nil {
++		testCase.configure(info)
++	}
++	adaptor := GetAdaptor(testCase.apiType)
++	require.NotNil(t, adaptor)
++	adaptor.Init(info)
++
++	converted, err := adaptor.ConvertOpenAIResponsesRequest(responsesAdaptorOwnershipContext(), info, *attempt)
++	require.NoError(t, err)
++	convertedRequest, ok := openAIResponsesRequestValue(converted)
++	require.True(t, ok, "raw Responses adaptor returned %T", converted)
++	return convertedRequest
++}
++
++func requireResponsesOwnershipSnapshotIndependent(
++	t *testing.T,
++	canonical *dto.OpenAIResponsesRequest,
++	snapshot *dto.OpenAIResponsesRequest,
++) {
++	t.Helper()
++	require.NotSame(t, canonical, snapshot)
++	require.NotSame(t, canonical.Reasoning, snapshot.Reasoning)
++	require.NotSame(t, canonical.MaxOutputTokens, snapshot.MaxOutputTokens)
++	require.NotSame(t, canonical.Temperature, snapshot.Temperature)
++	require.NotSame(t, canonical.StreamOptions, snapshot.StreamOptions)
++	require.NotSame(t, &canonical.Input[0], &snapshot.Input[0])
++	require.NotSame(t, &canonical.Tools[0], &snapshot.Tools[0])
++	require.NotSame(t, &canonical.Reasoning.Mode[0], &snapshot.Reasoning.Mode[0])
++	require.NotSame(t, &canonical.Reasoning.Context[0], &snapshot.Reasoning.Context[0])
++}
++
++func responsesAdaptorOwnershipFixture(model string) *dto.OpenAIResponsesRequest {
++	maxOutputTokens := uint(4096)
++	topLogProbs := 5
++	stream := true
++	temperature := 0.7
++	topP := 0.9
++	maxToolCalls := uint(8)
++	return &dto.OpenAIResponsesRequest{
++		Model:                model,
++		Input:                json.RawMessage(`[{"role":"user","content":[{"type":"input_text","text":"hello"}]}]`),
++		Include:              json.RawMessage(`["reasoning.encrypted_content"]`),
++		Conversation:         json.RawMessage(`{"id":"conv_test"}`),
++		ContextManagement:    json.RawMessage(`[{"type":"compaction","compact_threshold":1000}]`),
++		Instructions:         json.RawMessage(`"original instructions"`),
++		MaxOutputTokens:      &maxOutputTokens,
++		TopLogProbs:          &topLogProbs,
++		Metadata:             json.RawMessage(`{"trace":"ownership"}`),
++		Moderation:           json.RawMessage(`{"level":"standard"}`),
++		ParallelToolCalls:    json.RawMessage(`true`),
++		PreviousResponseID:   "resp_previous",
++		Reasoning:            &dto.Reasoning{Effort: "medium", Summary: "auto", Mode: json.RawMessage(`{"type":"enabled"}`), Context: json.RawMessage(`{"encrypted":"context"}`)},
++		ServiceTier:          "default",
++		Store:                json.RawMessage(`true`),
++		PromptCacheKey:       json.RawMessage(`"cache-key"`),
++		PromptCacheOptions:   json.RawMessage(`{"type":"ephemeral"}`),
++		PromptCacheRetention: json.RawMessage(`"24h"`),
++		SafetyIdentifier:     json.RawMessage(`"user-test"`),
++		Stream:               &stream,
++		StreamOptions:        &dto.StreamOptions{IncludeUsage: true, IncludeObfuscation: true},
++		Temperature:          &temperature,
++		Text:                 json.RawMessage(`{"format":{"type":"text"}}`),
++		ToolChoice:           json.RawMessage(`"auto"`),
++		Tools:                json.RawMessage(`[{"type":"function","name":"lookup","parameters":{"type":"object"}}]`),
++		TopP:                 &topP,
++		Truncation:           json.RawMessage(`"auto"`),
++		User:                 json.RawMessage(`"legacy-user"`),
++		MaxToolCalls:         &maxToolCalls,
++		Prompt:               json.RawMessage(`{"id":"pmpt_test"}`),
++		ClientMetadata:       json.RawMessage(`{"client":"codex"}`),
++		EnableThinking:       json.RawMessage(`true`),
++		ThinkingBudget:       json.RawMessage(`1024`),
++		Preset:               json.RawMessage(`"pro-search"`),
++	}
++}
++
++func responsesAdaptorOwnershipRelayInfo(apiType, channelType int, model string) *relaycommon.RelayInfo {
++	return &relaycommon.RelayInfo{
++		OriginModelName: model,
++		RequestURLPath:  "/v1/responses",
++		RelayMode:       relayconstant.RelayModeResponses,
++		RelayFormat:     types.RelayFormatOpenAIResponses,
++		ChannelMeta: &relaycommon.ChannelMeta{
++			ApiType:           apiType,
++			ChannelType:       channelType,
++			ChannelBaseUrl:    "https://upstream.example",
++			ApiKey:            "test-key",
++			UpstreamModelName: model,
++		},
++	}
++}
++
++func responsesAdaptorOwnershipContext() *gin.Context {
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
++	return c
++}
+diff --git a/relay/responses_body.go b/relay/responses_body.go
+new file mode 100644
+index 00000000..c2c84c05
+--- /dev/null
++++ b/relay/responses_body.go
+@@ -0,0 +1,481 @@
++package relay
++
++import (
++	"bytes"
++	"encoding/json"
++	"fmt"
++	"reflect"
++	"strings"
++	"unicode/utf8"
++	"unsafe"
++
++	"github.com/QuantumNous/new-api/common"
++	"github.com/QuantumNous/new-api/constant"
++	relaycommon "github.com/QuantumNous/new-api/relay/common"
++	relayconstant "github.com/QuantumNous/new-api/relay/constant"
++	"github.com/QuantumNous/new-api/relaykit/dto"
++	"github.com/gin-gonic/gin"
++	"github.com/tidwall/gjson"
++	"github.com/tidwall/sjson"
++)
++
++// responsesBodyPlan retains the original storage only while the resulting JSON
++// still aliases its bytes. The caller decides whether to borrow that storage
++// after field filtering and parameter overrides have completed.
++type responsesBodyPlan struct {
++	data      []byte
++	canonical []byte
++	storage   common.BodyStorage
++}
++
++type responsesJSONPatch struct {
++	key    string
++	value  []byte
++	delete bool
++}
++
++var responsesRequestJSONFields = responsesJSONFieldNames(reflect.TypeOf(dto.OpenAIResponsesRequest{}))
++
++// responsesRawBodyMinBytes is a performance threshold, not a wire-format
++// contract. Smaller bodies use the typed encoder, while eligible larger bodies
++// may preserve the client's field order, whitespace, escapes, and numeric
++// spelling. Both paths guarantee JSON semantic equivalence only; channels that
++// require byte-for-byte request-body identity must enable request pass-through,
++// which intentionally bypasses conversion, field filtering, and param override.
++const responsesRawBodyMinBytes = 4 << 10
++
++// planResponsesRequestBody keeps the existing DTO encoder as the correctness
++// fallback. The raw path is limited to a value-shaped Responses request whose
++// adapter changes are known and whose input already has the DTO's JSON shape.
++func planResponsesRequestBody(
++	c *gin.Context,
++	info *relaycommon.RelayInfo,
++	source *dto.OpenAIResponsesRequest,
++	converted any,
++) (responsesBodyPlan, error) {
++	convertedRequest, ok := openAIResponsesRequestValue(converted)
++	if !ok || info == nil || info.RelayMode != relayconstant.RelayModeResponses ||
++		source == nil || !supportsRawResponsesAPIType(info.ApiType) {
++		return marshalResponsesBodyPlan(converted)
++	}
++
++	storage, storageErr := common.GetBodyStorage(c)
++	if storageErr != nil || storage == nil || storage.IsDisk() {
++		return marshalResponsesBodyPlan(converted)
++	}
++	canonical, err := storage.Bytes()
++	if err != nil || len(canonical) < responsesRawBodyMinBytes {
++		return marshalResponsesBodyPlan(converted)
++	}
++
++	patches, ok, err := buildResponsesJSONPatches(source, &convertedRequest)
++	if err != nil {
++		// Marshal remains the source of truth for invalid RawMessage values and
++		// any future adaptor change not represented by the patch planner.
++		return marshalResponsesBodyPlan(converted)
++	}
++	if !ok || len(patches) > 1 {
++		// SJSON creates a new body for the first change and for later deletes or
++		// insertions. Beyond one top-level change, the typed encoder has the more
++		// predictable peak-memory profile.
++		return marshalResponsesBodyPlan(converted)
++	}
++	// OpenAIResponsesRequest.MarshalJSON drops thinking_budget for every model
++	// family except Qwen. Count that deletion before selecting the raw path.
++	if !dto.IsQwenThinkingBudgetModel(convertedRequest.Model) && gjson.GetBytes(canonical, "thinking_budget").Exists() {
++		patches = append(patches, responsesJSONPatch{key: "thinking_budget", delete: true})
++		if len(patches) > 1 {
++			return marshalResponsesBodyPlan(converted)
++		}
++	}
++	if !responsesRawShapeCompatible(canonical, source) {
++		return marshalResponsesBodyPlan(converted)
++	}
++
++	data, err := applyResponsesJSONPatches(canonical, patches)
++	if err != nil {
++		return marshalResponsesBodyPlan(converted)
++	}
++	return responsesBodyPlan{data: data, canonical: canonical, storage: storage}, nil
++}
++
++func marshalResponsesBodyPlan(value any) (responsesBodyPlan, error) {
++	data, err := common.Marshal(value)
++	return responsesBodyPlan{data: data}, err
++}
++
++// New or unaudited adaptors default to the typed encoder. Raw-compatible
++// adaptors must treat shared RawMessage backing bytes and pointer pointees as
++// read-only, replacing whole fields instead of mutating shared storage. The
++// fast patch set is Model, Instructions, MaxOutputTokens, Reasoning, Store, and
++// Temperature; replacing any other field remains correct but forces the typed
++// fallback until buildResponsesJSONPatches is updated. Keep this list aligned
++// with TestRawResponsesAdaptorsPreserveCanonicalOwnership and
++// TestRawResponsesAdaptorsKeepMutationsAudited.
++func supportsRawResponsesAPIType(apiType int) bool {
++	switch apiType {
++	case constant.APITypeOpenAI,
++		constant.APITypeOpenRouter,
++		constant.APITypeXinference,
++		constant.APITypeDeepSeek,
++		constant.APITypeCodex,
++		constant.APITypeAdvancedCustom,
++		constant.APITypeSub2API,
++		constant.APITypeNewAPI,
++		constant.APITypeXai,
++		constant.APITypeAli,
++		constant.APITypeCloudflare,
++		constant.APITypePerplexity,
++		constant.APITypeVolcEngine:
++		return true
++	default:
++		return false
++	}
++}
++
++func openAIResponsesRequestValue(value any) (dto.OpenAIResponsesRequest, bool) {
++	switch request := value.(type) {
++	case dto.OpenAIResponsesRequest:
++		return request, true
++	case *dto.OpenAIResponsesRequest:
++		if request != nil {
++			return *request, true
++		}
++	}
++	return dto.OpenAIResponsesRequest{}, false
++}
++
++// buildResponsesJSONPatches returns ok=false when a future or unsupported
++// adaptor mutation must use the standard DTO encoder instead of silently
++// sending a stale raw field.
++func buildResponsesJSONPatches(
++	source *dto.OpenAIResponsesRequest,
++	converted *dto.OpenAIResponsesRequest,
++) ([]responsesJSONPatch, bool, error) {
++	if source == nil || converted == nil {
++		return nil, false, nil
++	}
++
++	candidate := *source
++	// These are the only fields currently changed by Responses adaptors:
++	// model mapping/reasoning suffixes, Codex instruction/store filtering, and
++	// Codex removal of max_output_tokens/temperature.
++	candidate.Model = converted.Model
++	candidate.Instructions = converted.Instructions
++	candidate.MaxOutputTokens = converted.MaxOutputTokens
++	candidate.Reasoning = converted.Reasoning
++	candidate.Store = converted.Store
++	candidate.Temperature = converted.Temperature
++	if !reflect.DeepEqual(candidate, *converted) {
++		return nil, false, nil
++	}
++
++	patches := make([]responsesJSONPatch, 0, 4)
++	if source.Model != converted.Model {
++		value, err := common.Marshal(converted.Model)
++		if err != nil {
++			return nil, false, err
++		}
++		patches = append(patches, responsesJSONPatch{key: "model", value: value})
++	}
++	if !bytes.Equal(source.Instructions, converted.Instructions) {
++		patch, err := rawMessagePatch("instructions", converted.Instructions)
++		if err != nil {
++			return nil, false, err
++		}
++		patches = append(patches, patch)
++	}
++	if !responsesUintPointerEqual(source.MaxOutputTokens, converted.MaxOutputTokens) {
++		patch, err := pointerPatch("max_output_tokens", converted.MaxOutputTokens)
++		if err != nil {
++			return nil, false, err
++		}
++		patches = append(patches, patch)
++	}
++	if !reflect.DeepEqual(source.Reasoning, converted.Reasoning) {
++		patch, err := pointerPatch("reasoning", converted.Reasoning)
++		if err != nil {
++			return nil, false, err
++		}
++		patches = append(patches, patch)
++	}
++	if !bytes.Equal(source.Store, converted.Store) {
++		patch, err := rawMessagePatch("store", converted.Store)
++		if err != nil {
++			return nil, false, err
++		}
++		patches = append(patches, patch)
++	}
++	if !responsesFloatPointerEqual(source.Temperature, converted.Temperature) {
++		patch, err := pointerPatch("temperature", converted.Temperature)
++		if err != nil {
++			return nil, false, err
++		}
++		patches = append(patches, patch)
++	}
++
++	return patches, true, nil
++}
++
++func rawMessagePatch(key string, value json.RawMessage) (responsesJSONPatch, error) {
++	if len(value) == 0 {
++		return responsesJSONPatch{key: key, delete: true}, nil
++	}
++	encoded, err := common.Marshal(value)
++	if err != nil {
++		return responsesJSONPatch{}, err
++	}
++	return responsesJSONPatch{key: key, value: encoded}, nil
++}
++
++func pointerPatch[T any](key string, value *T) (responsesJSONPatch, error) {
++	if value == nil {
++		return responsesJSONPatch{key: key, delete: true}, nil
++	}
++	encoded, err := common.Marshal(value)
++	if err != nil {
++		return responsesJSONPatch{}, err
++	}
++	return responsesJSONPatch{key: key, value: encoded}, nil
++}
++
++func responsesUintPointerEqual(left, right *uint) bool {
++	if left == nil || right == nil {
++		return left == nil && right == nil
++	}
++	return *left == *right
++}
++
++func responsesFloatPointerEqual(left, right *float64) bool {
++	if left == nil || right == nil {
++		return left == nil && right == nil
++	}
++	return *left == *right
++}
++
++func applyResponsesJSONPatches(canonical []byte, patches []responsesJSONPatch) ([]byte, error) {
++	// canonical may be the BodyStorage backing buffer. Keep the first patch
++	// non-in-place so result owns a separate buffer before any ReplaceInPlace
++	// optimization is considered. Never enable ReplaceInPlace while owned is
++	// false: doing so would mutate the original request and poison retries.
++	result := canonical
++	owned := false
++	for _, patch := range patches {
++		path := responsesJSONLiteralPath(patch.key)
++		var err error
++		if patch.delete {
++			if !gjson.GetBytes(result, path).Exists() {
++				continue
++			}
++			result, err = sjson.DeleteBytes(result, path)
++			owned = true
++		} else if owned && gjson.GetBytes(result, path).Exists() {
++			// Only an attempt-owned buffer may be modified in place.
++			result, err = sjson.SetRawBytesOptions(result, path, patch.value, &sjson.Options{
++				Optimistic:     true,
++				ReplaceInPlace: true,
++			})
++		} else {
++			result, err = sjson.SetRawBytes(result, path, patch.value)
++			owned = true
++		}
++		if err != nil {
++			return nil, fmt.Errorf("patch Responses field %q: %w", patch.key, err)
++		}
++	}
++	return result, nil
++}
++
++func responsesJSONLiteralPath(key string) string {
++	var escaped strings.Builder
++	escaped.Grow(len(key) + 1)
++	for i := 0; i < len(key); i++ {
++		if strings.ContainsRune(".*?#@|\\", rune(key[i])) || (i == 0 && key[i] == ':') {
++			escaped.WriteByte('\\')
++		}
++		escaped.WriteByte(key[i])
++	}
++	return escaped.String()
++}
++
++func responsesJSONSharesStorage(left, right []byte) bool {
++	return len(left) == len(right) && (len(left) == 0 || &left[0] == &right[0])
++}
++
++// responsesRawShapeCompatible rejects cases where standard encoding/json would
++// change presence or structure. RawMessage subtrees are intentionally opaque;
++// their contents are preserved by the DTO and need no recursive inspection.
++func responsesRawShapeCompatible(data []byte, source *dto.OpenAIResponsesRequest) bool {
++	if source == nil {
++		return false
++	}
++	if !json.Valid(data) || !utf8.Valid(data) {
++		return false
++	}
++	root := gjson.Parse(responsesReadOnlyBytesString(data))
++	if !root.IsObject() {
++		return false
++	}
++	keys := make(map[string]gjson.Result, len(responsesRequestJSONFields))
++	valid := true
++	root.ForEach(func(key, value gjson.Result) bool {
++		name := key.String()
++		if _, duplicate := keys[name]; duplicate {
++			valid = false
++			return false
++		}
++		if _, known := responsesRequestJSONFields[name]; !known {
++			valid = false
++			return false
++		}
++		keys[name] = value
++		return true
++	})
++	if !valid {
++		return false
++	}
++	model, modelExists := keys["model"]
++	if !modelExists || model.Type != gjson.String || model.String() != source.Model {
++		return false
++	}
++
++	value := reflect.ValueOf(*source)
++	typeOfRequest := value.Type()
++	for i := 0; i < typeOfRequest.NumField(); i++ {
++		field := typeOfRequest.Field(i)
++		name, omitempty, skip := responsesJSONFieldTag(field)
++		if skip || name == "" {
++			continue
++		}
++		fieldValue := value.Field(i)
++		present := false
++		if _, exists := keys[name]; exists {
++			present = true
++		}
++		if omitempty && responsesJSONEmptyValue(fieldValue) {
++			if present {
++				return false
++			}
++			continue
++		}
++		if !present {
++			return false
++		}
++	}
++
++	if source.Reasoning != nil && !responsesRawNestedShapeCompatible(keys["reasoning"], reflect.ValueOf(*source.Reasoning)) {
++		return false
++	}
++	if source.StreamOptions != nil && !responsesRawNestedShapeCompatible(keys["stream_options"], reflect.ValueOf(*source.StreamOptions)) {
++		return false
++	}
++	return true
++}
++
++// responsesReadOnlyBytesString avoids copying a large request solely for
++// GJSON's synchronous shape scan. It is intentionally used only as the
++// immediate input to gjson.Parse in responsesRawShapeCompatible. Neither this
++// string nor a gjson.Result derived from it may escape that synchronous call or
++// be retained after it returns; the backing bytes must remain alive and
++// immutable throughout responsesRawShapeCompatible.
++func responsesReadOnlyBytesString(data []byte) string {
++	if len(data) == 0 {
++		return ""
++	}
++	return unsafe.String(unsafe.SliceData(data), len(data))
++}
++
++func responsesRawNestedShapeCompatible(value gjson.Result, decoded reflect.Value) bool {
++	if !value.Exists() || !value.IsObject() {
++		return false
++	}
++	typ := decoded.Type()
++	known := responsesJSONFieldNames(typ)
++	seen := make(map[string]gjson.Result, len(known))
++	valid := true
++	value.ForEach(func(key, child gjson.Result) bool {
++		name := key.String()
++		if _, duplicate := seen[name]; duplicate {
++			valid = false
++			return false
++		}
++		if _, ok := known[name]; !ok {
++			valid = false
++			return false
++		}
++		seen[name] = child
++		return true
++	})
++	if !valid {
++		return false
++	}
++	for i := 0; i < typ.NumField(); i++ {
++		field := typ.Field(i)
++		name, omitempty, skip := responsesJSONFieldTag(field)
++		if skip || name == "" {
++			continue
++		}
++		fieldValue := decoded.Field(i)
++		_, present := seen[name]
++		if omitempty && responsesJSONEmptyValue(fieldValue) {
++			if present {
++				return false
++			}
++			continue
++		}
++		if !present {
++			return false
++		}
++	}
++	return true
++}
++
++func responsesJSONFieldNames(typ reflect.Type) map[string]struct{} {
++	fields := make(map[string]struct{}, typ.NumField())
++	for i := 0; i < typ.NumField(); i++ {
++		name, _, skip := responsesJSONFieldTag(typ.Field(i))
++		if !skip && name != "" {
++			fields[name] = struct{}{}
++		}
++	}
++	return fields
++}
++
++func responsesJSONFieldTag(field reflect.StructField) (name string, omitempty bool, skip bool) {
++	tag := field.Tag.Get("json")
++	if tag == "-" {
++		return "", false, true
++	}
++	parts := strings.Split(tag, ",")
++	if len(parts) == 0 || parts[0] == "" {
++		return field.Name, false, false
++	}
++	for _, option := range parts[1:] {
++		if option == "omitempty" {
++			omitempty = true
++		}
++	}
++	return parts[0], omitempty, false
++}
++
++func responsesJSONEmptyValue(value reflect.Value) bool {
++	if !value.IsValid() {
++		return true
++	}
++	switch value.Kind() {
++	case reflect.Array, reflect.Map, reflect.Slice, reflect.String:
++		return value.Len() == 0
++	case reflect.Bool:
++		return !value.Bool()
++	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
++		return value.Int() == 0
++	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
++		return value.Uint() == 0
++	case reflect.Float32, reflect.Float64:
++		return value.Float() == 0
++	case reflect.Interface, reflect.Pointer:
++		return value.IsNil()
++	default:
++		return false
++	}
++}
+diff --git a/relay/responses_body_test.go b/relay/responses_body_test.go
+new file mode 100644
+index 00000000..3a8d1a2c
+--- /dev/null
++++ b/relay/responses_body_test.go
+@@ -0,0 +1,613 @@
++package relay
++
++import (
++	"bytes"
++	"encoding/json"
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"testing"
++
++	"github.com/QuantumNous/new-api/common"
++	"github.com/QuantumNous/new-api/constant"
++	relaycommon "github.com/QuantumNous/new-api/relay/common"
++	relayconstant "github.com/QuantumNous/new-api/relay/constant"
++	"github.com/QuantumNous/new-api/relaykit/dto"
++	"github.com/gin-gonic/gin"
++	"github.com/stretchr/testify/require"
++	"github.com/tidwall/gjson"
++	"github.com/tidwall/sjson"
++)
++
++var benchmarkResponsesBodySink []byte
++
++func TestPlanResponsesRequestBodyBorrowsCompatibleCanonicalBody(t *testing.T) {
++	raw := "{\n" +
++		`  "input": "` + strings.Repeat("x", responsesRawBodyMinBytes) + "\",\n" +
++		`  "model": "gpt-5.1",` + "\n" +
++		`  "tools": [{"type":"future_tool","future_tool_field":1}],` + "\n" +
++		`  "metadata": {"future_metadata_field":true}` + "\n}"
++	c, source, storage, before := newResponsesPlanFixture(t, raw, false)
++	requireResponsesRawShapeEligible(t, raw, source)
++	sourceBefore := marshalResponsesSource(t, source)
++
++	plan, err := planResponsesRequestBody(c, responsesPlanInfo(constant.APITypeOpenAI, relayconstant.RelayModeResponses), source, *source)
++	require.NoError(t, err)
++	require.Same(t, storage, plan.storage)
++	require.True(t, responsesJSONSharesStorage(plan.canonical, plan.data))
++	require.True(t, responsesJSONSharesStorage(storage.data, plan.data))
++	require.Equal(t, []byte(raw), plan.data)
++	requireResponsesFixtureUnchanged(t, storage, before, source, sourceBefore)
++}
++
++func TestPlanResponsesRequestBodyUsesTypedFallbackForSmallBody(t *testing.T) {
++	const raw = "{\n  \"input\": \"small\",\n  \"model\": \"gpt-5\"\n}"
++	c, source, storage, before := newResponsesPlanFixture(t, raw, false)
++	require.Less(t, len(raw), responsesRawBodyMinBytes)
++	require.True(t, responsesRawShapeCompatible([]byte(raw), source))
++	sourceBefore := marshalResponsesSource(t, source)
++
++	plan, err := planResponsesRequestBody(c, responsesPlanInfo(constant.APITypeOpenAI, relayconstant.RelayModeResponses), source, *source)
++	require.NoError(t, err)
++	requireTypedResponsesFallback(t, plan)
++	require.JSONEq(t, `{"model":"gpt-5","input":"small"}`, string(plan.data))
++	require.NotEqual(t, raw, string(plan.data))
++	requireResponsesFixtureUnchanged(t, storage, before, source, sourceBefore)
++}
++
++func TestPlanResponsesRequestBodyUsesTypedFallbackForMultiplePatches(t *testing.T) {
++	raw := padResponsesPlanJSON(t, `{"model":"gpt-5-high","input":[],"reasoning":{"effort":"medium","summary":"auto"},"store":true}`)
++	c, source, storage, before := newResponsesPlanFixture(t, raw, false)
++	requireResponsesRawShapeEligible(t, raw, source)
++	sourceBefore := marshalResponsesSource(t, source)
++	converted := *source
++	reasoning := *source.Reasoning
++	converted.Model = "gpt-5"
++	reasoning.Effort = "high"
++	converted.Reasoning = &reasoning
++	patches, ok, err := buildResponsesJSONPatches(source, &converted)
++	require.NoError(t, err)
++	require.True(t, ok)
++	require.Greater(t, len(patches), 1)
++
++	plan, err := planResponsesRequestBody(c, responsesPlanInfo(constant.APITypeOpenAI, relayconstant.RelayModeResponses), source, converted)
++	require.NoError(t, err)
++	requireTypedResponsesFallback(t, plan)
++	assertResponsesJSONSemanticsMatch(t, "multiple patches", plan.data, mustMarshalResponsesValue(t, converted))
++	require.Equal(t, "gpt-5", gjson.GetBytes(plan.data, "model").String())
++	require.Equal(t, "high", gjson.GetBytes(plan.data, "reasoning.effort").String())
++	requireResponsesFixtureUnchanged(t, storage, before, source, sourceBefore)
++}
++
++func TestPlanResponsesRequestBodyAppliesCodexMutations(t *testing.T) {
++	tests := []struct {
++		name             string
++		raw              string
++		instructions     json.RawMessage
++		wantInstructions string
++	}{
++		{
++			name:             "replace instructions and remove optional fields",
++			raw:              `{"model":"gpt-5","input":[],"instructions":"old","max_output_tokens":4096,"store":true,"temperature":0.25}`,
++			instructions:     json.RawMessage(`"system\nold"`),
++			wantInstructions: "system\nold",
++		},
++		{
++			name:             "insert required empty instructions",
++			raw:              `{"model":"gpt-5","input":[],"store":true}`,
++			instructions:     json.RawMessage(`""`),
++			wantInstructions: "",
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			raw := padResponsesPlanJSON(t, tt.raw)
++			c, source, storage, before := newResponsesPlanFixture(t, raw, false)
++			requireResponsesRawShapeEligible(t, raw, source)
++			sourceBefore := marshalResponsesSource(t, source)
++			converted := *source
++			converted.Instructions = tt.instructions
++			converted.MaxOutputTokens = nil
++			converted.Store = json.RawMessage(`false`)
++			converted.Temperature = nil
++			patches, ok, err := buildResponsesJSONPatches(source, &converted)
++			require.NoError(t, err)
++			require.True(t, ok)
++			require.Greater(t, len(patches), 1)
++
++			plan, err := planResponsesRequestBody(c, responsesPlanInfo(constant.APITypeCodex, relayconstant.RelayModeResponses), source, converted)
++			require.NoError(t, err)
++			requireTypedResponsesFallback(t, plan)
++			assertResponsesJSONSemanticsMatch(t, "Codex", plan.data, mustMarshalResponsesValue(t, converted))
++			require.Equal(t, tt.wantInstructions, gjson.GetBytes(plan.data, "instructions").String())
++			require.False(t, gjson.GetBytes(plan.data, "store").Bool())
++			require.False(t, gjson.GetBytes(plan.data, "max_output_tokens").Exists())
++			require.False(t, gjson.GetBytes(plan.data, "temperature").Exists())
++			requireResponsesFixtureUnchanged(t, storage, before, source, sourceBefore)
++		})
++	}
++}
++
++func TestPlanResponsesRequestBodyMatchesThinkingBudgetMarshalBoundary(t *testing.T) {
++	tests := []struct {
++		name           string
++		sourceModel    string
++		convertedModel string
++		wantBudget     bool
++		wantStorage    bool
++		wantBorrow     bool
++	}{
++		{name: "qwen", sourceModel: "qwen-plus", convertedModel: "qwen-plus", wantBudget: true, wantStorage: true, wantBorrow: true},
++		{name: "qualified qwq", sourceModel: "provider/QwQ-32B", convertedModel: "provider/QwQ-32B", wantBudget: true, wantStorage: true, wantBorrow: true},
++		{name: "non qwen", sourceModel: "gpt-5", convertedModel: "gpt-5", wantBudget: false, wantStorage: true},
++		{name: "mapped away from qwen", sourceModel: "qwen-plus", convertedModel: "gpt-5", wantBudget: false},
++		{name: "mapped to qwen", sourceModel: "gpt-5", convertedModel: "qwen-plus", wantBudget: true, wantStorage: true},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			rawModel, err := json.Marshal(tt.sourceModel)
++			require.NoError(t, err)
++			raw := `{"model":` + string(rawModel) + `,"input":"` + strings.Repeat("x", responsesRawBodyMinBytes) + `","thinking_budget":0}`
++			c, source, storage, before := newResponsesPlanFixture(t, raw, false)
++			requireResponsesRawShapeEligible(t, raw, source)
++			sourceBefore := marshalResponsesSource(t, source)
++			converted := *source
++			converted.Model = tt.convertedModel
++
++			plan, err := planResponsesRequestBody(c, responsesPlanInfo(constant.APITypeOpenAI, relayconstant.RelayModeResponses), source, converted)
++			require.NoError(t, err)
++			require.Equal(t, tt.convertedModel, gjson.GetBytes(plan.data, "model").String())
++			require.Equal(t, tt.wantBudget, gjson.GetBytes(plan.data, "thinking_budget").Exists())
++			require.Equal(t, tt.wantStorage, plan.storage != nil)
++			require.Equal(t, tt.wantBorrow, responsesJSONSharesStorage(plan.canonical, plan.data))
++			requireResponsesFixtureUnchanged(t, storage, before, source, sourceBefore)
++		})
++	}
++}
++
++func TestPlanResponsesRequestBodyUsesTypedFallbackForUnknownFields(t *testing.T) {
++	tests := []struct {
++		name       string
++		raw        string
++		absentPath string
++	}{
++		{
++			name:       "unknown top level field",
++			raw:        `{"model":"gpt-5","input":[],"future_field":{"keep":true}}`,
++			absentPath: "future_field",
++		},
++		{
++			name:       "unknown reasoning field",
++			raw:        `{"model":"gpt-5","input":[],"reasoning":{"effort":"high","future":true}}`,
++			absentPath: "reasoning.future",
++		},
++		{
++			name:       "unknown stream options field",
++			raw:        `{"model":"gpt-5","input":[],"stream_options":{"include_usage":true,"future":true}}`,
++			absentPath: "stream_options.future",
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			raw := padResponsesPlanJSON(t, tt.raw)
++			c, source, storage, before := newResponsesPlanFixture(t, raw, false)
++			require.False(t, responsesRawShapeCompatible([]byte(raw), source))
++			sourceBefore := marshalResponsesSource(t, source)
++
++			plan, err := planResponsesRequestBody(c, responsesPlanInfo(constant.APITypeOpenAI, relayconstant.RelayModeResponses), source, *source)
++			require.NoError(t, err)
++			requireTypedResponsesFallback(t, plan)
++			assertResponsesJSONSemanticsMatch(t, "unknown field", plan.data, sourceBefore)
++			require.False(t, gjson.GetBytes(plan.data, tt.absentPath).Exists())
++			requireResponsesFixtureUnchanged(t, storage, before, source, sourceBefore)
++		})
++	}
++}
++
++func TestPlanResponsesRequestBodyUsesTypedFallbackForDuplicateFields(t *testing.T) {
++	tests := []struct {
++		name string
++		raw  string
++	}{
++		{
++			name: "duplicate root field",
++			raw:  `{"model":"gpt-old","model":"gpt-last","input":[]}`,
++		},
++		{
++			name: "duplicate structured field",
++			raw:  `{"model":"gpt-5","input":[],"reasoning":{"effort":"low","effort":"high"}}`,
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			raw := padResponsesPlanJSON(t, tt.raw)
++			c, source, storage, before := newResponsesPlanFixture(t, raw, false)
++			require.False(t, responsesRawShapeCompatible([]byte(raw), source))
++			sourceBefore := marshalResponsesSource(t, source)
++
++			plan, err := planResponsesRequestBody(c, responsesPlanInfo(constant.APITypeOpenAI, relayconstant.RelayModeResponses), source, *source)
++			require.NoError(t, err)
++			requireTypedResponsesFallback(t, plan)
++			assertResponsesJSONSemanticsMatch(t, "duplicate field", plan.data, sourceBefore)
++			requireResponsesFixtureUnchanged(t, storage, before, source, sourceBefore)
++		})
++	}
++}
++
++func TestPlanResponsesRequestBodyHandlesExplicitNullLikeStandardMarshal(t *testing.T) {
++	tests := []struct {
++		name           string
++		raw            string
++		wantCompatible bool
++		wantBorrow     bool
++	}{
++		{
++			name:           "opaque RawMessage null is preserved",
++			raw:            `{"model":"gpt-5","input":null}`,
++			wantCompatible: true,
++			wantBorrow:     true,
++		},
++		{
++			name: "nil reasoning pointer is omitted",
++			raw:  `{"model":"gpt-5","input":[],"reasoning":null}`,
++		},
++		{
++			name: "nil stream options pointer is omitted",
++			raw:  `{"model":"gpt-5","input":[],"stream_options":null}`,
++		},
++		{
++			name: "null scalar is omitted",
++			raw:  `{"model":"gpt-5","input":[],"temperature":null}`,
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			raw := padResponsesPlanJSON(t, tt.raw)
++			c, source, storage, before := newResponsesPlanFixture(t, raw, false)
++			require.Equal(t, tt.wantCompatible, responsesRawShapeCompatible([]byte(raw), source))
++			sourceBefore := marshalResponsesSource(t, source)
++
++			plan, err := planResponsesRequestBody(c, responsesPlanInfo(constant.APITypeOpenAI, relayconstant.RelayModeResponses), source, *source)
++			require.NoError(t, err)
++			assertResponsesJSONSemanticsMatch(t, "explicit null", plan.data, sourceBefore)
++			require.Equal(t, tt.wantBorrow, plan.storage != nil && responsesJSONSharesStorage(plan.canonical, plan.data))
++			if !tt.wantBorrow {
++				requireTypedResponsesFallback(t, plan)
++			}
++			requireResponsesFixtureUnchanged(t, storage, before, source, sourceBefore)
++		})
++	}
++}
++
++func TestPlanResponsesRequestBodyUsesTypedFallbackOutsideAuditedPath(t *testing.T) {
++	tests := []struct {
++		name      string
++		apiType   int
++		relayMode int
++		disk      bool
++		mutate    func(*dto.OpenAIResponsesRequest)
++	}{
++		{
++			name:      "unsupported mutation",
++			apiType:   constant.APITypeOpenAI,
++			relayMode: relayconstant.RelayModeResponses,
++			mutate: func(request *dto.OpenAIResponsesRequest) {
++				topP := 0.5
++				request.TopP = &topP
++			},
++		},
++		{
++			name:      "unsupported API type",
++			apiType:   constant.APITypeGemini,
++			relayMode: relayconstant.RelayModeResponses,
++		},
++		{
++			name:      "compact mode",
++			apiType:   constant.APITypeOpenAI,
++			relayMode: relayconstant.RelayModeResponsesCompact,
++		},
++		{
++			name:      "disk storage",
++			apiType:   constant.APITypeOpenAI,
++			relayMode: relayconstant.RelayModeResponses,
++			disk:      true,
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			raw := padResponsesPlanJSON(t, `{"model":"gpt-5","input":[]}`)
++			c, source, storage, before := newResponsesPlanFixture(t, raw, tt.disk)
++			requireResponsesRawShapeEligible(t, raw, source)
++			sourceBefore := marshalResponsesSource(t, source)
++			converted := *source
++			if tt.mutate != nil {
++				tt.mutate(&converted)
++				_, ok, buildErr := buildResponsesJSONPatches(source, &converted)
++				require.NoError(t, buildErr)
++				require.False(t, ok)
++			}
++
++			plan, err := planResponsesRequestBody(c, responsesPlanInfo(tt.apiType, tt.relayMode), source, converted)
++			require.NoError(t, err)
++			requireTypedResponsesFallback(t, plan)
++			assertResponsesJSONSemanticsMatch(t, "fallback guard", plan.data, mustMarshalResponsesValue(t, converted))
++			requireResponsesFixtureUnchanged(t, storage, before, source, sourceBefore)
++		})
++	}
++}
++
++func TestPlanResponsesRequestBodyUsesTypedFallbackForConvertedProtocol(t *testing.T) {
++	const raw = `{"model":"gpt-5","input":[]}`
++	c, source, storage, before := newResponsesPlanFixture(t, raw, false)
++	sourceBefore := marshalResponsesSource(t, source)
++	converted := map[string]any{
++		"model":    "gemini-2.5-pro",
++		"contents": []any{},
++	}
++
++	plan, err := planResponsesRequestBody(c, responsesPlanInfo(constant.APITypeAdvancedCustom, relayconstant.RelayModeResponses), source, converted)
++	require.NoError(t, err)
++	requireTypedResponsesFallback(t, plan)
++	require.JSONEq(t, `{"model":"gemini-2.5-pro","contents":[]}`, string(plan.data))
++	requireResponsesFixtureUnchanged(t, storage, before, source, sourceBefore)
++}
++
++func TestApplyResponsesJSONPatchesOwnsBufferBeforeInPlaceUpdates(t *testing.T) {
++	tests := []struct {
++		name    string
++		patches []responsesJSONPatch
++		want    string
++	}{
++		{
++			name: "first replacement",
++			patches: []responsesJSONPatch{
++				{key: "model", value: []byte(`"gpt-5"`)},
++				{key: "store", value: []byte(`false`)},
++			},
++			want: `{"model":"gpt-5","input":[],"store":false}`,
++		},
++		{
++			name: "first deletion",
++			patches: []responsesJSONPatch{
++				{key: "store", delete: true},
++				{key: "model", value: []byte(`"gpt-5"`)},
++			},
++			want: `{"model":"gpt-5","input":[]}`,
++		},
++		{
++			name: "missing first deletion keeps canonical borrowed",
++			patches: []responsesJSONPatch{
++				{key: "missing", delete: true},
++				{key: "model", value: []byte(`"gpt-5"`)},
++			},
++			want: `{"model":"gpt-5","input":[],"store":true}`,
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			canonical := []byte(`{"model":"gpt-5-high","input":[],"store":true}`)
++			before := bytes.Clone(canonical)
++
++			result, err := applyResponsesJSONPatches(canonical, tt.patches)
++			require.NoError(t, err)
++			require.Equal(t, before, canonical, "patching must never mutate canonical storage")
++			require.NotSame(t, &canonical[0], &result[0], "patched output must own its buffer")
++			require.JSONEq(t, tt.want, string(result))
++		})
++	}
++}
++
++func TestPlanResponsesRequestBodyReturnsMarshalErrorForInvalidRawMessage(t *testing.T) {
++	tests := []struct {
++		name           string
++		wantBuildError bool
++		mutate         func(*dto.OpenAIResponsesRequest)
++	}{
++		{
++			name:           "audited raw field",
++			wantBuildError: true,
++			mutate: func(request *dto.OpenAIResponsesRequest) {
++				request.Instructions = json.RawMessage(`{`)
++			},
++		},
++		{
++			name: "unsupported raw field",
++			mutate: func(request *dto.OpenAIResponsesRequest) {
++				request.Input = json.RawMessage(`{`)
++			},
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			raw := padResponsesPlanJSON(t, `{"model":"gpt-5","input":[]}`)
++			c, source, storage, before := newResponsesPlanFixture(t, raw, false)
++			requireResponsesRawShapeEligible(t, raw, source)
++			sourceBefore := marshalResponsesSource(t, source)
++			converted := *source
++			tt.mutate(&converted)
++			_, ok, buildErr := buildResponsesJSONPatches(source, &converted)
++			if tt.wantBuildError {
++				require.Error(t, buildErr)
++			} else {
++				require.NoError(t, buildErr)
++				require.False(t, ok)
++			}
++
++			plan, err := planResponsesRequestBody(c, responsesPlanInfo(constant.APITypeOpenAI, relayconstant.RelayModeResponses), source, converted)
++			require.Error(t, err)
++			require.Empty(t, plan.data)
++			require.Nil(t, plan.storage)
++			requireResponsesFixtureUnchanged(t, storage, before, source, sourceBefore)
++		})
++	}
++}
++
++func BenchmarkPlanResponsesRequestBody(b *testing.B) {
++	for _, size := range []int{1024, 2 * 1024, 4 * 1024, 8 * 1024, 32 * 1024, 200 * 1024} {
++		raw := []byte(`{"model":"gpt-5","input":"` + strings.Repeat("x", size) + `","max_output_tokens":4096,"reasoning":{"effort":"medium"},"store":true,"temperature":0.25}`)
++		var source dto.OpenAIResponsesRequest
++		if err := common.Unmarshal(raw, &source); err != nil {
++			b.Fatal(err)
++		}
++		storage := &responsesPlanStorage{Reader: bytes.NewReader(raw), data: raw}
++		c, _ := gin.CreateTestContext(httptest.NewRecorder())
++		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(raw))
++		c.Request.Header.Set("Content-Type", "application/json")
++		c.Set(common.KeyBodyStorage, storage)
++		info := responsesPlanInfo(constant.APITypeOpenAI, relayconstant.RelayModeResponses)
++
++		b.Run(byteSizeName(size)+"/planner_noop", func(b *testing.B) {
++			b.ReportAllocs()
++			for i := 0; i < b.N; i++ {
++				plan, err := planResponsesRequestBody(c, info, &source, source)
++				if err != nil {
++					b.Fatal(err)
++				}
++				benchmarkResponsesBodySink = plan.data
++			}
++		})
++
++		b.Run(byteSizeName(size)+"/typed_marshal", func(b *testing.B) {
++			b.ReportAllocs()
++			for i := 0; i < b.N; i++ {
++				data, err := common.Marshal(&source)
++				if err != nil {
++					b.Fatal(err)
++				}
++				benchmarkResponsesBodySink = data
++			}
++		})
++
++		modelConverted := source
++		modelConverted.Model = "gpt-5-upstream"
++		b.Run(byteSizeName(size)+"/planner_model_patch", func(b *testing.B) {
++			b.ReportAllocs()
++			for i := 0; i < b.N; i++ {
++				plan, err := planResponsesRequestBody(c, info, &source, modelConverted)
++				if err != nil {
++					b.Fatal(err)
++				}
++				benchmarkResponsesBodySink = plan.data
++			}
++		})
++
++		converted := source
++		converted.Instructions = json.RawMessage(`""`)
++		converted.MaxOutputTokens = nil
++		converted.Store = json.RawMessage(`false`)
++		converted.Temperature = nil
++		codexInfo := responsesPlanInfo(constant.APITypeCodex, relayconstant.RelayModeResponses)
++		b.Run(byteSizeName(size)+"/planner_codex_multi_patch", func(b *testing.B) {
++			b.ReportAllocs()
++			for i := 0; i < b.N; i++ {
++				plan, err := planResponsesRequestBody(c, codexInfo, &source, converted)
++				if err != nil {
++					b.Fatal(err)
++				}
++				benchmarkResponsesBodySink = plan.data
++			}
++		})
++	}
++}
++
++type responsesPlanStorage struct {
++	*bytes.Reader
++	data []byte
++	disk bool
++}
++
++func padResponsesPlanJSON(t *testing.T, raw string) string {
++	t.Helper()
++	padded, err := sjson.Set(raw, "metadata.scheme3_padding", strings.Repeat("x", responsesRawBodyMinBytes))
++	require.NoError(t, err)
++	require.GreaterOrEqual(t, len(padded), responsesRawBodyMinBytes)
++	return padded
++}
++
++func requireResponsesRawShapeEligible(t *testing.T, raw string, source *dto.OpenAIResponsesRequest) {
++	t.Helper()
++	require.GreaterOrEqual(t, len(raw), responsesRawBodyMinBytes)
++	require.True(t, responsesRawShapeCompatible([]byte(raw), source))
++}
++
++func (s *responsesPlanStorage) Bytes() ([]byte, error) {
++	return s.data, nil
++}
++
++func (s *responsesPlanStorage) Size() int64 {
++	return int64(len(s.data))
++}
++
++func (s *responsesPlanStorage) IsDisk() bool {
++	return s.disk
++}
++
++func (s *responsesPlanStorage) Close() error {
++	return nil
++}
++
++func newResponsesPlanFixture(t *testing.T, raw string, disk bool) (*gin.Context, *dto.OpenAIResponsesRequest, *responsesPlanStorage, []byte) {
++	t.Helper()
++
++	data := make([]byte, len(raw), len(raw)+1024)
++	copy(data, raw)
++	var source dto.OpenAIResponsesRequest
++	require.NoError(t, common.Unmarshal(data, &source))
++
++	storage := &responsesPlanStorage{
++		Reader: bytes.NewReader(data),
++		data:   data,
++		disk:   disk,
++	}
++	c, _ := gin.CreateTestContext(httptest.NewRecorder())
++	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(data))
++	c.Request.Header.Set("Content-Type", "application/json")
++	c.Set(common.KeyBodyStorage, storage)
++	return c, &source, storage, bytes.Clone(data)
++}
++
++func responsesPlanInfo(apiType, relayMode int) *relaycommon.RelayInfo {
++	return &relaycommon.RelayInfo{
++		RelayMode: relayMode,
++		ChannelMeta: &relaycommon.ChannelMeta{
++			ApiType: apiType,
++		},
++	}
++}
++
++func marshalResponsesSource(t *testing.T, source *dto.OpenAIResponsesRequest) []byte {
++	t.Helper()
++	data, err := common.Marshal(source)
++	require.NoError(t, err)
++	return data
++}
++
++func requireResponsesFixtureUnchanged(
++	t *testing.T,
++	storage *responsesPlanStorage,
++	canonicalBefore []byte,
++	source *dto.OpenAIResponsesRequest,
++	sourceBefore []byte,
++) {
++	t.Helper()
++	require.Equal(t, canonicalBefore, storage.data, "planner mutated canonical request bytes")
++	require.Equal(t, sourceBefore, marshalResponsesSource(t, source), "planner mutated source DTO")
++	position, err := storage.Seek(0, io.SeekCurrent)
++	require.NoError(t, err)
++	require.Equal(t, int64(0), position, "planner left canonical storage at a different offset")
++}
++
++func requireTypedResponsesFallback(t *testing.T, plan responsesBodyPlan) {
++	t.Helper()
++	require.Nil(t, plan.storage)
++	require.Nil(t, plan.canonical)
++}
+diff --git a/relay/responses_corpus_test.go b/relay/responses_corpus_test.go
+new file mode 100644
+index 00000000..cfa86d2f
+--- /dev/null
++++ b/relay/responses_corpus_test.go
+@@ -0,0 +1,128 @@
++package relay
++
++import (
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"reflect"
++	"testing"
++
++	"github.com/QuantumNous/new-api/common"
++	"github.com/QuantumNous/new-api/constant"
++	relayconstant "github.com/QuantumNous/new-api/relay/constant"
++	"github.com/gin-gonic/gin"
++)
++
++func TestResponsesBodyPlanCapturedCorpus(t *testing.T) {
++	manifestPath := os.Getenv("RESPONSES_FIXTURE_MANIFEST")
++	if manifestPath == "" {
++		t.Skip("RESPONSES_FIXTURE_MANIFEST is not set")
++	}
++	previousGinMode := gin.Mode()
++	gin.SetMode(gin.TestMode)
++	t.Cleanup(func() { gin.SetMode(previousGinMode) })
++
++	rawManifest, err := os.ReadFile(manifestPath)
++	if err != nil {
++		t.Fatal(err)
++	}
++	var manifest struct {
++		Records []struct {
++			ID              string `json:"id"`
++			RequestBodyPath string `json:"request_body_path"`
++		} `json:"records"`
++	}
++	if err := json.Unmarshal(rawManifest, &manifest); err != nil {
++		t.Fatal(err)
++	}
++	if len(manifest.Records) == 0 {
++		t.Fatal("capture manifest contains no request records")
++	}
++
++	root := filepath.Dir(manifestPath)
++	borrowed := 0
++	borrowEligible := 0
++	rawCodexPlans := 0
++	typedCodexPlans := 0
++	for _, record := range manifest.Records {
++		raw, err := os.ReadFile(filepath.Join(root, record.RequestBodyPath))
++		if err != nil {
++			t.Fatalf("fixture %s: %v", record.ID, err)
++		}
++		c, source, storage, before := newResponsesPlanFixture(t, string(raw), false)
++		sourceBefore := mustMarshalResponsesValue(t, source)
++		if len(raw) >= responsesRawBodyMinBytes && responsesRawShapeCompatible(raw, source) {
++			borrowEligible++
++		}
++
++		plan, err := planResponsesRequestBody(
++			c,
++			responsesPlanInfo(constant.APITypeOpenAI, relayconstant.RelayModeResponses),
++			source,
++			*source,
++		)
++		if err != nil {
++			t.Fatalf("fixture %s no-op plan: %v", record.ID, err)
++		}
++		if plan.storage != nil && responsesJSONSharesStorage(plan.canonical, plan.data) {
++			borrowed++
++		}
++		assertResponsesJSONSemanticsMatch(t, record.ID+" no-op", plan.data, sourceBefore)
++
++		converted := *source
++		converted.Model = source.Model + "-upstream"
++		if len(converted.Instructions) == 0 {
++			converted.Instructions = json.RawMessage(`""`)
++		}
++		converted.Store = json.RawMessage(`false`)
++		converted.MaxOutputTokens = nil
++		converted.Temperature = nil
++		codexPlan, err := planResponsesRequestBody(
++			c,
++			responsesPlanInfo(constant.APITypeCodex, relayconstant.RelayModeResponses),
++			source,
++			converted,
++		)
++		if err != nil {
++			t.Fatalf("fixture %s Codex plan: %v", record.ID, err)
++		}
++		if codexPlan.storage != nil {
++			rawCodexPlans++
++		} else {
++			typedCodexPlans++
++		}
++		assertResponsesJSONSemanticsMatch(t, record.ID+" Codex", codexPlan.data, mustMarshalResponsesValue(t, converted))
++		requireResponsesFixtureUnchanged(t, storage, before, source, sourceBefore)
++	}
++
++	if borrowed != borrowEligible {
++		t.Fatalf("no-op raw borrow coverage %d/%d eligible", borrowed, borrowEligible)
++	}
++	if rawCodexPlans+typedCodexPlans != len(manifest.Records) {
++		t.Fatalf("Codex planner coverage %d/%d", rawCodexPlans+typedCodexPlans, len(manifest.Records))
++	}
++	t.Logf("checked=%d no_op_borrowed=%d/%d eligible codex_raw=%d codex_typed=%d", len(manifest.Records), borrowed, borrowEligible, rawCodexPlans, typedCodexPlans)
++}
++
++func mustMarshalResponsesValue(t *testing.T, value any) []byte {
++	t.Helper()
++	data, err := common.Marshal(value)
++	if err != nil {
++		t.Fatal(err)
++	}
++	return data
++}
++
++func assertResponsesJSONSemanticsMatch(t *testing.T, name string, gotJSON, wantJSON []byte) {
++	t.Helper()
++	var got, want any
++	if err := json.Unmarshal(gotJSON, &got); err != nil {
++		t.Fatalf("%s planned JSON: %v", name, err)
++	}
++	if err := json.Unmarshal(wantJSON, &want); err != nil {
++		t.Fatalf("%s typed JSON: %v", name, err)
++	}
++	if !reflect.DeepEqual(want, got) {
++		t.Fatalf("%s changed outbound JSON semantics", name)
++	}
++}
+diff --git a/relay/responses_handler.go b/relay/responses_handler.go
+index c736c6a5..8aea001c 100644
+--- a/relay/responses_handler.go
++++ b/relay/responses_handler.go
+@@ -61,9 +61,9 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
+ 		)
+ 	}
+ 
+-	request, err := common.DeepCopy(responsesReq)
++	request, err := cloneOpenAIResponsesAttempt(responsesReq)
+ 	if err != nil {
+-		return types.NewError(fmt.Errorf("failed to copy request to GeneralOpenAIRequest: %w", err), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
++		return types.NewError(fmt.Errorf("failed to copy Responses request: %w", err), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
+ 	}
+ 
+ 	err = helper.ModelMappedHelper(c, info, request)
+@@ -89,10 +89,11 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
+ 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+ 		}
+ 		relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
+-		jsonData, err := common.Marshal(convertedRequest)
++		bodyPlan, err := planResponsesRequestBody(c, info, responsesReq, convertedRequest)
+ 		if err != nil {
+ 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+ 		}
++		jsonData := bodyPlan.data
+ 
+ 		// remove disabled fields for OpenAI Responses API
+ 		jsonData, err = relaycommon.RemoveDisabledFields(jsonData, info.ChannelOtherSettings, info.ChannelSetting.PassThroughBodyEnabled)
+@@ -109,14 +110,22 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
+ 		}
+ 
+ 		logger.LogDebug(c, "requestBody: %s", jsonData)
+-		body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
+-		if err != nil {
+-			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
++		if bodyPlan.storage != nil && responsesJSONSharesStorage(bodyPlan.canonical, jsonData) {
++			if _, err := bodyPlan.storage.Seek(0, io.SeekStart); err != nil {
++				return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
++			}
++			info.UpstreamRequestBodySize = bodyPlan.storage.Size()
++			requestBody = common.ReaderOnly(bodyPlan.storage)
++		} else {
++			body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
++			if err != nil {
++				return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
++			}
++			defer closer.Close()
++			info.UpstreamRequestBodySize = size
++			requestBody = body
+ 		}
+-		defer closer.Close()
+ 		jsonData = nil
+-		info.UpstreamRequestBodySize = size
+-		requestBody = body
+ 	}
+ 
+ 	var httpResp *http.Response
+diff --git a/relay/responses_handler_scheme3_test.go b/relay/responses_handler_scheme3_test.go
+new file mode 100644
+index 00000000..b7a019a0
+--- /dev/null
++++ b/relay/responses_handler_scheme3_test.go
+@@ -0,0 +1,368 @@
++package relay
++
++import (
++	"bytes"
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"sync"
++	"testing"
++
++	"github.com/QuantumNous/new-api/common"
++	"github.com/QuantumNous/new-api/constant"
++	relaycommon "github.com/QuantumNous/new-api/relay/common"
++	relayconstant "github.com/QuantumNous/new-api/relay/constant"
++	"github.com/QuantumNous/new-api/relaykit/dto"
++	"github.com/QuantumNous/new-api/relaykit/types"
++	"github.com/gin-gonic/gin"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++	"github.com/tidwall/gjson"
++)
++
++type scheme3TrackingBodyStorage struct {
++	mu     sync.Mutex
++	data   []byte
++	reader *bytes.Reader
++	reads  int
++}
++
++func newScheme3TrackingBodyStorage(data []byte) *scheme3TrackingBodyStorage {
++	owned := bytes.Clone(data)
++	return &scheme3TrackingBodyStorage{
++		data:   owned,
++		reader: bytes.NewReader(owned),
++	}
++}
++
++func (s *scheme3TrackingBodyStorage) Read(p []byte) (int, error) {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	s.reads++
++	return s.reader.Read(p)
++}
++
++func (s *scheme3TrackingBodyStorage) Seek(offset int64, whence int) (int64, error) {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	return s.reader.Seek(offset, whence)
++}
++
++func (s *scheme3TrackingBodyStorage) Close() error {
++	return nil
++}
++
++func (s *scheme3TrackingBodyStorage) Bytes() ([]byte, error) {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	return s.data, nil
++}
++
++func (s *scheme3TrackingBodyStorage) Size() int64 {
++	return int64(len(s.data))
++}
++
++func (s *scheme3TrackingBodyStorage) IsDisk() bool {
++	return false
++}
++
++func (s *scheme3TrackingBodyStorage) ReadCount() int {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	return s.reads
++}
++
++func (s *scheme3TrackingBodyStorage) Snapshot() []byte {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	return bytes.Clone(s.data)
++}
++
++type scheme3CapturedRequest struct {
++	path          string
++	body          []byte
++	contentLength int64
++	err           error
++}
++
++func TestResponsesHelperScheme3RawNoopBorrowsCanonicalStorage(t *testing.T) {
++	raw := []byte(`{
++  "model": "gpt-5",
++  "input": "` + strings.Repeat("x", responsesRawBodyMinBytes) + `",
++  "reasoning": {"effort":"medium"},
++  "store": true
++}`)
++	upstream, captures := newScheme3FailingUpstream(t)
++	c, info, storage, _ := newScheme3ResponsesFixture(t, raw)
++	requireResponsesRawShapeEligible(t, string(raw), info.Request.(*dto.OpenAIResponsesRequest))
++	configureScheme3Channel(c, constant.ChannelTypeOpenAI, upstream.URL, "test-key", "")
++
++	relayErr := ResponsesHelper(c, info)
++	requireScheme3UpstreamFailure(t, relayErr)
++	capture := <-captures
++	require.NoError(t, capture.err)
++	require.Equal(t, "/v1/responses", capture.path)
++	require.Equal(t, raw, capture.body)
++	require.Equal(t, int64(len(capture.body)), capture.contentLength)
++	require.Greater(t, storage.ReadCount(), 0, "the upstream must read from the original BodyStorage")
++	require.Equal(t, raw, storage.Snapshot())
++}
++
++func TestResponsesHelperScheme3PostProcessingDoesNotBorrowStaleCanonical(t *testing.T) {
++	raw := []byte(`{
++  "model": "gpt-5",
++  "input": "` + strings.Repeat("x", responsesRawBodyMinBytes) + `"
++}`)
++	upstream, captures := newScheme3FailingUpstream(t)
++	c, info, storage, _ := newScheme3ResponsesFixture(t, raw)
++	requireResponsesRawShapeEligible(t, string(raw), info.Request.(*dto.OpenAIResponsesRequest))
++	configureScheme3Channel(c, constant.ChannelTypeOpenAI, upstream.URL, "test-key", "")
++	common.SetContextKey(c, constant.ContextKeyChannelParamOverride, map[string]any{
++		"model":             "override-model",
++		"safety_identifier": "override-user",
++	})
++
++	relayErr := ResponsesHelper(c, info)
++	requireScheme3UpstreamFailure(t, relayErr)
++	capture := <-captures
++	require.NoError(t, capture.err)
++	require.Equal(t, "override-model", gjson.GetBytes(capture.body, "model").String())
++	require.Equal(t, "override-user", gjson.GetBytes(capture.body, "safety_identifier").String())
++	require.Equal(t, int64(len(capture.body)), capture.contentLength)
++	require.Zero(t, storage.ReadCount(), "post-processing changed the body, so the original storage must not be sent")
++	require.Equal(t, raw, storage.Snapshot())
++	require.NotEqual(t, raw, capture.body)
++}
++
++func TestResponsesHelperScheme3SequentialAttemptsDoNotPolluteCanonical(t *testing.T) {
++	raw := []byte(`{
++  "model": "gpt-5",
++  "input": "` + strings.Repeat("x", responsesRawBodyMinBytes) + `",
++  "instructions": "keep the original instructions",
++  "max_output_tokens": 4096,
++  "reasoning": {"effort":"medium","summary":"auto"},
++  "store": true,
++  "temperature": 0.5
++}`)
++	upstream, captures := newScheme3FailingUpstream(t)
++	c, info, storage, wantCanonical := newScheme3ResponsesFixture(t, raw)
++	canonical := info.Request.(*dto.OpenAIResponsesRequest)
++	requireResponsesRawShapeEligible(t, string(raw), canonical)
++
++	configureScheme3Channel(c, constant.ChannelTypeOpenAI, upstream.URL, "test-key", `{"gpt-5":"gpt-5-high"}`)
++	relayErr := ResponsesHelper(c, info)
++	requireScheme3UpstreamFailure(t, relayErr)
++	first := <-captures
++	require.NoError(t, first.err)
++	require.Equal(t, "/v1/responses", first.path)
++	require.Equal(t, int64(len(first.body)), first.contentLength)
++	require.Equal(t, "gpt-5", gjson.GetBytes(first.body, "model").String())
++	require.Equal(t, "high", gjson.GetBytes(first.body, "reasoning.effort").String())
++	require.Equal(t, "auto", gjson.GetBytes(first.body, "reasoning.summary").String())
++	require.Zero(t, storage.ReadCount(), "the first attempt patches reasoning and must own its body")
++	require.Equal(t, wantCanonical, *canonical)
++	require.Equal(t, raw, storage.Snapshot())
++
++	configureScheme3Channel(
++		c,
++		constant.ChannelTypeCodex,
++		upstream.URL,
++		`{"access_token":"test-token","account_id":"test-account"}`,
++		"",
++	)
++	relayErr = ResponsesHelper(c, info)
++	requireScheme3UpstreamFailure(t, relayErr)
++	second := <-captures
++	require.NoError(t, second.err)
++	require.Equal(t, "/backend-api/codex/responses", second.path)
++	require.Equal(t, int64(len(second.body)), second.contentLength)
++	require.Equal(t, "medium", gjson.GetBytes(second.body, "reasoning.effort").String())
++	require.False(t, gjson.GetBytes(second.body, "store").Bool())
++	require.False(t, gjson.GetBytes(second.body, "max_output_tokens").Exists())
++	require.False(t, gjson.GetBytes(second.body, "temperature").Exists())
++	require.Zero(t, storage.ReadCount(), "the Codex attempt patches fields and must own its body")
++	require.Equal(t, wantCanonical, *canonical)
++	require.Equal(t, raw, storage.Snapshot())
++
++	configureScheme3Channel(c, constant.ChannelTypeOpenAI, upstream.URL, "test-key", "")
++	relayErr = ResponsesHelper(c, info)
++	requireScheme3UpstreamFailure(t, relayErr)
++	third := <-captures
++	require.NoError(t, third.err)
++	require.Equal(t, "/v1/responses", third.path)
++	require.Equal(t, int64(len(third.body)), third.contentLength)
++	require.Equal(t, raw, third.body)
++	require.Equal(t, "medium", gjson.GetBytes(third.body, "reasoning.effort").String())
++	require.True(t, gjson.GetBytes(third.body, "store").Bool())
++	require.Equal(t, uint64(4096), gjson.GetBytes(third.body, "max_output_tokens").Uint())
++	require.Greater(t, storage.ReadCount(), 0, "the final no-op attempt should borrow the canonical storage")
++	require.Equal(t, wantCanonical, *canonical)
++	require.Equal(t, raw, storage.Snapshot())
++}
++
++func TestResponsesHelperScheme3ConcurrentAttemptConversionIsRaceFriendly(t *testing.T) {
++	raw := []byte(`{
++  "model": "base-model",
++  "input": [{"role":"user","content":"shared read-only input"}],
++  "reasoning": {"effort":"medium","summary":"auto"},
++  "tools": [{"type":"function","name":"lookup"}]
++}`)
++	var canonical dto.OpenAIResponsesRequest
++	require.NoError(t, common.Unmarshal(raw, &canonical))
++	var wantCanonical dto.OpenAIResponsesRequest
++	require.NoError(t, common.Unmarshal(raw, &wantCanonical))
++
++	type conversionCase struct {
++		apiType     int
++		channelType int
++		model       string
++		wantModel   string
++		wantEffort  string
++	}
++	cases := []conversionCase{
++		{
++			apiType:     constant.APITypeOpenAI,
++			channelType: constant.ChannelTypeOpenAI,
++			model:       "gpt-5-high",
++			wantModel:   "gpt-5",
++			wantEffort:  "high",
++		},
++		{
++			apiType:     constant.APITypeDeepSeek,
++			channelType: constant.ChannelTypeDeepSeek,
++			model:       "deepseek-v4-chat-max",
++			wantModel:   "deepseek-v4-chat",
++			wantEffort:  "max",
++		},
++	}
++
++	type conversionResult struct {
++		body []byte
++		err  error
++	}
++	start := make(chan struct{})
++	results := make(chan conversionResult, len(cases))
++	var wg sync.WaitGroup
++	for _, testCase := range cases {
++		testCase := testCase
++		wg.Add(1)
++		go func() {
++			defer wg.Done()
++			<-start
++
++			attempt, err := cloneOpenAIResponsesAttempt(&canonical)
++			if err != nil {
++				results <- conversionResult{err: err}
++				return
++			}
++			attempt.Model = testCase.model
++			info := &relaycommon.RelayInfo{
++				OriginModelName: testCase.model,
++				RelayMode:       relayconstant.RelayModeResponses,
++				RelayFormat:     types.RelayFormatOpenAIResponses,
++				ChannelMeta: &relaycommon.ChannelMeta{
++					ApiType:           testCase.apiType,
++					ChannelType:       testCase.channelType,
++					UpstreamModelName: testCase.model,
++				},
++			}
++			adaptor := GetAdaptor(testCase.apiType)
++			adaptor.Init(info)
++			converted, err := adaptor.ConvertOpenAIResponsesRequest(nil, info, *attempt)
++			if err != nil {
++				results <- conversionResult{err: err}
++				return
++			}
++			body, err := common.Marshal(converted)
++			results <- conversionResult{body: body, err: err}
++		}()
++	}
++	close(start)
++	wg.Wait()
++	close(results)
++
++	seen := make(map[string]string, len(cases))
++	for result := range results {
++		require.NoError(t, result.err)
++		seen[gjson.GetBytes(result.body, "model").String()] = gjson.GetBytes(result.body, "reasoning.effort").String()
++	}
++	for _, testCase := range cases {
++		assert.Equal(t, testCase.wantEffort, seen[testCase.wantModel])
++	}
++	require.Equal(t, wantCanonical, canonical)
++}
++
++func newScheme3ResponsesFixture(
++	t *testing.T,
++	raw []byte,
++) (*gin.Context, *relaycommon.RelayInfo, *scheme3TrackingBodyStorage, dto.OpenAIResponsesRequest) {
++	t.Helper()
++
++	var canonical dto.OpenAIResponsesRequest
++	require.NoError(t, common.Unmarshal(raw, &canonical))
++	var wantCanonical dto.OpenAIResponsesRequest
++	require.NoError(t, common.Unmarshal(raw, &wantCanonical))
++
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(raw))
++	c.Request.Header.Set("Content-Type", "application/json")
++	storage := newScheme3TrackingBodyStorage(raw)
++	c.Set(common.KeyBodyStorage, storage)
++	t.Cleanup(func() {
++		common.CleanupBodyStorage(c)
++	})
++
++	info := &relaycommon.RelayInfo{
++		Request:         &canonical,
++		OriginModelName: canonical.Model,
++		RelayMode:       relayconstant.RelayModeResponses,
++		RelayFormat:     types.RelayFormatOpenAIResponses,
++		RequestURLPath:  "/v1/responses",
++	}
++	return c, info, storage, wantCanonical
++}
++
++func configureScheme3Channel(
++	c *gin.Context,
++	channelType int,
++	baseURL string,
++	apiKey string,
++	modelMapping string,
++) {
++	common.SetContextKey(c, constant.ContextKeyChannelId, channelType)
++	common.SetContextKey(c, constant.ContextKeyChannelType, channelType)
++	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, baseURL)
++	common.SetContextKey(c, constant.ContextKeyOriginalModel, "gpt-5")
++	common.SetContextKey(c, constant.ContextKeyChannelKey, apiKey)
++	common.SetContextKey(c, constant.ContextKeyChannelSetting, dto.ChannelSettings{})
++	common.SetContextKey(c, constant.ContextKeyChannelOtherSetting, dto.ChannelOtherSettings{})
++	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, modelMapping)
++}
++
++func newScheme3FailingUpstream(t *testing.T) (*httptest.Server, <-chan scheme3CapturedRequest) {
++	t.Helper()
++
++	captures := make(chan scheme3CapturedRequest, 8)
++	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		body, err := io.ReadAll(r.Body)
++		captures <- scheme3CapturedRequest{
++			path:          r.URL.Path,
++			body:          body,
++			contentLength: r.ContentLength,
++			err:           err,
++		}
++		w.Header().Set("Content-Type", "application/json")
++		w.WriteHeader(http.StatusServiceUnavailable)
++		_, _ = io.WriteString(w, `{"error":{"message":"retry","type":"server_error","code":"upstream_error"}}`)
++	}))
++	t.Cleanup(upstream.Close)
++	return upstream, captures
++}
++
++func requireScheme3UpstreamFailure(t *testing.T, relayErr *types.NewAPIError) {
++	t.Helper()
++	require.NotNil(t, relayErr)
++	require.Equal(t, http.StatusServiceUnavailable, relayErr.StatusCode, relayErr.Error())
++}
+diff --git a/relay/responses_request_clone.go b/relay/responses_request_clone.go
+new file mode 100644
+index 00000000..69ae02c2
+--- /dev/null
++++ b/relay/responses_request_clone.go
+@@ -0,0 +1,24 @@
++package relay
++
++import (
++	"errors"
++
++	"github.com/QuantumNous/new-api/relaykit/dto"
++)
++
++// cloneOpenAIResponsesAttempt creates the attempt-local ownership required by
++// Responses adaptors. The request contains many large RawMessage values; the
++// current adaptor contract only mutates the Reasoning struct in place, so
++// copying every nested value would recreate the cost of DeepCopy.
++func cloneOpenAIResponsesAttempt(src *dto.OpenAIResponsesRequest) (*dto.OpenAIResponsesRequest, error) {
++	if src == nil {
++		return nil, errors.New("copy source cannot be nil")
++	}
++
++	dst := *src
++	if src.Reasoning != nil {
++		reasoning := *src.Reasoning
++		dst.Reasoning = &reasoning
++	}
++	return &dst, nil
++}
+diff --git a/relay/responses_request_clone_test.go b/relay/responses_request_clone_test.go
+new file mode 100644
+index 00000000..d94d26ff
+--- /dev/null
++++ b/relay/responses_request_clone_test.go
+@@ -0,0 +1,145 @@
++package relay
++
++import (
++	"bytes"
++	"encoding/json"
++	"strconv"
++	"strings"
++	"testing"
++
++	"github.com/QuantumNous/new-api/common"
++	"github.com/QuantumNous/new-api/relaykit/dto"
++	"github.com/stretchr/testify/require"
++)
++
++var benchmarkResponsesRequestSink *dto.OpenAIResponsesRequest
++
++func TestCloneOpenAIResponsesAttemptIsolatesReasoning(t *testing.T) {
++	source := cloneResponsesFixture(1024)
++
++	clone, err := cloneOpenAIResponsesAttempt(source)
++	require.NoError(t, err)
++	require.Equal(t, source, clone)
++	require.NotSame(t, source, clone)
++	require.NotSame(t, source.Reasoning, clone.Reasoning)
++
++	clone.Model = "gpt-5.2"
++	clone.Reasoning.Effort = "high"
++	clone.Reasoning.Summary = "detailed"
++
++	require.Equal(t, "gpt-5.1", source.Model)
++	require.Equal(t, "medium", source.Reasoning.Effort)
++	require.Equal(t, "auto", source.Reasoning.Summary)
++}
++
++func TestCloneOpenAIResponsesAttemptSharesReadOnlyFields(t *testing.T) {
++	source := cloneResponsesFixture(1024)
++
++	clone, err := cloneOpenAIResponsesAttempt(source)
++	require.NoError(t, err)
++
++	requireSlicesAlias(t, source.Input, clone.Input)
++	requireSlicesAlias(t, source.Tools, clone.Tools)
++	requireSlicesAlias(t, source.Instructions, clone.Instructions)
++	requireSlicesAlias(t, source.Reasoning.Mode, clone.Reasoning.Mode)
++	requireSlicesAlias(t, source.Reasoning.Context, clone.Reasoning.Context)
++	require.Same(t, source.MaxOutputTokens, clone.MaxOutputTokens)
++	require.Same(t, source.Temperature, clone.Temperature)
++	require.Same(t, source.StreamOptions, clone.StreamOptions)
++}
++
++func TestCloneOpenAIResponsesAttemptKeepsNilReasoning(t *testing.T) {
++	source := cloneResponsesFixture(0)
++	source.Reasoning = nil
++
++	clone, err := cloneOpenAIResponsesAttempt(source)
++	require.NoError(t, err)
++	require.Nil(t, clone.Reasoning)
++	require.Equal(t, source, clone)
++}
++
++func TestCloneOpenAIResponsesAttemptRejectsNil(t *testing.T) {
++	clone, err := cloneOpenAIResponsesAttempt(nil)
++
++	require.Nil(t, clone)
++	require.EqualError(t, err, "copy source cannot be nil")
++}
++
++func BenchmarkCloneOpenAIResponsesAttempt(b *testing.B) {
++	for _, size := range []int{1024, 200 * 1024} {
++		source := cloneResponsesFixture(size)
++		name := byteSizeName(size)
++
++		b.Run(name+"/attempt_clone", func(b *testing.B) {
++			b.ReportAllocs()
++			for i := 0; i < b.N; i++ {
++				clone, err := cloneOpenAIResponsesAttempt(source)
++				if err != nil {
++					b.Fatal(err)
++				}
++				benchmarkResponsesRequestSink = clone
++			}
++		})
++
++		b.Run(name+"/reflection_deep_copy", func(b *testing.B) {
++			b.ReportAllocs()
++			for i := 0; i < b.N; i++ {
++				clone, err := common.DeepCopy(source)
++				if err != nil {
++					b.Fatal(err)
++				}
++				benchmarkResponsesRequestSink = clone
++			}
++		})
++	}
++}
++
++func cloneResponsesFixture(payloadSize int) *dto.OpenAIResponsesRequest {
++	payload := strings.Repeat("x", payloadSize)
++	maxOutputTokens := uint(4096)
++	temperature := 0.25
++	stream := true
++	return &dto.OpenAIResponsesRequest{
++		Model:           "gpt-5.1",
++		Input:           mustJSONRawMessage(payload),
++		Instructions:    json.RawMessage(`"be concise"`),
++		MaxOutputTokens: &maxOutputTokens,
++		Reasoning: &dto.Reasoning{
++			Effort:  "medium",
++			Summary: "auto",
++			Mode:    json.RawMessage(`{"type":"enabled"}`),
++			Context: json.RawMessage(`{"encrypted":"context"}`),
++		},
++		Store:         json.RawMessage(`true`),
++		Stream:        &stream,
++		StreamOptions: &dto.StreamOptions{IncludeUsage: true, IncludeObfuscation: true},
++		Temperature:   &temperature,
++		Tools:         json.RawMessage(`[{"type":"function","name":"lookup"}]`),
++	}
++}
++
++func mustJSONRawMessage(value string) json.RawMessage {
++	data, err := json.Marshal(value)
++	if err != nil {
++		panic(err)
++	}
++	return data
++}
++
++func requireSlicesAlias(t *testing.T, left, right []byte) {
++	t.Helper()
++	require.Equal(t, left, right)
++	if len(left) == 0 {
++		require.Empty(t, right)
++		return
++	}
++	require.True(t, bytes.Equal(left, right))
++	require.True(t, &left[0] == &right[0], "expected read-only byte slices to share storage")
++}
++
++func byteSizeName(size int) string {
++	if size >= 1024 {
++		return strconv.Itoa(size/1024) + "KiB"
++	}
++	return strconv.Itoa(size) + "B"
++}

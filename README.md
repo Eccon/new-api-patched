@@ -176,6 +176,12 @@ No Docker image is built.
   - Records the matched upstream overload as a stream error so usage logs remain visibly failed even when the upstream then ends with EOF.
   - Applies uniformly to Responses clients without buffering earlier stream events or changing the remaining payload fields.
 
+- `0019-optimize-responses-request-body-planning.patch`
+  - Replaces each Responses retry attempt's reflection-based deep copy with a typed top-level clone and an independently owned `reasoning` object.
+  - For compatible request bodies of at least 4 KiB, derives narrow JSON patches from adaptor changes and reuses the canonical body storage when the outgoing bytes remain unchanged.
+  - Falls back to the existing typed marshal behavior for small bodies, unsupported adaptors, incompatible JSON shapes, unknown top-level fields, or changes outside the audited patch set.
+  - Preserves disabled-field removal and channel parameter-override ordering, while adding ownership, retry isolation, body-storage, semantic-equivalence, race, and optional captured-corpus coverage.
+
 ## Version Handling
 
 The workflow sets `common.Version` through the full upstream module path:
