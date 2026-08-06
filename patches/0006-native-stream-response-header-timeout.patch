@@ -1,5 +1,5 @@
 diff --git a/common/constants.go b/common/constants.go
-index 0909016b..75a3a0da 100644
+index 0909016b776d8c35ee9a5b45cbb6a094f6fe73d1..75a3a0da34d6819f91aa15c9716ad65e0bed2e08 100644
 --- a/common/constants.go
 +++ b/common/constants.go
 @@ -165,7 +165,9 @@ var UpstreamUserAgentGemini = ""
@@ -14,7 +14,7 @@ index 0909016b..75a3a0da 100644
  var RelayMaxIdleConnsPerHost int
  var RelayDirectNetworkFamily = RelayDirectNetworkFamilyAuto
 diff --git a/common/init.go b/common/init.go
-index 11df7a18..262a6c0a 100644
+index 11df7a183166c443f696b21602a305bf2db0fc90..262a6c0a25c5110a975256a0a67d02447eb056f2 100644
 --- a/common/init.go
 +++ b/common/init.go
 @@ -110,6 +110,8 @@ func InitEnv() {
@@ -27,27 +27,30 @@ index 11df7a18..262a6c0a 100644
  	RelayMaxIdleConnsPerHost = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS_PER_HOST", 100)
  	relayDirectNetworkFamilyRaw := GetEnvOrDefaultString("RELAY_DIRECT_NETWORK_FAMILY", RelayDirectNetworkFamilyAuto)
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index 0784c80e..04f59146 100644
+index e751d0f986b8b7d400378379b9035a0fba88bb2a..ae6deec1a56d15dc4bbf308f8492c0a7211b9da4 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
-@@ -480,12 +480,12 @@ func DoRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
- 	return doRequest(c, req, info)
+@@ -493,7 +493,7 @@ func keepUpstreamRedirectResponse(_ *http.Request, _ []*http.Request) error {
  }
+ 
  func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
 -	client, err := service.GetHttpClientWithProxySettings(info.ChannelSetting.Proxy, info.ChannelSetting)
 +	client, err := service.GetHttpClientWithProxyForRelay(info.ChannelSetting.Proxy, info.ChannelSetting, info.IsStream)
  	if err != nil {
  		return nil, fmt.Errorf("new proxy http client failed: %w", err)
  	}
+@@ -504,7 +504,7 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+ 	relayClient := *client
+ 	relayClient.CheckRedirect = keepUpstreamRedirectResponse
  	if common2.DebugEnabled && req != nil && req.URL != nil {
 -		policy := service.NormalizeHTTPTransportPolicy(info.ChannelSetting)
 +		policy := service.NormalizeRelayHTTPTransportPolicy(info.ChannelSetting, info.IsStream)
  		logger.LogDebug(c, fmt.Sprintf(
  			"http transport select: host=%s protocol=%s shards=%d policy=%s",
  			req.URL.Host,
-@@ -519,6 +519,14 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -538,6 +538,14 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  	logUpstreamUserAgent(c, req)
- 	resp, err := client.Do(req)
+ 	resp, err := relayClient.Do(req)
  	if err != nil {
 +		if IsResponseHeaderTimeout(err) {
 +			logger.LogError(c, "do request failed: response header timeout: "+err.Error())
@@ -60,7 +63,7 @@ index 0784c80e..04f59146 100644
  		logger.LogError(c, "do request failed: "+err.Error())
  		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
  	}
-@@ -526,7 +534,7 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -545,7 +553,7 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  		return nil, errors.New("resp is nil")
  	}
  	if common2.DebugEnabled {
@@ -69,7 +72,7 @@ index 0784c80e..04f59146 100644
  		logger.LogDebug(c, fmt.Sprintf(
  			"http transport negotiated: host=%s protocol=%s shards=%d policy=%s negotiated=%s",
  			req.URL.Host,
-@@ -546,6 +554,15 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -565,6 +573,15 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  	return resp, nil
  }
  
@@ -86,7 +89,7 @@ index 0784c80e..04f59146 100644
  	fullRequestURL, err := a.BuildRequestURL(info)
  	if err != nil {
 diff --git a/relay/channel/api_request_test.go b/relay/channel/api_request_test.go
-index b60ddd69..b98c9c96 100644
+index 53cac84f9e295cbfdb604f00cfe868102320aba9..cd929e374b3859e7c83bc4c64a460b5b13393688 100644
 --- a/relay/channel/api_request_test.go
 +++ b/relay/channel/api_request_test.go
 @@ -1,6 +1,8 @@
@@ -98,7 +101,7 @@ index b60ddd69..b98c9c96 100644
  	"net/http"
  	"net/http/httptest"
  	"testing"
-@@ -309,3 +311,24 @@ func TestConfiguredUpstreamUserAgentOpenAIFormats(t *testing.T) {
+@@ -310,3 +312,24 @@ func TestConfiguredUpstreamUserAgentOpenAIFormats(t *testing.T) {
  		})
  	}
  }
@@ -124,7 +127,7 @@ index b60ddd69..b98c9c96 100644
 +	}
 +}
 diff --git a/relay/channel/aws/relay-aws.go b/relay/channel/aws/relay-aws.go
-index c4751b5a..a79616d1 100644
+index c4751b5af855520f4008e3ab67789c573784e8d2..a79616d135d1c2bc163b567db18c28d8936f41c3 100644
 --- a/relay/channel/aws/relay-aws.go
 +++ b/relay/channel/aws/relay-aws.go
 @@ -23,6 +23,7 @@ import (
@@ -193,7 +196,7 @@ index c4751b5a..a79616d1 100644
  	default:
  		return nil, errors.New("invalid aws secret key")
 diff --git a/relay/channel/aws/relay_aws_test.go b/relay/channel/aws/relay_aws_test.go
-index 22d83738..39180dc9 100644
+index 22d8373873edecd0c8e6a31766a6bdb1a4df3f52..39180dc9144d2cc21cd78a1c8d8ba7093a334d9b 100644
 --- a/relay/channel/aws/relay_aws_test.go
 +++ b/relay/channel/aws/relay_aws_test.go
 @@ -15,16 +15,67 @@ import (
@@ -307,7 +310,7 @@ index 22d83738..39180dc9 100644
  	t.Parallel()
  
 diff --git a/service/http_client.go b/service/http_client.go
-index 169dc63a..09e88a67 100644
+index 169dc63a9f9cf04d2aaac245c775581c0fa512bb..09e88a6776be56d1c6ee6709d581a43a93f8ed89 100644
 --- a/service/http_client.go
 +++ b/service/http_client.go
 @@ -386,7 +386,54 @@ func GetHttpClientWithProxy(rawProxyURL string) (*http.Client, error) {
@@ -366,7 +369,7 @@ index 169dc63a..09e88a67 100644
  
  	if trimmedProxyURL == "" {
 diff --git a/service/http_client_transport_test.go b/service/http_client_transport_test.go
-index 56989bba..8ef96cae 100644
+index 56989bba53f2e8e519b8754baa07afce5a0e76b3..8ef96cae848281e0761bce748db09f70737bddb8 100644
 --- a/service/http_client_transport_test.go
 +++ b/service/http_client_transport_test.go
 @@ -15,6 +15,7 @@ import (
@@ -603,7 +606,7 @@ index 56989bba..8ef96cae 100644
  	initDefaultHTTPClientFixture(t)
  
 diff --git a/service/http_transport_policy.go b/service/http_transport_policy.go
-index c2e3d9a6..eb780b2e 100644
+index c2e3d9a6557157543377f484744c46561d89393e..eb780b2ed2dea1d9b0825b74200cfaa78ac5a2fd 100644
 --- a/service/http_transport_policy.go
 +++ b/service/http_transport_policy.go
 @@ -5,6 +5,7 @@ import (
@@ -640,7 +643,7 @@ index c2e3d9a6..eb780b2e 100644
  
  func (p HTTPTransportPolicy) String() string {
 diff --git a/service/http_transport_sharded.go b/service/http_transport_sharded.go
-index d557c581..c5552aac 100644
+index d557c58185af62aafc9d9307b9f7dab534b02e90..c5552aacbf06b43c0c4c46926bd3acc8f449814b 100644
 --- a/service/http_transport_sharded.go
 +++ b/service/http_transport_sharded.go
 @@ -122,6 +122,7 @@ func applyHTTPTransportPolicy(transport *http.Transport, policy HTTPTransportPol

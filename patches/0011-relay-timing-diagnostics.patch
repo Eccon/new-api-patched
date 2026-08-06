@@ -176,7 +176,7 @@ index 2d6022f774eb5dbc45ec864d828267642ee5f39d..71902ccf4bd92f2d5e8b687643599130
  	os.Exit(1)
  }
 diff --git a/controller/relay.go b/controller/relay.go
-index 025b1d274c403cf4a8edd239d42c5cfeaa705969..c3a7c88ba2249f2fbdfa7d3d03e4a7c181483754 100644
+index 1a053d94093a5e60eab4f5f829c7793beeea72a0..4b4608f975e7915753c9d28e02ce58dfb421c043 100644
 --- a/controller/relay.go
 +++ b/controller/relay.go
 @@ -68,7 +68,130 @@ func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewA
@@ -408,7 +408,7 @@ index 867d88322430db1bd5ca253b46e07f8478cf0631..39e12fc32752c9e956a48939c2c61e1c
  	logCount++ // we don't need accurate count, so no lock here
  	if logCount > maxLogCount && !setupLogWorking {
 diff --git a/middleware/distributor.go b/middleware/distributor.go
-index bde639ddee5b1f147d77a93a3cec669f9638665a..3989814ef8c4a4e20b8ff82c862ed108e8d7f448 100644
+index 7decf0e287281d790f80e80d8c18fb6f4e27ad40..0c1de51e4d6ed08c255e4973f76327ad949424b3 100644
 --- a/middleware/distributor.go
 +++ b/middleware/distributor.go
 @@ -32,9 +32,15 @@ type ModelRequest struct {
@@ -568,7 +568,7 @@ index e1bf315a45e0ee409318275c7f3290d938a7b04e..c62680fe3dc545476c053cad12baea4c
  		c.Request = c.Request.WithContext(ctx)
  		c.Header(common.RequestIdKey, id)
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index 04f59146f0f7e9b0e360dd3c95af2d15c42171e1..d90a2a52725492a1b598f90ea443771a725ee73a 100644
+index ae6deec1a56d15dc4bbf308f8492c0a7211b9da4..d84ee4cf06db724c39954f2a649eeeed13dfe650 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
 @@ -2,10 +2,12 @@ package channel
@@ -584,11 +584,10 @@ index 04f59146f0f7e9b0e360dd3c95af2d15c42171e1..d90a2a52725492a1b598f90ea443771a
  	"regexp"
  	"strings"
  	"sync"
-@@ -479,6 +481,151 @@ func sendPingData(c *gin.Context, mutex *sync.Mutex) error {
- func DoRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
- 	return doRequest(c, req, info)
+@@ -492,6 +494,150 @@ func keepUpstreamRedirectResponse(_ *http.Request, _ []*http.Request) error {
+ 	return http.ErrUseLastResponse
  }
-+
+ 
 +type relayHTTPTrace struct {
 +	mu         sync.Mutex
 +	timing     common.RelayTimingInfo
@@ -736,7 +735,7 @@ index 04f59146f0f7e9b0e360dd3c95af2d15c42171e1..d90a2a52725492a1b598f90ea443771a
  func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
  	client, err := service.GetHttpClientWithProxyForRelay(info.ChannelSetting.Proxy, info.ChannelSetting, info.IsStream)
  	if err != nil {
-@@ -517,7 +664,19 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -536,7 +682,19 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  
  	applyDefaultUpstreamUserAgent(c, req, info)
  	logUpstreamUserAgent(c, req)
@@ -746,7 +745,7 @@ index 04f59146f0f7e9b0e360dd3c95af2d15c42171e1..d90a2a52725492a1b598f90ea443771a
 +		info.Timing.SetAttemptSnapshot(requestTrace.snapshot)
 +		req = req.WithContext(httptrace.WithClientTrace(req.Context(), requestTrace.clientTrace()))
 +	}
- 	resp, err := client.Do(req)
+ 	resp, err := relayClient.Do(req)
 +	if requestTrace != nil {
 +		attempt, writeSeq := requestTrace.finish(resp)
 +		info.Timing.SetAttempt(attempt)
@@ -756,7 +755,7 @@ index 04f59146f0f7e9b0e360dd3c95af2d15c42171e1..d90a2a52725492a1b598f90ea443771a
  	if err != nil {
  		if IsResponseHeaderTimeout(err) {
  			logger.LogError(c, "do request failed: response header timeout: "+err.Error())
-@@ -554,6 +713,53 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -573,6 +731,53 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  	return resp, nil
  }
  
@@ -811,7 +810,7 @@ index 04f59146f0f7e9b0e360dd3c95af2d15c42171e1..d90a2a52725492a1b598f90ea443771a
  	if err == nil {
  		return false
 diff --git a/relay/channel/api_request_test.go b/relay/channel/api_request_test.go
-index b98c9c967c1739a6abf35045dbcfcaa792b9ce38..a0cbb68fdc0b77fb06020c4276f39c6e7f282760 100644
+index cd929e374b3859e7c83bc4c64a460b5b13393688..cf1a5434a1783cd8ad61ef6ec0896276127f2fcf 100644
 --- a/relay/channel/api_request_test.go
 +++ b/relay/channel/api_request_test.go
 @@ -1,10 +1,15 @@
@@ -854,7 +853,7 @@ index b98c9c967c1739a6abf35045dbcfcaa792b9ce38..a0cbb68fdc0b77fb06020c4276f39c6e
  func TestProcessHeaderOverride_ChannelTestSkipsPassthroughRules(t *testing.T) {
  	t.Parallel()
  
-@@ -332,3 +354,96 @@ func TestIsResponseHeaderTimeout(t *testing.T) {
+@@ -333,3 +355,96 @@ func TestIsResponseHeaderTimeout(t *testing.T) {
  		})
  	}
  }
@@ -952,7 +951,7 @@ index b98c9c967c1739a6abf35045dbcfcaa792b9ce38..a0cbb68fdc0b77fb06020c4276f39c6e
 +	require.NotContains(t, logs.String(), "relay upstream request written")
 +}
 diff --git a/relay/common/relay_info.go b/relay/common/relay_info.go
-index d8d45f993f6b772d447fe8ab97bf9f4b7e0322ba..89927822a59f2a77189b53b6711002a55ca056d7 100644
+index 2a03b7088a57972e8e258ad041120d328a8f814e..ea248381449f6014b808c6d9482205bc20b86ef5 100644
 --- a/relay/common/relay_info.go
 +++ b/relay/common/relay_info.go
 @@ -80,6 +80,101 @@ type TokenCountMeta struct {
@@ -1057,7 +1056,7 @@ index d8d45f993f6b772d447fe8ab97bf9f4b7e0322ba..89927822a59f2a77189b53b6711002a5
  type RelayInfo struct {
  	TokenId           int
  	TokenKey          string
-@@ -169,6 +264,7 @@ type RelayInfo struct {
+@@ -163,6 +258,7 @@ type RelayInfo struct {
  	BillingRequestInput   *billingexpr.RequestInput
  
  	Request dto.Request
@@ -1065,7 +1064,7 @@ index d8d45f993f6b772d447fe8ab97bf9f4b7e0322ba..89927822a59f2a77189b53b6711002a5
  
  	// RequestConversionChain records request format conversions in order, e.g.
  	// ["openai", "openai_responses"] or ["openai", "claude"].
-@@ -809,8 +905,12 @@ func (info *RelayInfo) ConvOptions() *convmeta.Options {
+@@ -804,8 +900,12 @@ func (info *RelayInfo) ConvOptions() *convmeta.Options {
  }
  
  func (info *RelayInfo) SetFirstResponseTime() {
