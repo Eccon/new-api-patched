@@ -1,6 +1,6 @@
 diff --git a/relay/responses_adaptor_ownership_test.go b/relay/responses_adaptor_ownership_test.go
 new file mode 100644
-index 00000000..8a4201f1
+index 0000000000000000000000000000000000000000..8a4201f1224aa46453b4f525d6cdaf23a56734e8
 --- /dev/null
 +++ b/relay/responses_adaptor_ownership_test.go
 @@ -0,0 +1,272 @@
@@ -278,7 +278,7 @@ index 00000000..8a4201f1
 +}
 diff --git a/relay/responses_body.go b/relay/responses_body.go
 new file mode 100644
-index 00000000..c2c84c05
+index 0000000000000000000000000000000000000000..c2c84c059d9b7b6c0d82400272c69545ae34ba94
 --- /dev/null
 +++ b/relay/responses_body.go
 @@ -0,0 +1,481 @@
@@ -765,10 +765,10 @@ index 00000000..c2c84c05
 +}
 diff --git a/relay/responses_body_test.go b/relay/responses_body_test.go
 new file mode 100644
-index 00000000..3a8d1a2c
+index 0000000000000000000000000000000000000000..6755b32824a4f3d1acc65e0eb1feb4b7d07ee500
 --- /dev/null
 +++ b/relay/responses_body_test.go
-@@ -0,0 +1,613 @@
+@@ -0,0 +1,617 @@
 +package relay
 +
 +import (
@@ -1314,6 +1314,10 @@ index 00000000..3a8d1a2c
 +	return s.data, nil
 +}
 +
++func (s *responsesPlanStorage) NewReader() (io.ReadCloser, error) {
++	return io.NopCloser(bytes.NewReader(s.data)), nil
++}
++
 +func (s *responsesPlanStorage) Size() int64 {
 +	return int64(len(s.data))
 +}
@@ -1384,7 +1388,7 @@ index 00000000..3a8d1a2c
 +}
 diff --git a/relay/responses_corpus_test.go b/relay/responses_corpus_test.go
 new file mode 100644
-index 00000000..cfa86d2f
+index 0000000000000000000000000000000000000000..cfa86d2ff8f2926575137c0a4c2aa32bc00f1107
 --- /dev/null
 +++ b/relay/responses_corpus_test.go
 @@ -0,0 +1,128 @@
@@ -1517,7 +1521,7 @@ index 00000000..cfa86d2f
 +	}
 +}
 diff --git a/relay/responses_handler.go b/relay/responses_handler.go
-index c736c6a5..8aea001c 100644
+index f8b4dec2be7bf1f9ee29d43ab24bc97127126d63..ba6a257411c46fa90645262399cce925f4dcbd44 100644
 --- a/relay/responses_handler.go
 +++ b/relay/responses_handler.go
 @@ -61,9 +61,9 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
@@ -1545,41 +1549,38 @@ index c736c6a5..8aea001c 100644
  
  		// remove disabled fields for OpenAI Responses API
  		jsonData, err = relaycommon.RemoveDisabledFields(jsonData, info.ChannelOtherSettings, info.ChannelSetting.PassThroughBodyEnabled)
-@@ -109,14 +110,22 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
+@@ -109,13 +110,20 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
  		}
  
  		logger.LogDebug(c, "requestBody: %s", jsonData)
--		body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
+-		body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
 -		if err != nil {
 -			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 +		if bodyPlan.storage != nil && responsesJSONSharesStorage(bodyPlan.canonical, jsonData) {
 +			if _, err := bodyPlan.storage.Seek(0, io.SeekStart); err != nil {
 +				return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
 +			}
-+			info.UpstreamRequestBodySize = bodyPlan.storage.Size()
-+			requestBody = common.ReaderOnly(bodyPlan.storage)
++			requestBody = common.NewReplayableBodyReader(bodyPlan.storage)
 +		} else {
-+			body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
++			body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
 +			if err != nil {
 +				return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 +			}
 +			defer closer.Close()
-+			info.UpstreamRequestBodySize = size
 +			requestBody = body
  		}
 -		defer closer.Close()
  		jsonData = nil
--		info.UpstreamRequestBodySize = size
 -		requestBody = body
  	}
  
  	var httpResp *http.Response
 diff --git a/relay/responses_handler_scheme3_test.go b/relay/responses_handler_scheme3_test.go
 new file mode 100644
-index 00000000..b7a019a0
+index 0000000000000000000000000000000000000000..968413f7dad90c8825fe99b1b5ee6b3a0cba5a4f
 --- /dev/null
 +++ b/relay/responses_handler_scheme3_test.go
-@@ -0,0 +1,368 @@
+@@ -0,0 +1,374 @@
 +package relay
 +
 +import (
@@ -1639,6 +1640,12 @@ index 00000000..b7a019a0
 +	s.mu.Lock()
 +	defer s.mu.Unlock()
 +	return s.data, nil
++}
++
++func (s *scheme3TrackingBodyStorage) NewReader() (io.ReadCloser, error) {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	return io.NopCloser(bytes.NewReader(s.data)), nil
 +}
 +
 +func (s *scheme3TrackingBodyStorage) Size() int64 {
@@ -1950,7 +1957,7 @@ index 00000000..b7a019a0
 +}
 diff --git a/relay/responses_request_clone.go b/relay/responses_request_clone.go
 new file mode 100644
-index 00000000..69ae02c2
+index 0000000000000000000000000000000000000000..69ae02c20e62cc4cef6f87c755ccf8c71bde8a43
 --- /dev/null
 +++ b/relay/responses_request_clone.go
 @@ -0,0 +1,24 @@
@@ -1980,7 +1987,7 @@ index 00000000..69ae02c2
 +}
 diff --git a/relay/responses_request_clone_test.go b/relay/responses_request_clone_test.go
 new file mode 100644
-index 00000000..d94d26ff
+index 0000000000000000000000000000000000000000..d94d26fffbd460aa2e99f771f804f8858b8989cc
 --- /dev/null
 +++ b/relay/responses_request_clone_test.go
 @@ -0,0 +1,145 @@
