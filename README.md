@@ -184,6 +184,12 @@ No Docker image is built.
   - Falls back to the existing typed marshal behavior for small bodies, unsupported adaptors, incompatible JSON shapes, unknown top-level fields, or changes outside the audited patch set.
   - Preserves disabled-field removal and channel parameter-override ordering, while adding ownership, retry isolation, body-storage, semantic-equivalence, race, and optional captured-corpus coverage.
 
+- `0020-upgrade-tiktoken-tokenizer.patch`
+  - Upgrades `github.com/tiktoken-go/tokenizer` from `v0.6.2` to `v0.8.1` without changing the existing tokenizer call sites or imports.
+  - Moves the module to Go 1.26, matching the repository build toolchain required by tokenizer `v0.8.1`.
+  - Replaces the tokenizer's legacy `regexp2` dependency with generated-regex `regexp2/v2` and records the tidied module graph.
+  - Leaves New API's existing `ForModel` selection, unknown-model fallback, token billing flow, and cancellation behavior unchanged.
+
 ## Version Handling
 
 The workflow sets `common.Version` through the full upstream module path:

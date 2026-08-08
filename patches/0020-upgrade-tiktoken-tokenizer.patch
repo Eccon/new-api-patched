@@ -1,0 +1,73 @@
+diff --git a/go.mod b/go.mod
+index b0642f162db2b5f5c1649d69d46b52956265619d..1911526338a714b9c512c821664b94b183c79c82 100644
+--- a/go.mod
++++ b/go.mod
+@@ -1,7 +1,7 @@
+ module github.com/QuantumNous/new-api
+ 
+ // +heroku goVersion go1.18
+-go 1.25.1
++go 1.26
+ 
+ require (
+ 	github.com/Calcium-Ion/go-epay v0.0.4
+@@ -46,7 +46,7 @@ require (
+ 	github.com/thanhpk/randstr v1.0.6
+ 	github.com/tidwall/gjson v1.19.0
+ 	github.com/tidwall/sjson v1.2.5
+-	github.com/tiktoken-go/tokenizer v0.6.2
++	github.com/tiktoken-go/tokenizer v0.8.1
+ 	github.com/waffo-com/waffo-go v1.3.2
+ 	github.com/yapingcat/gomedia v0.0.0-20240906162731-17feea57090c
+ 	golang.org/x/crypto v0.52.0
+@@ -70,6 +70,7 @@ require (
+ 	github.com/ClickHouse/ch-go v0.65.0 // indirect
+ 	github.com/bmatcuk/doublestar/v4 v4.6.1 // indirect
+ 	github.com/casbin/govaluate v1.10.0 // indirect
++	github.com/dlclark/regexp2/v2 v2.5.1 // indirect
+ 	github.com/go-faster/city v1.0.1 // indirect
+ 	github.com/go-faster/errors v0.7.1 // indirect
+ 	github.com/hashicorp/go-version v1.7.0 // indirect
+@@ -90,7 +91,7 @@ require (
+ require (
+ 	github.com/DmitriyVTitov/size v1.5.0 // indirect
+ 	github.com/anknown/darts v0.0.0-20151216065714-83ff685239e6 // indirect
+-	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.8 // indirect
++	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.8
+ 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.21 // indirect
+ 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.21 // indirect
+ 	github.com/beorn7/perks v1.0.1 // indirect
+@@ -101,7 +102,6 @@ require (
+ 	github.com/cloudwego/base64x v0.1.6 // indirect
+ 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
+ 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
+-	github.com/dlclark/regexp2 v1.11.5 // indirect
+ 	github.com/dustin/go-humanize v1.0.1 // indirect
+ 	github.com/expr-lang/expr v1.17.8
+ 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
+diff --git a/go.sum b/go.sum
+index 357374c39ca42a170d11db48ab863ebaf6aa6bbb..451e969e9a8f03621b399dd03d2ba089671634e5 100644
+--- a/go.sum
++++ b/go.sum
+@@ -1008,8 +1008,8 @@ github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f h1:lO4WD4F/r
+ github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f/go.mod h1:cuUVRXasLTGF7a8hSLbxyZXjz+1KgoB3wDUb6vlszIc=
+ github.com/dgryski/go-sip13 v0.0.0-20181026042036-e10d5fee7954/go.mod h1:vAd38F8PWV+bWy6jNmig1y/TA+kYO4g3RSRF0IAv0no=
+ github.com/distribution/distribution/v3 v3.0.0-20220526142353-ffbd94cbe269/go.mod h1:28YO/VJk9/64+sTGNuYaBjWxrXTPrj0C0XmgTIOjxX4=
+-github.com/dlclark/regexp2 v1.11.5 h1:Q/sSnsKerHeCkc/jSTNq1oCm7KiVgUMZRDUoRu0JQZQ=
+-github.com/dlclark/regexp2 v1.11.5/go.mod h1:DHkYz0B9wPfa6wondMfaivmHpzrQ3v9q8cnmRbL6yW8=
++github.com/dlclark/regexp2/v2 v2.5.1 h1:E5Ug7Dh264W1ymdySmiHNcDG7fmsR307APCE5R07a20=
++github.com/dlclark/regexp2/v2 v2.5.1/go.mod h1:avUrQvPaLz2DrFNHJF0taWAFFX2C1GMSSoeiqFjcBmU=
+ github.com/dmarkham/enumer v1.5.8/go.mod h1:d10o8R3t/gROm2p3BXqTkMt2+HMuxEmWCXzorAruYak=
+ github.com/dnaeon/go-vcr v1.0.1/go.mod h1:aBB1+wY4s93YsC3HHjMBMrwTj2R9FHDzUr9KyGc8n1E=
+ github.com/docker/cli v0.0.0-20191017083524-a8ff7f821017/go.mod h1:JLrzqnKDaYBop7H2jaqPtU4hHvMKP+vjCwu2uszcLI8=
+@@ -1955,8 +1955,8 @@ github.com/tidwall/pretty v1.2.0 h1:RWIZEg2iJ8/g6fDDYzMpobmaoGh5OLl4AXtGUGPcqCs=
+ github.com/tidwall/pretty v1.2.0/go.mod h1:ITEVvHYasfjBbM0u2Pg8T2nJnzm8xPwvNhhsoaGGjNU=
+ github.com/tidwall/sjson v1.2.5 h1:kLy8mja+1c9jlljvWTlSazM7cKDRfJuR/bOJhcY5NcY=
+ github.com/tidwall/sjson v1.2.5/go.mod h1:Fvgq9kS/6ociJEDnK0Fk1cpYF4FIW6ZF7LAe+6jwd28=
+-github.com/tiktoken-go/tokenizer v0.6.2 h1:t0GN2DvcUZSFWT/62YOgoqb10y7gSXBGs0A+4VCQK+g=
+-github.com/tiktoken-go/tokenizer v0.6.2/go.mod h1:6UCYI/DtOallbmL7sSy30p6YQv60qNyU/4aVigPOx6w=
++github.com/tiktoken-go/tokenizer v0.8.1 h1:4obDoB6/dhdBt9xMweX4nww5cjdOq/nYF4ecwPq2+mg=
++github.com/tiktoken-go/tokenizer v0.8.1/go.mod h1:eLA0t6nGvn9mDc7gt90qt7pMat+gE9ViqwQ6l9B+tA4=
+ github.com/tklauser/go-sysconf v0.3.12 h1:0QaGUFOdQaIVdPgfITYzaTegZvdCjmYO52cSFAEVmqU=
+ github.com/tklauser/go-sysconf v0.3.12/go.mod h1:Ho14jnntGE1fpdOqQEEaiKRpvIavV0hSfmBq8nJbHYI=
+ github.com/tklauser/numcpus v0.6.1 h1:ng9scYS7az0Bk4OZLvrNXNSAO2Pxr1XXRAPyjhIx+Fk=
