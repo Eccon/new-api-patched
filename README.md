@@ -168,9 +168,9 @@ No Docker image is built.
   - Does not bind the upstream request to the downstream context, persist a downstream-disconnect log field, add a database migration, or add a separate absolute drain deadline.
 
 - `0017-typed-sse-ping-event.patch`
-  - Keeps the legacy `: PING` SSE comment while adding a typed `event: ping` with `data: {"type":"ping"}`.
-  - Sends the fields as one complete SSE event ending with the required blank line.
-  - Leaves the configured ping interval, flush behavior, and disconnect handling unchanged.
+  - Keeps the legacy comment-only `: PING` heartbeat by default and adds a typed `event: ping` with `data: {"type":"ping"}` only for the exact `/v1/messages` and `/v1/responses` paths.
+  - Uses the documented Claude Messages ping frame and gives Codex Responses streams a parseable no-op event without injecting JSON data into Chat Completions or Responses Compaction streams.
+  - Falls back to the legacy heartbeat when the request, URL, or path is unavailable, while preserving the single-write framing, configured interval, flush behavior, and disconnect handling.
 
 - `0018-rewrite-responses-overload-error.patch`
   - Rewrites `response.failed.response.error.code` from `server_is_overloaded` or `slow_down` to the retryable `server_error` code in Responses SSE streams.
