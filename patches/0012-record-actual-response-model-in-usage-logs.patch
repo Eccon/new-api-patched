@@ -206,20 +206,20 @@ index 207b0af5bfefcbf339547a4dff28cbf8f7b3c4ba..a5e50abe5cafb996e5fa88400d911dd9
  	isSystemPromptOverwritten := common.GetContextKeyBool(ctx, constant.ContextKeySystemPromptOverride)
  	if isSystemPromptOverwritten {
 diff --git a/web/src/features/usage-logs/components/dialogs/details-dialog.tsx b/web/src/features/usage-logs/components/dialogs/details-dialog.tsx
-index e153ef456d953f9aed162eef8a5ebfbda29d6810..64c138295bf30b5c7f78b0a8dd3023787038f15d 100644
+index 51d32ef00f56480a891b8c7509c4fd77c55b6f22..3688f4e10b1cc80d0116aa6f9d00f8078c3c4757 100644
 --- a/web/src/features/usage-logs/components/dialogs/details-dialog.tsx
 +++ b/web/src/features/usage-logs/components/dialogs/details-dialog.tsx
-@@ -614,6 +614,9 @@ export function DetailsDialog(props: DetailsDialogProps) {
-   } else if (other?.reasoning_effort === 'medium') {
-     reasoningEffortVariant = 'yellow'
-   }
+@@ -612,6 +612,9 @@ export function DetailsDialog(props: DetailsDialogProps) {
+   const reasoningEffortVariant = getReasoningEffortVariant(
+     other?.reasoning_effort
+   )
 +  const actualModel =
 +    other?.actual_model_name?.trim() ||
 +    (other?.is_model_mapped ? other?.upstream_model_name : undefined)
  
    return (
      <Dialog
-@@ -1064,7 +1067,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
+@@ -1062,18 +1065,14 @@ export function DetailsDialog(props: DetailsDialogProps) {
          )}
  
          {/* Model mapping */}
@@ -228,7 +228,8 @@ index e153ef456d953f9aed162eef8a5ebfbda29d6810..64c138295bf30b5c7f78b0a8dd302378
            <DetailSection label={t('Model Mapping')}>
              <DetailRow
                label={t('Request Model')}
-@@ -1073,7 +1076,3 @@ export function DetailsDialog(props: DetailsDialogProps) {
+               value={props.log.model_name}
+               mono
              />
 -            <DetailRow
 -              label={t('Actual Model')}
@@ -237,6 +238,8 @@ index e153ef456d953f9aed162eef8a5ebfbda29d6810..64c138295bf30b5c7f78b0a8dd302378
 -            />
 +            <DetailRow label={t('Actual Model')} value={actualModel} mono />
            </DetailSection>
+         )}
+ 
 diff --git a/web/src/features/usage-logs/lib/format.ts b/web/src/features/usage-logs/lib/format.ts
 index c2d64887a6c10cd1422ab164d4003b7e22b6c7db..327942be1045cb97d6602fa9d6865bde27324325 100644
 --- a/web/src/features/usage-logs/lib/format.ts
