@@ -1,15 +1,16 @@
 diff --git a/relay/responses_adaptor_ownership_test.go b/relay/responses_adaptor_ownership_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..8a4201f1224aa46453b4f525d6cdaf23a56734e8
+index 0000000000000000000000000000000000000000..bbf5eac8e57e8dfb303067280ad4a5e174a717c7
 --- /dev/null
 +++ b/relay/responses_adaptor_ownership_test.go
-@@ -0,0 +1,272 @@
+@@ -0,0 +1,279 @@
 +package relay
 +
 +import (
 +	"encoding/json"
 +	"net/http"
 +	"net/http/httptest"
++	"strings"
 +	"testing"
 +
 +	"github.com/QuantumNous/new-api/common"
@@ -216,6 +217,12 @@ index 0000000000000000000000000000000000000000..8a4201f1224aa46453b4f525d6cdaf23
 +	temperature := 0.7
 +	topP := 0.9
 +	maxToolCalls := uint(8)
++	reasoningEffort := "medium"
++	if strings.HasSuffix(model, "-high") {
++		reasoningEffort = "high"
++	} else if strings.HasSuffix(model, "-max") {
++		reasoningEffort = "max"
++	}
 +	return &dto.OpenAIResponsesRequest{
 +		Model:                model,
 +		Input:                json.RawMessage(`[{"role":"user","content":[{"type":"input_text","text":"hello"}]}]`),
@@ -229,7 +236,7 @@ index 0000000000000000000000000000000000000000..8a4201f1224aa46453b4f525d6cdaf23
 +		Moderation:           json.RawMessage(`{"level":"standard"}`),
 +		ParallelToolCalls:    json.RawMessage(`true`),
 +		PreviousResponseID:   "resp_previous",
-+		Reasoning:            &dto.Reasoning{Effort: "medium", Summary: "auto", Mode: json.RawMessage(`{"type":"enabled"}`), Context: json.RawMessage(`{"encrypted":"context"}`)},
++		Reasoning:            &dto.Reasoning{Effort: reasoningEffort, Summary: "auto", Mode: json.RawMessage(`{"type":"enabled"}`), Context: json.RawMessage(`{"encrypted":"context"}`)},
 +		ServiceTier:          "default",
 +		Store:                json.RawMessage(`true`),
 +		PromptCacheKey:       json.RawMessage(`"cache-key"`),
@@ -1521,7 +1528,7 @@ index 0000000000000000000000000000000000000000..cfa86d2ff8f2926575137c0a4c2aa32b
 +	}
 +}
 diff --git a/relay/responses_handler.go b/relay/responses_handler.go
-index f8b4dec2be7bf1f9ee29d43ab24bc97127126d63..ba6a257411c46fa90645262399cce925f4dcbd44 100644
+index 13eeeb8f000c2de7d29727e53787ad6a0d3f42de..33cde6850f539beaf24018a31c9afd2173fb1108 100644
 --- a/relay/responses_handler.go
 +++ b/relay/responses_handler.go
 @@ -61,9 +61,9 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
@@ -1536,8 +1543,8 @@ index f8b4dec2be7bf1f9ee29d43ab24bc97127126d63..ba6a257411c46fa90645262399cce925
  	}
  
  	err = helper.ModelMappedHelper(c, info, request)
-@@ -89,10 +89,11 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
- 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+@@ -92,10 +92,11 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
+ 			return newConvertRequestFailedError(c, info, err)
  		}
  		relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
 -		jsonData, err := common.Marshal(convertedRequest)
@@ -1549,7 +1556,7 @@ index f8b4dec2be7bf1f9ee29d43ab24bc97127126d63..ba6a257411c46fa90645262399cce925
  
  		// remove disabled fields for OpenAI Responses API
  		jsonData, err = relaycommon.RemoveDisabledFields(jsonData, info.ChannelOtherSettings, info.ChannelSetting.PassThroughBodyEnabled)
-@@ -109,13 +110,20 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
+@@ -112,13 +113,20 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
  		}
  
  		logger.LogDebug(c, "requestBody: %s", jsonData)
@@ -1577,7 +1584,7 @@ index f8b4dec2be7bf1f9ee29d43ab24bc97127126d63..ba6a257411c46fa90645262399cce925
  	var httpResp *http.Response
 diff --git a/relay/responses_handler_scheme3_test.go b/relay/responses_handler_scheme3_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..968413f7dad90c8825fe99b1b5ee6b3a0cba5a4f
+index 0000000000000000000000000000000000000000..897af0dc7e8d5f7cc3f9d70c79dd0cb9d5b99f23
 --- /dev/null
 +++ b/relay/responses_handler_scheme3_test.go
 @@ -0,0 +1,374 @@
@@ -1730,7 +1737,7 @@ index 0000000000000000000000000000000000000000..968413f7dad90c8825fe99b1b5ee6b3a
 +  "input": "` + strings.Repeat("x", responsesRawBodyMinBytes) + `",
 +  "instructions": "keep the original instructions",
 +  "max_output_tokens": 4096,
-+  "reasoning": {"effort":"medium","summary":"auto"},
++  "reasoning": {"effort":"high","summary":"auto"},
 +  "store": true,
 +  "temperature": 0.5
 +}`)
@@ -1749,7 +1756,8 @@ index 0000000000000000000000000000000000000000..968413f7dad90c8825fe99b1b5ee6b3a
 +	require.Equal(t, "gpt-5", gjson.GetBytes(first.body, "model").String())
 +	require.Equal(t, "high", gjson.GetBytes(first.body, "reasoning.effort").String())
 +	require.Equal(t, "auto", gjson.GetBytes(first.body, "reasoning.summary").String())
-+	require.Zero(t, storage.ReadCount(), "the first attempt patches reasoning and must own its body")
++	require.Greater(t, storage.ReadCount(), 0, "the first attempt is a no-op after suffix normalization and may borrow the canonical body")
++	readsAfterFirst := storage.ReadCount()
 +	require.Equal(t, wantCanonical, *canonical)
 +	require.Equal(t, raw, storage.Snapshot())
 +
@@ -1766,11 +1774,11 @@ index 0000000000000000000000000000000000000000..968413f7dad90c8825fe99b1b5ee6b3a
 +	require.NoError(t, second.err)
 +	require.Equal(t, "/backend-api/codex/responses", second.path)
 +	require.Equal(t, int64(len(second.body)), second.contentLength)
-+	require.Equal(t, "medium", gjson.GetBytes(second.body, "reasoning.effort").String())
++	require.Equal(t, "high", gjson.GetBytes(second.body, "reasoning.effort").String())
 +	require.False(t, gjson.GetBytes(second.body, "store").Bool())
 +	require.False(t, gjson.GetBytes(second.body, "max_output_tokens").Exists())
 +	require.False(t, gjson.GetBytes(second.body, "temperature").Exists())
-+	require.Zero(t, storage.ReadCount(), "the Codex attempt patches fields and must own its body")
++	require.Equal(t, readsAfterFirst, storage.ReadCount(), "the Codex attempt patches fields and must own its body")
 +	require.Equal(t, wantCanonical, *canonical)
 +	require.Equal(t, raw, storage.Snapshot())
 +
@@ -1782,7 +1790,7 @@ index 0000000000000000000000000000000000000000..968413f7dad90c8825fe99b1b5ee6b3a
 +	require.Equal(t, "/v1/responses", third.path)
 +	require.Equal(t, int64(len(third.body)), third.contentLength)
 +	require.Equal(t, raw, third.body)
-+	require.Equal(t, "medium", gjson.GetBytes(third.body, "reasoning.effort").String())
++	require.Equal(t, "high", gjson.GetBytes(third.body, "reasoning.effort").String())
 +	require.True(t, gjson.GetBytes(third.body, "store").Bool())
 +	require.Equal(t, uint64(4096), gjson.GetBytes(third.body, "max_output_tokens").Uint())
 +	require.Greater(t, storage.ReadCount(), 0, "the final no-op attempt should borrow the canonical storage")
@@ -1794,7 +1802,6 @@ index 0000000000000000000000000000000000000000..968413f7dad90c8825fe99b1b5ee6b3a
 +	raw := []byte(`{
 +  "model": "base-model",
 +  "input": [{"role":"user","content":"shared read-only input"}],
-+  "reasoning": {"effort":"medium","summary":"auto"},
 +  "tools": [{"type":"function","name":"lookup"}]
 +}`)
 +	var canonical dto.OpenAIResponsesRequest
