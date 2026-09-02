@@ -325,15 +325,3 @@ index 0000000000000000000000000000000000000000..4172b5d6f50d8fb978495a5306288932
 +	}
 +	logger.LogInfo(c, fmt.Sprintf("user-agent passthrough: upstream=%q (same as request)", upstreamUA))
 +}
-diff --git a/relay/common/relay_info.go b/relay/common/relay_info.go
-index 594e2640182d4510da9339754a7025155e715c05..2a03b7088a57972e8e258ad041120d328a8f814e 100644
---- a/relay/common/relay_info.go
-+++ b/relay/common/relay_info.go
-@@ -186,6 +186,7 @@ type RelayInfo struct {
- }
- 
- func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
-+	info.FinalRequestRelayFormat = ""
- 	channelType := common.GetContextKeyInt(c, constant.ContextKeyChannelType)
- 	paramOverride := common.GetContextKeyStringMap(c, constant.ContextKeyChannelParamOverride)
- 	headerOverride := common.GetContextKeyStringMap(c, constant.ContextKeyChannelHeaderOverride)
