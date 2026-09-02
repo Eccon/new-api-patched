@@ -1,8 +1,8 @@
 diff --git a/controller/relay.go b/controller/relay.go
-index c3a7c88ba2249f2fbdfa7d3d03e4a7c181483754..6ef275dcf3318c748d531e72440cec7c7df37e39 100644
+index 0b505e07ebf6611114cfd77caed17bebb345b445..704de8108310cdf9c6e1a49aa68790fea6e73468 100644
 --- a/controller/relay.go
 +++ b/controller/relay.go
-@@ -216,6 +216,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+@@ -218,6 +218,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
  		if newAPIError != nil {
  			logger.LogError(c, fmt.Sprintf("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
  			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
@@ -15,7 +15,7 @@ index c3a7c88ba2249f2fbdfa7d3d03e4a7c181483754..6ef275dcf3318c748d531e72440cec7c
  			switch relayFormat {
  			case types.RelayFormatOpenAIRealtime:
  				helper.WssError(c, ws, newAPIError.ToOpenAIError())
-@@ -396,6 +402,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+@@ -402,6 +408,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
  		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
  			break
  		}
@@ -23,7 +23,7 @@ index c3a7c88ba2249f2fbdfa7d3d03e4a7c181483754..6ef275dcf3318c748d531e72440cec7c
  	}
  
  	useChannel := c.GetStringSlice("use_channel")
-@@ -491,6 +498,9 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
+@@ -528,6 +535,9 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
  	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
  		return false
  	}
@@ -120,10 +120,10 @@ index 0000000000000000000000000000000000000000..546301bd78fb434c1e74a933723ee8ed
 +	assert.Zero(t, writer.writes.Load())
 +}
 diff --git a/relay/channel/openai/chat_via_responses.go b/relay/channel/openai/chat_via_responses.go
-index bcfd02113256bd24822be6df2f07b1fd1ecaaae9..4c855c99fb28e34b858057f278043a95e3ea223f 100644
+index 3b65d66fe21f87f836737c955549e3caabc0b21f..9aa5dfcef80adc2cfc9aeff34b5cd96dad11868f 100644
 --- a/relay/channel/openai/chat_via_responses.go
 +++ b/relay/channel/openai/chat_via_responses.go
-@@ -221,8 +221,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
+@@ -198,8 +198,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
  			streamErr = types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
  			return false
  		}
@@ -134,7 +134,7 @@ index bcfd02113256bd24822be6df2f07b1fd1ecaaae9..4c855c99fb28e34b858057f278043a95
  	}
  
 diff --git a/relay/channel/openai/chat_via_responses_test.go b/relay/channel/openai/chat_via_responses_test.go
-index df83b1d616b92b61699bc09e39dcb4b5bf1e9196..467cd2077d6b152afaa0ac3c97619248f1de8b93 100644
+index 27ee71c9aba78be88c4e86fdc9f4edc855968484..7cf8265617dda64580b07032719cd87b7e8121ab 100644
 --- a/relay/channel/openai/chat_via_responses_test.go
 +++ b/relay/channel/openai/chat_via_responses_test.go
 @@ -1,6 +1,7 @@
@@ -150,10 +150,10 @@ index df83b1d616b92b61699bc09e39dcb4b5bf1e9196..467cd2077d6b152afaa0ac3c97619248
  	"github.com/QuantumNous/new-api/constant"
  	relaycommon "github.com/QuantumNous/new-api/relay/common"
 +	relayhelper "github.com/QuantumNous/new-api/relay/helper"
+ 	"github.com/QuantumNous/new-api/relaykit/dto"
  	"github.com/QuantumNous/new-api/relaykit/types"
  	"github.com/gin-gonic/gin"
- 	"github.com/stretchr/testify/assert"
-@@ -87,6 +89,46 @@ func TestOaiResponsesToChatStreamHandlerConvertsSSEOrderAndUsage(t *testing.T) {
+@@ -88,6 +90,46 @@ func TestOaiResponsesToChatStreamHandlerConvertsSSEOrderAndUsage(t *testing.T) {
  	)
  }
  
@@ -201,30 +201,22 @@ index df83b1d616b92b61699bc09e39dcb4b5bf1e9196..467cd2077d6b152afaa0ac3c97619248
  	oldMode := gin.Mode()
  	gin.SetMode(gin.TestMode)
 diff --git a/relay/channel/openai/helper.go b/relay/channel/openai/helper.go
-index 1f0f7689e3858c3a274b45ee469f7281d4593680..e3be0d21fac1f469aed5bef095631ee7b21d8093 100644
+index cdcb37c4fb08d570511aa2385464d58eb3de1f0f..4ad37dea2cb01e858f5539589905a473960d461e 100644
 --- a/relay/channel/openai/helper.go
 +++ b/relay/channel/openai/helper.go
-@@ -85,8 +85,7 @@ func handleGeminiFormat(c *gin.Context, data string, info *relaycommon.RelayInfo
+@@ -114,8 +114,9 @@ func sendGeminiStreamResults(c *gin.Context, results []relayconvert.ResponseResu
+ 			logger.LogError(c, "failed to marshal gemini response: "+err.Error())
+ 			return err
+ 		}
+-		c.Render(-1, common.CustomEvent{Data: "data: " + string(data)})
+-		_ = helper.FlushWriter(c)
++		if err := helper.StringData(c, string(data)); err != nil {
++			return err
++		}
  	}
- 
- 	// send gemini format response
--	c.Render(-1, common.CustomEvent{Data: "data: " + string(geminiResponseStr)})
--	_ = helper.FlushWriter(c)
-+	_ = helper.StringData(c, string(geminiResponseStr))
  	return nil
  }
- 
-@@ -233,8 +232,7 @@ func HandleFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, lastStream
- 		}
- 
- 		// 发送最终的 Gemini 响应
--		c.Render(-1, common.CustomEvent{Data: "data: " + string(geminiResponseStr)})
--		_ = helper.FlushWriter(c)
-+		_ = helper.StringData(c, string(geminiResponseStr))
- 	}
- }
- 
-@@ -274,9 +272,7 @@ func sendResponsesErrorEvent(c *gin.Context, reason string, sequenceNumber int)
+@@ -299,9 +300,7 @@ func sendResponsesErrorEvent(c *gin.Context, reason string, sequenceNumber int)
  	}
  
  	helper.ExtendWriteDeadline(c)
