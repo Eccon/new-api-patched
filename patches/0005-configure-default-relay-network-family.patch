@@ -2,8 +2,7 @@ diff --git a/common/constants.go b/common/constants.go
 index bd2fd17693db3636553b3199b795927b83a393a6..0909016b776d8c35ee9a5b45cbb6a094f6fe73d1 100644
 --- a/common/constants.go
 +++ b/common/constants.go
-@@ -168,6 +168,13 @@ var RelayTimeout int // unit is second
- var RelayIdleConnTimeout int // unit is second
+@@ -180,4 +180,11 @@ var RelayMaxIdleConns int
  var RelayMaxIdleConns int
  var RelayMaxIdleConnsPerHost int
 +var RelayDirectNetworkFamily = RelayDirectNetworkFamilyAuto
@@ -20,8 +19,9 @@ diff --git a/common/init.go b/common/init.go
 index 0c505368d271772d782251281584f9d834bc1c85..11df7a183166c443f696b21602a305bf2db0fc90 100644
 --- a/common/init.go
 +++ b/common/init.go
-@@ -112,6 +112,16 @@ func InitEnv() {
+@@ -113,7 +113,17 @@ func InitEnv() {
  	RelayIdleConnTimeout = GetEnvOrDefault("RELAY_IDLE_CONN_TIMEOUT", 90)
+ 	RelayResponseHeaderTimeout = GetEnvOrDefault("RELAY_RESPONSE_HEADER_TIMEOUT", 1800)
  	RelayMaxIdleConns = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS", 500)
  	RelayMaxIdleConnsPerHost = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS_PER_HOST", 100)
 +	relayDirectNetworkFamilyRaw := GetEnvOrDefaultString("RELAY_DIRECT_NETWORK_FAMILY", RelayDirectNetworkFamilyAuto)
