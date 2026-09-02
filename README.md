@@ -88,14 +88,12 @@ No Docker image is built.
   - Treats an environment proxy as the dial target and requires a restart after changing the setting.
 
 - `0006-native-stream-response-header-timeout.patch`
-  - Adds `RELAY_RESPONSE_HEADER_TIMEOUT` for streaming relay requests using Go's native `http.Transport.ResponseHeaderTimeout` semantics.
-  - Applies the response-header timeout after the request body is written, without adding a separate first-response timer or binding the upstream request to the downstream context.
-  - Includes the timeout in the transport policy and proxy-client cache key, and applies it to every configured HTTP/2 shard.
+  - Reuses upstream's native `RELAY_RESPONSE_HEADER_TIMEOUT` transport protection, including its 1800-second default and application to relay transports and HTTP/2 shards.
   - Classifies native HTTP/1 and HTTP/2 response-header timeout errors as `upstream error: response header timeout` while preserving the existing relay error code.
   - Adds `RELAY_NON_STREAM_TIMEOUT` as the total `http.Client.Timeout` for non-stream relay attempts; `RELAY_TIMEOUT` remains the fallback and, when set, the upper bound.
   - Keeps stream requests outside `RELAY_NON_STREAM_TIMEOUT`; their total client timeout continues to use `RELAY_TIMEOUT`.
   - Reuses the normalized transport and connection pools when only the client-level total timeout differs.
-  - Applies the same client selection to AWS Bedrock and prevents the AWS SDK from internally retrying response-header timeout errors.
+  - Applies the same client selection to AWS Bedrock and prevents the AWS SDK from internally retrying upstream response-header timeout errors for both stream and non-stream requests.
   - Leaves the known AWS non-stream limitation documented in code: `RELAY_NON_STREAM_TIMEOUT` is per HTTP attempt and does not yet bound the SDK's complete retry cycle.
 
 - `0007-skip-retry-after-client-disconnect.patch`
