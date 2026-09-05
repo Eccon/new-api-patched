@@ -1,5 +1,5 @@
 diff --git a/pkg/perf_metrics/metrics.go b/pkg/perf_metrics/metrics.go
-index 33b79ee478e9239fb561fbf842fe990c7d5f1783..721f6a2b77c1fcbd4e873b9851c16b3ce13be06e 100644
+index 33b79ee4..721f6a2b 100644
 --- a/pkg/perf_metrics/metrics.go
 +++ b/pkg/perf_metrics/metrics.go
 @@ -32,7 +32,7 @@ func RecordRelaySample(info *relaycommon.RelayInfo, success bool, outputTokens i
@@ -13,7 +13,7 @@ index 33b79ee478e9239fb561fbf842fe990c7d5f1783..721f6a2b77c1fcbd4e873b9851c16b3c
  	generationMs := latencyMs
 diff --git a/pkg/perf_metrics/metrics_test.go b/pkg/perf_metrics/metrics_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..96b85f0c9a6d3f51700e55e20bab2a5966c6d4b6
+index 00000000..96b85f0c
 --- /dev/null
 +++ b/pkg/perf_metrics/metrics_test.go
 @@ -0,0 +1,41 @@
@@ -59,7 +59,7 @@ index 0000000000000000000000000000000000000000..96b85f0c9a6d3f51700e55e20bab2a59
 +	require.Equal(t, int64(1), recorded.ttftCount)
 +}
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index e1be11e9a7bc58344fcdf5e86833ffe2cf94bf92..cd0368b63792a37034ed0a850d783c00d09a830b 100644
+index e1be11e9..cd0368b6 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
 @@ -399,6 +399,7 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
@@ -79,7 +79,7 @@ index e1be11e9a7bc58344fcdf5e86833ffe2cf94bf92..cd0368b63792a37034ed0a850d783c00
  	if requestTrace != nil {
  		attempt, writeSeq := requestTrace.finish(resp)
 diff --git a/relay/channel/api_request_test.go b/relay/channel/api_request_test.go
-index 932c45a99288b6de8d9c4a3241ca67a242ad29a5..39f442bb5eeb841af9bcaad1618bcca1d24ea3ec 100644
+index 932c45a9..39f442bb 100644
 --- a/relay/channel/api_request_test.go
 +++ b/relay/channel/api_request_test.go
 @@ -12,6 +12,7 @@ import (
@@ -142,7 +142,7 @@ index 932c45a99288b6de8d9c4a3241ca67a242ad29a5..39f442bb5eeb841af9bcaad1618bcca1
  	var logs synchronizedLogBuffer
  	common.LogWriterMu.Lock()
 diff --git a/relay/channel/aws/relay-aws.go b/relay/channel/aws/relay-aws.go
-index 346262fff43874914d7c4645aadf6b75bd445e68..714fdf3be41b510393946b8c86ab70350a79a2b3 100644
+index 346262ff..714fdf3b 100644
 --- a/relay/channel/aws/relay-aws.go
 +++ b/relay/channel/aws/relay-aws.go
 @@ -286,6 +286,7 @@ func awsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (
@@ -154,7 +154,7 @@ index 346262fff43874914d7c4645aadf6b75bd445e68..714fdf3be41b510393946b8c86ab7035
  	if err != nil {
  		return newAwsInvokeError(requestContext, err, "InvokeModelWithResponseStream"), nil
 diff --git a/relay/channel/volcengine/tts.go b/relay/channel/volcengine/tts.go
-index 6ea282757b4417202d9f30a17333b53885757ec7..b061c2524a77d47759e139ada4271a28be272d6e 100644
+index 6ea28275..b061c252 100644
 --- a/relay/channel/volcengine/tts.go
 +++ b/relay/channel/volcengine/tts.go
 @@ -209,6 +209,7 @@ func handleTTSWebSocketResponse(c *gin.Context, requestURL string, volcRequest V
@@ -166,7 +166,7 @@ index 6ea282757b4417202d9f30a17333b53885757ec7..b061c2524a77d47759e139ada4271a28
  	if dialErr != nil {
  		if resp != nil {
 diff --git a/relay/channel/xunfei/adaptor.go b/relay/channel/xunfei/adaptor.go
-index 2f8112f48b5de8a70fd695932ad0f3db8dce44b2..661addb9d8933b6a5a690a375bfa4b52a409a49a 100644
+index 2f8112f4..661addb9 100644
 --- a/relay/channel/xunfei/adaptor.go
 +++ b/relay/channel/xunfei/adaptor.go
 @@ -87,6 +87,7 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
@@ -178,7 +178,7 @@ index 2f8112f48b5de8a70fd695932ad0f3db8dce44b2..661addb9d8933b6a5a690a375bfa4b52
  		usage, err = xunfeiStreamHandler(c, *a.request, splits[0], splits[1], splits[2])
  	} else {
 diff --git a/relay/common/relay_info.go b/relay/common/relay_info.go
-index e89cc369566c4f7f1c34bbbf1318e875890fd630..7b2d5194c8f592fb67035a4e43354ca65b05c4a7 100644
+index 7eb07717..8ff3a25f 100644
 --- a/relay/common/relay_info.go
 +++ b/relay/common/relay_info.go
 @@ -185,6 +185,7 @@ type RelayInfo struct {
@@ -189,7 +189,7 @@ index e89cc369566c4f7f1c34bbbf1318e875890fd630..7b2d5194c8f592fb67035a4e43354ca6
  	FirstResponseTime time.Time
  	isFirstResponse   bool
  	//SendLastReasoningResponse bool
-@@ -1009,6 +1010,23 @@ func (info *RelayInfo) SetFirstResponseTimeAt(t time.Time) {
+@@ -1020,6 +1021,23 @@ func (info *RelayInfo) SetFirstResponseTimeAt(t time.Time) {
  	}
  }
  
@@ -214,18 +214,18 @@ index e89cc369566c4f7f1c34bbbf1318e875890fd630..7b2d5194c8f592fb67035a4e43354ca6
  	return info.FirstResponseTime.After(info.StartTime)
  }
 diff --git a/relay/common/relay_info_test.go b/relay/common/relay_info_test.go
-index 5142c5414b513b71499c998aeaee281a3ed2c12f..0c861ccda534b20a1cd855a15bae74856e0ae92b 100644
+index 78095031..18787a9c 100644
 --- a/relay/common/relay_info_test.go
 +++ b/relay/common/relay_info_test.go
-@@ -4,6 +4,7 @@ import (
+@@ -5,6 +5,7 @@ import (
  	"encoding/json"
  	"net/http/httptest"
  	"testing"
 +	"time"
  
  	"github.com/QuantumNous/new-api/relaykit/dto"
- 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
-@@ -13,6 +14,32 @@ import (
+ 	"github.com/QuantumNous/new-api/relaykit/relayconvert"
+@@ -15,6 +16,32 @@ import (
  	"github.com/stretchr/testify/require"
  )
  
@@ -259,21 +259,21 @@ index 5142c5414b513b71499c998aeaee281a3ed2c12f..0c861ccda534b20a1cd855a15bae7485
  	info := &RelayInfo{
  		RelayFormat:             types.RelayFormatOpenAI,
 diff --git a/service/log_info_generate.go b/service/log_info_generate.go
-index 84859b18271d0739f671a1d424c8b1655079f006..f559cfb661dfcea59bdf77decd29565629ec0f7d 100644
+index 53c1fdf1..88729454 100644
 --- a/service/log_info_generate.go
 +++ b/service/log_info_generate.go
-@@ -99,7 +99,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
- 	other["cache_ratio"] = cacheRatio
- 	other["model_price"] = modelPrice
- 	other["user_group_ratio"] = userGroupRatio
--	other["frt"] = float64(relayInfo.FirstResponseTime.UnixMilli() - relayInfo.StartTime.UnixMilli())
-+	other["frt"] = float64(relayInfo.FirstResponseTime.UnixMilli() - relayInfo.FirstResponseStartTime().UnixMilli())
+@@ -124,7 +124,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
+ 	other.SetPublic("cache_ratio", cacheRatio)
+ 	other.SetPublic("model_price", modelPrice)
+ 	other.SetPublic("user_group_ratio", userGroupRatio)
+-	other.SetPublic("frt", float64(relayInfo.FirstResponseTime.UnixMilli()-relayInfo.StartTime.UnixMilli()))
++	other.SetPublic("frt", float64(relayInfo.FirstResponseTime.UnixMilli()-relayInfo.FirstResponseStartTime().UnixMilli()))
  	if relayInfo.ReasoningEffort != "" {
- 		other["reasoning_effort"] = relayInfo.ReasoningEffort
+ 		other.SetPublic("reasoning_effort", relayInfo.ReasoningEffort)
  	}
 diff --git a/service/log_info_generate_test.go b/service/log_info_generate_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..a6afa4a7360afdc69a810ba5d28f56f994d74011
+index 00000000..a6afa4a7
 --- /dev/null
 +++ b/service/log_info_generate_test.go
 @@ -0,0 +1,30 @@
@@ -305,5 +305,5 @@ index 0000000000000000000000000000000000000000..a6afa4a7360afdc69a810ba5d28f56f9
 +
 +	other := GenerateTextOtherInfo(ctx, info, 1, 1, 1, 0, 0, 0, 1)
 +
-+	require.Equal(t, float64(46350), other["frt"])
++	require.Equal(t, float64(46350), other.Snapshot()["frt"])
 +}
