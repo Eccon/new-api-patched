@@ -1,5 +1,5 @@
 diff --git a/relay/channel/openai/chat_via_responses.go b/relay/channel/openai/chat_via_responses.go
-index 5a45585dcc5913444a78a8a2285fe42eed8cbc2d..3b65d66fe21f87f836737c955549e3caabc0b21f 100644
+index 5a45585d..3b65d66f 100644
 --- a/relay/channel/openai/chat_via_responses.go
 +++ b/relay/channel/openai/chat_via_responses.go
 @@ -36,6 +36,7 @@ func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
@@ -31,7 +31,7 @@ index 5a45585dcc5913444a78a8a2285fe42eed8cbc2d..3b65d66fe21f87f836737c955549e3ca
  		if streamResp.Type == "response.error" || streamResp.Type == "response.failed" {
  			if streamResp.Response != nil {
 diff --git a/relay/channel/openai/helper.go b/relay/channel/openai/helper.go
-index 354c1f8b37f5069657b6a469b2e9d187e7048938..cdcb37c4fb08d570511aa2385464d58eb3de1f0f 100644
+index 0bc72825..3967ed19 100644
 --- a/relay/channel/openai/helper.go
 +++ b/relay/channel/openai/helper.go
 @@ -137,22 +137,22 @@ func ProcessStreamResponse(streamResponse dto.ChatCompletionsStreamResponse, res
@@ -74,7 +74,7 @@ index 354c1f8b37f5069657b6a469b2e9d187e7048938..cdcb37c4fb08d570511aa2385464d58e
  	if service.ValidUsage(lastStreamResponse.Usage) {
  		*containStreamUsage = true
 diff --git a/relay/channel/openai/relay-openai.go b/relay/channel/openai/relay-openai.go
-index 285e342f824aacdf9f781cf47d5deac4dd3b6cb1..7b5167431a1b141eaeec1bee150dbea201ea9803 100644
+index 285e342f..7b516743 100644
 --- a/relay/channel/openai/relay-openai.go
 +++ b/relay/channel/openai/relay-openai.go
 @@ -120,6 +120,7 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
@@ -112,7 +112,7 @@ index 285e342f824aacdf9f781cf47d5deac4dd3b6cb1..7b5167431a1b141eaeec1bee150dbea2
  	if oaiError := simpleResponse.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
  		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 diff --git a/relay/channel/openai/relay_responses.go b/relay/channel/openai/relay_responses.go
-index d979f99a1f72f29697aa378190dc18a3e5a5d955..cd0c5abcca1da355265f5bbf147f94fd13b70cce 100644
+index d979f99a..cd0c5abc 100644
 --- a/relay/channel/openai/relay_responses.go
 +++ b/relay/channel/openai/relay_responses.go
 @@ -31,6 +31,7 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
@@ -134,7 +134,7 @@ index d979f99a1f72f29697aa378190dc18a3e5a5d955..cd0c5abcca1da355265f5bbf147f94fd
  		switch streamResponse.Type {
  		case "response.completed", "response.done":
 diff --git a/relay/common/relay_info.go b/relay/common/relay_info.go
-index 16797f94b381430955f304622ea17ab26f30d12f..e89cc369566c4f7f1c34bbbf1318e875890fd630 100644
+index 0727f61e..7eb07717 100644
 --- a/relay/common/relay_info.go
 +++ b/relay/common/relay_info.go
 @@ -194,6 +194,7 @@ type RelayInfo struct {
@@ -145,7 +145,7 @@ index 16797f94b381430955f304622ea17ab26f30d12f..e89cc369566c4f7f1c34bbbf1318e875
  
  	// BillingModelName is the pricing identity for this request. It is kept
  	// separate from OriginModelName and UpstreamModelName so virtual pricing
-@@ -846,6 +847,20 @@ func (info *RelayInfo) GetEstimatePromptTokens() int {
+@@ -857,6 +858,20 @@ func (info *RelayInfo) GetEstimatePromptTokens() int {
  	return info.estimatePromptTokens
  }
  
@@ -167,14 +167,14 @@ index 16797f94b381430955f304622ea17ab26f30d12f..e89cc369566c4f7f1c34bbbf1318e875
  // convmeta.Meta implementation — the view format converters see. Keep these
  // thin: they only expose protocol state, never billing/user fields.
 diff --git a/service/log_info_generate.go b/service/log_info_generate.go
-index 2781dc1aec220d3e86c00345a44c9b7c496d2556..84859b18271d0739f671a1d424c8b1655079f006 100644
+index aec98ce9..53c1fdf1 100644
 --- a/service/log_info_generate.go
 +++ b/service/log_info_generate.go
-@@ -69,6 +69,26 @@ func appendRequestPath(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, other
+@@ -65,6 +65,26 @@ func appendRequestPath(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, other
  	}
  }
  
-+func appendActualModelInfo(relayInfo *relaycommon.RelayInfo, other map[string]interface{}) {
++func appendActualModelInfo(relayInfo *relaycommon.RelayInfo, other *model.LogOther) {
 +	if relayInfo == nil || other == nil {
 +		return
 +	}
@@ -184,29 +184,29 @@ index 2781dc1aec220d3e86c00345a44c9b7c496d2556..84859b18271d0739f671a1d424c8b165
 +	responseModel := strings.TrimSpace(relayInfo.ResponseModelName)
 +
 +	if responseModel != "" && (responseModel != requestModel || (mappedModel != "" && responseModel != mappedModel)) {
-+		other["response_model_name"] = responseModel
-+		other["actual_model_name"] = responseModel
++		other.SetPublic("response_model_name", responseModel)
++		other.SetPublic("actual_model_name", responseModel)
 +		return
 +	}
 +
 +	if relayInfo.IsModelMapped && mappedModel != "" && mappedModel != requestModel {
-+		other["actual_model_name"] = mappedModel
++		other.SetPublic("actual_model_name", mappedModel)
 +	}
 +}
 +
- func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, modelRatio, groupRatio, completionRatio float64,
- 	cacheTokens int, cacheRatio float64, modelPrice float64, userGroupRatio float64) map[string]interface{} {
- 	other := make(map[string]interface{})
-@@ -87,6 +107,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
- 		other["is_model_mapped"] = true
- 		other["upstream_model_name"] = relayInfo.UpstreamModelName
+ // AppendRelayLogAdminInfo records relay routing and conversion diagnostics in
+ // the admin-only scope shared by successful and failed request logs.
+ func AppendRelayLogAdminInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, other *model.LogOther) {
+@@ -112,6 +132,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
+ 		other.SetPublic("is_model_mapped", true)
+ 		other.SetPublic("upstream_model_name", relayInfo.UpstreamModelName)
  	}
 +	appendActualModelInfo(relayInfo, other)
  
  	isSystemPromptOverwritten := common.GetContextKeyBool(ctx, constant.ContextKeySystemPromptOverride)
  	if isSystemPromptOverwritten {
 diff --git a/web/src/features/usage-logs/components/dialogs/details-dialog.tsx b/web/src/features/usage-logs/components/dialogs/details-dialog.tsx
-index 4df6cc0b1a413f98caf79f3eb33a07a5cdc3ed91..7a5dce897f7a79c39e18a066dbc787274f2fffad 100644
+index 0e7eef32..9bd97cdf 100644
 --- a/web/src/features/usage-logs/components/dialogs/details-dialog.tsx
 +++ b/web/src/features/usage-logs/components/dialogs/details-dialog.tsx
 @@ -639,6 +639,9 @@ export function DetailsDialog(props: DetailsDialogProps) {
@@ -241,7 +241,7 @@ index 4df6cc0b1a413f98caf79f3eb33a07a5cdc3ed91..7a5dce897f7a79c39e18a066dbc78727
          )}
  
 diff --git a/web/src/features/usage-logs/lib/format.ts b/web/src/features/usage-logs/lib/format.ts
-index 2a5a30e3673a1506de3d753da87f272c97a775fe..2f7d56c1b286d8fdec4dc8eba46b2ba1ab45b72f 100644
+index 2a5a30e3..2f7d56c1 100644
 --- a/web/src/features/usage-logs/lib/format.ts
 +++ b/web/src/features/usage-logs/lib/format.ts
 @@ -239,6 +239,7 @@ export function formatModelName(log: UsageLog): {
@@ -263,10 +263,10 @@ index 2a5a30e3673a1506de3d753da87f272c97a775fe..2f7d56c1b286d8fdec4dc8eba46b2ba1
  }
  
 diff --git a/web/src/features/usage-logs/types.ts b/web/src/features/usage-logs/types.ts
-index fb03a4573e79856aabdc7ec23595a74b1b994bed..da63cb26db7d1e6cfb0fd9c82c3d76fdb4ce1462 100644
+index 1229beee..febadefc 100644
 --- a/web/src/features/usage-logs/types.ts
 +++ b/web/src/features/usage-logs/types.ts
-@@ -192,6 +192,7 @@ export interface LogOtherData {
+@@ -194,6 +194,7 @@ export interface LogOtherData {
    cache_creation_ratio_1h?: number
    is_model_mapped?: boolean
    upstream_model_name?: string
