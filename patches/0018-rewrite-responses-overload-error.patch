@@ -120,7 +120,7 @@ index 0707ddf596831e0b1bfbcaf2e7e7b6d2573e9a58..fd9944269caa58e1f091d5f5198d4f20
 +			assert.Equal(t, "upstream response.failed: code="+responseErrorCode, info.StreamStatus.Errors[0].Message)
 +
 +			other := service.GenerateTextOtherInfo(c, info, 1, 1, 1, 0, 0, 0, 1)
-+			streamStatus, ok := other["stream_status"].(map[string]interface{})
++			streamStatus, ok := other.Snapshot()["stream_status"].(map[string]interface{})
 +			require.True(t, ok)
 +			assert.Equal(t, "error", streamStatus["status"])
 +			assert.Equal(t, "eof", streamStatus["end_reason"])
