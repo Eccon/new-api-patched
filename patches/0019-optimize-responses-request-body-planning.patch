@@ -288,7 +288,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..c2c84c059d9b7b6c0d82400272c69545ae34ba94
 --- /dev/null
 +++ b/relay/responses_body.go
-@@ -0,0 +1,481 @@
+@@ -0,0 +1,482 @@
 +package relay
 +
 +import (
@@ -457,6 +457,7 @@ index 0000000000000000000000000000000000000000..c2c84c059d9b7b6c0d82400272c69545
 +	candidate.Reasoning = converted.Reasoning
 +	candidate.Store = converted.Store
 +	candidate.Temperature = converted.Temperature
++	candidate.ReasoningConversion = converted.ReasoningConversion
 +	if !reflect.DeepEqual(candidate, *converted) {
 +		return nil, false, nil
 +	}
