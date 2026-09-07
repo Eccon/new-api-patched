@@ -481,20 +481,20 @@ diff --git a/middleware/logger.go b/middleware/logger.go
 index 90b2d2eef872c357b69173b90c906ac08d661e97..e8ad7e9742b43e897bcd54bbcdb36eb037f5542b 100644
 --- a/middleware/logger.go
 +++ b/middleware/logger.go
-@@ -1,9 +1,12 @@
+@@ -1,10 +1,12 @@
  package middleware
  
  import (
 +	"context"
  	"fmt"
-+	"strings"
+ 	"strings"
  
  	"github.com/QuantumNous/new-api/common"
 +	"github.com/QuantumNous/new-api/logger"
  	"github.com/gin-gonic/gin"
  )
  
-@@ -12,10 +15,54 @@ const RouteTagKey = "route_tag"
+@@ -13,10 +15,54 @@ const RouteTagKey = "route_tag"
  func RouteTag(tag string) gin.HandlerFunc {
  	return func(c *gin.Context) {
  		c.Set(RouteTagKey, tag)
