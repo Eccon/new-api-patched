@@ -188,6 +188,12 @@ No Docker image is built.
   - Replaces the tokenizer's legacy `regexp2` dependency with generated-regex `regexp2/v2` and records the tidied module graph.
   - Leaves New API's existing `ForModel` selection, unknown-model fallback, token billing flow, and cancellation behavior unchanged.
 
+- `0021-show-reasoning-effort-in-usage-logs.patch`
+  - Adds a `Reasoning Effort` column immediately to the right of the model column in common usage logs.
+  - Reads the existing public `other.reasoning_effort` field, so no backend or database changes are required.
+  - Reuses the detail view colors: orange for `max`/`xhigh`/`high`, yellow for `medium`, green for `low`/`minimal`, and grey for `none` or unknown values.
+  - Shows the same badge beside the model in the mobile usage-log card and leaves rows without a reasoning effort blank.
+
 ## Version Handling
 
 The workflow sets `common.Version` through the full upstream module path:
