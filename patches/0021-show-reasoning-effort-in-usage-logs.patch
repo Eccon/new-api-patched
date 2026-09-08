@@ -1,16 +1,16 @@
 diff --git a/web/src/features/usage-logs/components/columns/common-logs-columns.tsx b/web/src/features/usage-logs/components/columns/common-logs-columns.tsx
-index eb73169fe..ba71caedc 100644
+index 760a14f15..4f8930681 100644
 --- a/web/src/features/usage-logs/components/columns/common-logs-columns.tsx
 +++ b/web/src/features/usage-logs/components/columns/common-logs-columns.tsx
-@@ -44,6 +44,7 @@ import { LOG_TYPE_ALL_VALUE } from '../../constants'
+@@ -54,6 +54,7 @@ import { LOG_TYPE_ALL_VALUE } from '../../constants'
  import type { UsageLog } from '../../data/schema'
  import {
    formatModelName,
 +  getReasoningEffortVariant,
+   decodeBillingExprB64,
    getTieredBillingSummary,
    hasAnyCacheTokens,
-   parseLogOther,
-@@ -651,6 +652,30 @@ export function useCommonLogsColumns(
+@@ -689,6 +690,25 @@ export function useCommonLogsColumns(
        },
        meta: { mobileTitle: true },
      },
@@ -20,18 +20,13 @@ index eb73169fe..ba71caedc 100644
 +      accessorFn: (row) =>
 +        parseLogOther(row.other)?.reasoning_effort?.trim() || '',
 +      cell: ({ row }) => {
-+        const log = row.original
-+        if (!isDisplayableLogType(log.type)) return null
-+
-+        const effort = parseLogOther(log.other)?.reasoning_effort?.trim()
++        const effort = row.getValue('reasoning_effort') as string
 +        if (!effort) return null
 +
 +        return (
 +          <StatusBadge
 +            label={effort}
 +            variant={getReasoningEffortVariant(effort)}
-+            size='sm'
-+            copyable={false}
 +          />
 +        )
 +      },
@@ -41,26 +36,43 @@ index eb73169fe..ba71caedc 100644
      {
        accessorKey: 'is_stream',
        header: t('Stream'),
-diff --git a/web/src/features/usage-logs/components/usage-logs-mobile-card.tsx b/web/src/features/usage-logs/components/usage-logs-mobile-card.tsx
-index ab473d915..275c8e49f 100644
---- a/web/src/features/usage-logs/components/usage-logs-mobile-card.tsx
-+++ b/web/src/features/usage-logs/components/usage-logs-mobile-card.tsx
-@@ -318,13 +318,17 @@ function CommonLogsCard<TData>({
-   const { t } = useTranslation()
+diff --git a/web/src/features/usage-logs/components/common-log-mobile-card.tsx b/web/src/features/usage-logs/components/common-log-mobile-card.tsx
+index c50c42186..6f89569b4 100644
+--- a/web/src/features/usage-logs/components/common-log-mobile-card.tsx
++++ b/web/src/features/usage-logs/components/common-log-mobile-card.tsx
+@@ -32,7 +32,11 @@ import dayjs from '@/lib/dayjs'
+ import { formatLogQuota, formatTimestampToDate } from '@/lib/format'
  
-   const modelCell = cells.get('model_name')
-+  const reasoningEffortCell = cells.get('reasoning_effort')
-   const quotaCell = cells.get('quota')
-   const rowData = cells.get('created_at')?.row.original as UsageLog | undefined
- 
-   return (
-     <div className='space-y-2.5'>
-       <div className='flex min-w-0 items-center justify-between gap-3'>
--        <CompactCell cell={modelCell} className='flex-1' />
-+        <div className='flex min-w-0 flex-1 items-center gap-1.5'>
-+          <CompactCell cell={modelCell} />
-+          <CompactCell cell={reasoningEffortCell} className='shrink-0' />
-+        </div>
-         <CompactCell
-           cell={quotaCell}
-           className='shrink-0 text-right [&_.flex-col]:items-end'
+ import type { UsageLog } from '../data/schema'
+-import { formatModelName, parseLogOther } from '../lib/format'
++import {
++  formatModelName,
++  getReasoningEffortVariant,
++  parseLogOther,
++} from '../lib/format'
+ import {
+   getLogTypeConfig,
+   isDisplayableLogType,
+@@ -145,13 +149,21 @@ export function CommonLogMobileCard<TData>(props: {
+     <div className='min-w-0 space-y-2.5 text-sm leading-5'>
+       <div className='flex min-w-0 flex-wrap items-start gap-x-3 gap-y-2'>
+         {fields.model.visible && (
+-          <div className='min-w-0 flex-[1_1_10rem]'>
++          <div className='flex min-w-0 flex-[1_1_10rem] flex-wrap items-center gap-1.5'>
+             <ModelBadge
+               modelName={model.name}
+               actualModel={model.actualModel}
+               wrapText
+               onInspect={() => setSelectedField('model')}
+             />
++            {other?.reasoning_effort?.trim() && (
++              <StatusBadge
++                label={other.reasoning_effort.trim()}
++                variant={getReasoningEffortVariant(
++                  other.reasoning_effort.trim()
++                )}
++              />
++            )}
+           </div>
+         )}
+         {fields.cost.visible && costCell && (
