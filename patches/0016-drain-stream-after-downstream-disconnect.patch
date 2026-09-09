@@ -617,7 +617,7 @@ index fa363569c4155a0b33335177cd62c36510ff361c..8a1bd5a23de9087d71056e8f06d1da80
 +	return nil
  }
  
- func ObjectData(c *gin.Context, object interface{}) error {
+ func ObjectData(c *gin.Context, object any) error {
 diff --git a/relay/helper/stream_delivery.go b/relay/helper/stream_delivery.go
 new file mode 100644
 index 0000000000000000000000000000000000000000..c42bc4b219332b194d6b6fafe0bb1492efd92a2a
