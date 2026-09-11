@@ -231,11 +231,9 @@ diff --git a/relay/channel/openai/image_stream_test.go b/relay/channel/openai/im
 index 1adde5c94c9a76268c41d2b395a79e25c30108a3..40e250aeb347123a944872a61f19f71060131324 100644
 --- a/relay/channel/openai/image_stream_test.go
 +++ b/relay/channel/openai/image_stream_test.go
-@@ -2,16 +2,19 @@ package openai
- 
- import (
+@@ -3,18 +3,20 @@ import (
  	"context"
-+	"fmt"
+ 	"fmt"
  	"io"
  	"net/http"
  	"net/http/httptest"
@@ -245,10 +243,13 @@ index 1adde5c94c9a76268c41d2b395a79e25c30108a3..40e250aeb347123a944872a61f19f710
 +	"time"
  
  	"github.com/QuantumNous/new-api/constant"
+ 	"github.com/QuantumNous/new-api/pkg/billingexpr"
  	relaycommon "github.com/QuantumNous/new-api/relay/common"
  	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 +	relayhelper "github.com/QuantumNous/new-api/relay/helper"
+ 	"github.com/QuantumNous/new-api/relaykit/dto"
  	"github.com/gin-gonic/gin"
+ 	"github.com/stretchr/testify/assert"
  	"github.com/stretchr/testify/require"
  )
 @@ -139,40 +142,6 @@ func TestOpenaiImageStreamHandlerUsesCompletedEventCount(t *testing.T) {

@@ -13,7 +13,7 @@ index 5e2db44..d8b30f2 100644
  		return false
  	}
 @@ -614,6 +617,9 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError,
- 	if taskErr == nil {
+ 	if taskErr == nil || taskErr.NoRetry {
  		return false
  	}
 +	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {

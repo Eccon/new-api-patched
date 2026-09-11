@@ -1061,8 +1061,9 @@ index 727476b1ece4a6d8d7fdcc9a42ee45106bdd0e02..16797f94b381430955f304622ea17ab2
  type RelayInfo struct {
  	TokenId           int
  	TokenKey          string
-@@ -173,6 +268,7 @@ type RelayInfo struct {
- 	BillingRequestInput   *billingexpr.RequestInput
+@@ -185,7 +280,8 @@ type RelayInfo struct {
+ 	ImageRequestCount     int
+ 	ImageQuotaBeforeGroup float64
  
  	Request dto.Request
 +	Timing  RelayTimingInfo
