@@ -1,5 +1,5 @@
 diff --git a/relay/channel/openai/helper.go b/relay/channel/openai/helper.go
-index 3999ba560fae9bc6197d1b0474c5606f10298843..354c1f8b37f5069657b6a469b2e9d187e7048938 100644
+index a3cbd115d..0bc72825e 100644
 --- a/relay/channel/openai/helper.go
 +++ b/relay/channel/openai/helper.go
 @@ -267,3 +267,42 @@ func sendResponsesStreamData(c *gin.Context, streamResponse dto.ResponsesStreamR
@@ -46,47 +46,38 @@ index 3999ba560fae9bc6197d1b0474c5606f10298843..354c1f8b37f5069657b6a469b2e9d187
 +	}
 +}
 diff --git a/relay/channel/openai/relay_responses.go b/relay/channel/openai/relay_responses.go
-index 93b2599ded6fc9eb48897472dbe5ecfc1a49a59d..d979f99a1f72f29697aa378190dc18a3e5a5d955 100644
+index da2e48a7b..ba6096730 100644
 --- a/relay/channel/openai/relay_responses.go
 +++ b/relay/channel/openai/relay_responses.go
-@@ -76,6 +76,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
- 	var responseTextBuilder strings.Builder
- 	imageCounter := &relaycommon.ImageGenerationCallCounter{}
- 	imageCommitted := false
+@@ -77,6 +77,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+ 	defer service.CloseResponseBodyGracefully(resp)
+ 
+ 	accumulator := service.NewResponsesUsageAccumulator(info)
 +	sawTerminalEvent := false
 +	sawErrorEvent := false
 +	lastSequenceNumber := -1
  
  	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
  
-@@ -86,9 +89,13 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+@@ -87,12 +90,33 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
  			sr.Error(err)
  			return
  		}
 +		if streamResponse.SequenceNumber != nil {
 +			lastSequenceNumber = *streamResponse.SequenceNumber
 +		}
+ 		if streamResponse.Response != nil {
+ 			data = string(rewriteSGLangResponsesCreatedAt(info, []byte(data), "response.created_at", streamResponse.Response.CreatedAt))
+ 		}
  		sendResponsesStreamData(c, streamResponse, data)
- 		switch streamResponse.Type {
- 		case "response.completed", "response.done":
+ 		accumulator.Observe(&streamResponse)
++		switch streamResponse.Type {
++		case "response.completed", "response.done":
 +			sawTerminalEvent = true
- 			if streamResponse.Response != nil {
- 				if streamResponse.Response.Usage != nil {
- 					incomingUsage := relayconvert.NormalizeResponsesUsage(streamResponse.Response.Usage)
-@@ -112,7 +119,8 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
- 				imageCounter.Commit(info)
- 				imageCommitted = true
- 			}
--		case "response.failed", "response.incomplete", "response.cancelled", "response.canceled":
 +		case "error", "response.error", "response.failed", "response.incomplete", "response.cancelled", "response.canceled":
 +			sawErrorEvent = true
- 			if !imageCommitted {
- 				imageCounter.Reset()
- 				imageCounter.Commit(info)
-@@ -139,6 +147,19 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
- 		}
++		}
  	})
- 
 +	if info != nil && info.StreamStatus != nil && !sawTerminalEvent && !sawErrorEvent {
 +		nextSequenceNumber := 0
 +		if lastSequenceNumber >= 0 {
@@ -99,12 +90,11 @@ index 93b2599ded6fc9eb48897472dbe5ecfc1a49a59d..d979f99a1f72f29697aa378190dc18a3
 +			sendResponsesErrorEvent(c, "stream_read_error", nextSequenceNumber)
 +		}
 +	}
-+
- 	if usage.CompletionTokens == 0 {
- 		// 计算输出文本的 token 数量
- 		tempStr := responseTextBuilder.String()
+ 
+ 	return accumulator.Finish(), nil
+ }
 diff --git a/relay/common/stream_status.go b/relay/common/stream_status.go
-index 4734b2640a76cafdabca26568c01069b0cf47f04..f9a1fcc7f9dda568aeba2b232247e3e1abc6f7c3 100644
+index 4734b2640..f9a1fcc7f 100644
 --- a/relay/common/stream_status.go
 +++ b/relay/common/stream_status.go
 @@ -12,7 +12,7 @@ type StreamEndReason string
@@ -117,7 +107,7 @@ index 4734b2640a76cafdabca26568c01069b0cf47f04..f9a1fcc7f9dda568aeba2b232247e3e1
  	StreamEndReasonScannerErr  StreamEndReason = "scanner_error"
  	StreamEndReasonHandlerStop StreamEndReason = "handler_stop"
 diff --git a/relay/common/stream_status_test.go b/relay/common/stream_status_test.go
-index 4a31cb79fbcff5e31e2a622a8d4a88e603e2c347..53f21a7ef8c0697d2e3db25064699419deb600c0 100644
+index 4936b3a06..d75f2ca67 100644
 --- a/relay/common/stream_status_test.go
 +++ b/relay/common/stream_status_test.go
 @@ -171,7 +171,7 @@ func TestStreamStatus_Summary(t *testing.T) {

@@ -1,5 +1,5 @@
 diff --git a/pkg/perf_metrics/metrics.go b/pkg/perf_metrics/metrics.go
-index 33b79ee4..721f6a2b 100644
+index 2a68589e5..504a8c87a 100644
 --- a/pkg/perf_metrics/metrics.go
 +++ b/pkg/perf_metrics/metrics.go
 @@ -32,7 +32,7 @@ func RecordRelaySample(info *relaycommon.RelayInfo, success bool, outputTokens i
@@ -13,7 +13,7 @@ index 33b79ee4..721f6a2b 100644
  	generationMs := latencyMs
 diff --git a/pkg/perf_metrics/metrics_test.go b/pkg/perf_metrics/metrics_test.go
 new file mode 100644
-index 00000000..96b85f0c
+index 000000000..96b85f0c9
 --- /dev/null
 +++ b/pkg/perf_metrics/metrics_test.go
 @@ -0,0 +1,41 @@
@@ -59,7 +59,7 @@ index 00000000..96b85f0c
 +	require.Equal(t, int64(1), recorded.ttftCount)
 +}
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index e1be11e9..cd0368b6 100644
+index e1be11e9a..cd0368b63 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
 @@ -399,6 +399,7 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
@@ -79,7 +79,7 @@ index e1be11e9..cd0368b6 100644
  	if requestTrace != nil {
  		attempt, writeSeq := requestTrace.finish(resp)
 diff --git a/relay/channel/api_request_test.go b/relay/channel/api_request_test.go
-index 932c45a9..39f442bb 100644
+index 932c45a99..39f442bb5 100644
 --- a/relay/channel/api_request_test.go
 +++ b/relay/channel/api_request_test.go
 @@ -12,6 +12,7 @@ import (
@@ -142,7 +142,7 @@ index 932c45a9..39f442bb 100644
  	var logs synchronizedLogBuffer
  	common.LogWriterMu.Lock()
 diff --git a/relay/channel/aws/relay-aws.go b/relay/channel/aws/relay-aws.go
-index 346262ff..714fdf3b 100644
+index 80c89b696..33e4ed6c0 100644
 --- a/relay/channel/aws/relay-aws.go
 +++ b/relay/channel/aws/relay-aws.go
 @@ -286,6 +286,7 @@ func awsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (
@@ -154,7 +154,7 @@ index 346262ff..714fdf3b 100644
  	if err != nil {
  		return newAwsInvokeError(requestContext, err, "InvokeModelWithResponseStream"), nil
 diff --git a/relay/channel/volcengine/tts.go b/relay/channel/volcengine/tts.go
-index 6ea28275..b061c252 100644
+index 6ea282757..b061c2524 100644
 --- a/relay/channel/volcengine/tts.go
 +++ b/relay/channel/volcengine/tts.go
 @@ -209,6 +209,7 @@ func handleTTSWebSocketResponse(c *gin.Context, requestURL string, volcRequest V
@@ -166,7 +166,7 @@ index 6ea28275..b061c252 100644
  	if dialErr != nil {
  		if resp != nil {
 diff --git a/relay/channel/xunfei/adaptor.go b/relay/channel/xunfei/adaptor.go
-index 2f8112f4..661addb9 100644
+index 2f8112f48..661addb9d 100644
 --- a/relay/channel/xunfei/adaptor.go
 +++ b/relay/channel/xunfei/adaptor.go
 @@ -87,6 +87,7 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
@@ -178,7 +178,7 @@ index 2f8112f4..661addb9 100644
  		usage, err = xunfeiStreamHandler(c, *a.request, splits[0], splits[1], splits[2])
  	} else {
 diff --git a/relay/common/relay_info.go b/relay/common/relay_info.go
-index 7eb07717..8ff3a25f 100644
+index 1d4937b8a..63a973b7b 100644
 --- a/relay/common/relay_info.go
 +++ b/relay/common/relay_info.go
 @@ -185,6 +185,7 @@ type RelayInfo struct {
@@ -189,7 +189,7 @@ index 7eb07717..8ff3a25f 100644
  	FirstResponseTime time.Time
  	isFirstResponse   bool
  	//SendLastReasoningResponse bool
-@@ -1020,6 +1021,23 @@ func (info *RelayInfo) SetFirstResponseTimeAt(t time.Time) {
+@@ -1068,6 +1069,23 @@ func (info *RelayInfo) SetFirstResponseTimeAt(t time.Time) {
  	}
  }
  
@@ -214,7 +214,7 @@ index 7eb07717..8ff3a25f 100644
  	return info.FirstResponseTime.After(info.StartTime)
  }
 diff --git a/relay/common/relay_info_test.go b/relay/common/relay_info_test.go
-index 78095031..18787a9c 100644
+index 70c12968e..90a9d7871 100644
 --- a/relay/common/relay_info_test.go
 +++ b/relay/common/relay_info_test.go
 @@ -5,6 +5,7 @@ import (
@@ -223,9 +223,9 @@ index 78095031..18787a9c 100644
  	"testing"
 +	"time"
  
- 	"github.com/QuantumNous/new-api/relaykit/dto"
- 	"github.com/QuantumNous/new-api/relaykit/relayconvert"
-@@ -15,6 +16,32 @@ import (
+ 	"github.com/QuantumNous/new-api/common"
+ 	"github.com/QuantumNous/new-api/constant"
+@@ -17,6 +18,32 @@ import (
  	"github.com/stretchr/testify/require"
  )
  
@@ -259,7 +259,7 @@ index 78095031..18787a9c 100644
  	info := &RelayInfo{
  		RelayFormat:             types.RelayFormatOpenAI,
 diff --git a/service/log_info_generate.go b/service/log_info_generate.go
-index 53c1fdf1..88729454 100644
+index ec2881d10..2b26517f1 100644
 --- a/service/log_info_generate.go
 +++ b/service/log_info_generate.go
 @@ -124,7 +124,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
@@ -273,7 +273,7 @@ index 53c1fdf1..88729454 100644
  	}
 diff --git a/service/log_info_generate_test.go b/service/log_info_generate_test.go
 new file mode 100644
-index 00000000..a6afa4a7
+index 000000000..0a1676242
 --- /dev/null
 +++ b/service/log_info_generate_test.go
 @@ -0,0 +1,30 @@

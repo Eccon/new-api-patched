@@ -1,6 +1,6 @@
 diff --git a/relay/responses_adaptor_ownership_test.go b/relay/responses_adaptor_ownership_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..bbf5eac8e57e8dfb303067280ad4a5e174a717c7
+index 000000000..bbf5eac8e
 --- /dev/null
 +++ b/relay/responses_adaptor_ownership_test.go
 @@ -0,0 +1,279 @@
@@ -285,7 +285,7 @@ index 0000000000000000000000000000000000000000..bbf5eac8e57e8dfb303067280ad4a5e1
 +}
 diff --git a/relay/responses_body.go b/relay/responses_body.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..c2c84c059d9b7b6c0d82400272c69545ae34ba94
+index 000000000..0cad701bc
 --- /dev/null
 +++ b/relay/responses_body.go
 @@ -0,0 +1,482 @@
@@ -773,7 +773,7 @@ index 0000000000000000000000000000000000000000..c2c84c059d9b7b6c0d82400272c69545
 +}
 diff --git a/relay/responses_body_test.go b/relay/responses_body_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..6755b32824a4f3d1acc65e0eb1feb4b7d07ee500
+index 000000000..6755b3282
 --- /dev/null
 +++ b/relay/responses_body_test.go
 @@ -0,0 +1,617 @@
@@ -1396,7 +1396,7 @@ index 0000000000000000000000000000000000000000..6755b32824a4f3d1acc65e0eb1feb4b7
 +}
 diff --git a/relay/responses_corpus_test.go b/relay/responses_corpus_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..cfa86d2ff8f2926575137c0a4c2aa32bc00f1107
+index 000000000..cfa86d2ff
 --- /dev/null
 +++ b/relay/responses_corpus_test.go
 @@ -0,0 +1,128 @@
@@ -1528,64 +1528,9 @@ index 0000000000000000000000000000000000000000..cfa86d2ff8f2926575137c0a4c2aa32b
 +		t.Fatalf("%s changed outbound JSON semantics", name)
 +	}
 +}
-diff --git a/relay/responses_handler.go b/relay/responses_handler.go
-index 13eeeb8f000c2de7d29727e53787ad6a0d3f42de..33cde6850f539beaf24018a31c9afd2173fb1108 100644
---- a/relay/responses_handler.go
-+++ b/relay/responses_handler.go
-@@ -61,9 +61,9 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
- 		)
- 	}
- 
--	request, err := common.DeepCopy(responsesReq)
-+	request, err := cloneOpenAIResponsesAttempt(responsesReq)
- 	if err != nil {
--		return types.NewError(fmt.Errorf("failed to copy request to GeneralOpenAIRequest: %w", err), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
-+		return types.NewError(fmt.Errorf("failed to copy Responses request: %w", err), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
- 	}
- 
- 	err = helper.ModelMappedHelper(c, info, request)
-@@ -92,10 +92,11 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
- 			return newConvertRequestFailedError(c, info, err)
- 		}
- 		relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
--		jsonData, err := common.Marshal(convertedRequest)
-+		bodyPlan, err := planResponsesRequestBody(c, info, responsesReq, convertedRequest)
- 		if err != nil {
- 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
- 		}
-+		jsonData := bodyPlan.data
- 
- 		// remove disabled fields for OpenAI Responses API
- 		jsonData, err = relaycommon.RemoveDisabledFields(jsonData, info.ChannelOtherSettings, info.ChannelSetting.PassThroughBodyEnabled)
-@@ -112,13 +113,20 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
- 		}
- 
- 		logger.LogDebug(c, "requestBody: %s", jsonData)
--		body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
--		if err != nil {
--			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
-+		if bodyPlan.storage != nil && responsesJSONSharesStorage(bodyPlan.canonical, jsonData) {
-+			if _, err := bodyPlan.storage.Seek(0, io.SeekStart); err != nil {
-+				return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
-+			}
-+			requestBody = common.NewReplayableBodyReader(bodyPlan.storage)
-+		} else {
-+			body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
-+			if err != nil {
-+				return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
-+			}
-+			defer closer.Close()
-+			requestBody = body
- 		}
--		defer closer.Close()
- 		jsonData = nil
--		requestBody = body
- 	}
- 
- 	var httpResp *http.Response
 diff --git a/relay/responses_handler_scheme3_test.go b/relay/responses_handler_scheme3_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..897af0dc7e8d5f7cc3f9d70c79dd0cb9d5b99f23
+index 000000000..897af0dc7
 --- /dev/null
 +++ b/relay/responses_handler_scheme3_test.go
 @@ -0,0 +1,374 @@
@@ -1963,9 +1908,61 @@ index 0000000000000000000000000000000000000000..897af0dc7e8d5f7cc3f9d70c79dd0cb9
 +	require.NotNil(t, relayErr)
 +	require.Equal(t, http.StatusServiceUnavailable, relayErr.StatusCode, relayErr.Error())
 +}
+diff --git a/relay/responses_request.go b/relay/responses_request.go
+index 2a8a84a88..aa8db5630 100644
+--- a/relay/responses_request.go
++++ b/relay/responses_request.go
+@@ -33,9 +33,9 @@ func PrepareResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, req *d
+ 		)
+ 	}
+ 
+-	request, err := common.DeepCopy(req)
++	request, err := cloneOpenAIResponsesAttempt(req)
+ 	if err != nil {
+-		return nil, nil, nil, types.NewError(fmt.Errorf("failed to copy responses request: %w", err), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
++		return nil, nil, nil, types.NewError(fmt.Errorf("failed to copy Responses request: %w", err), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
+ 	}
+ 	if err := helper.ModelMappedHelper(c, info, request); err != nil {
+ 		return nil, nil, nil, types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
+@@ -63,10 +63,11 @@ func PrepareResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, req *d
+ 		return nil, nil, nil, newConvertRequestFailedError(c, info, err)
+ 	}
+ 	relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
+-	jsonData, err := common.Marshal(convertedRequest)
++	bodyPlan, err := planResponsesRequestBody(c, info, req, convertedRequest)
+ 	if err != nil {
+ 		return nil, nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+ 	}
++	jsonData := bodyPlan.data
+ 	jsonData, err = relaycommon.RemoveDisabledFields(jsonData, info.ChannelOtherSettings, info.ChannelSetting.PassThroughBodyEnabled)
+ 	if err != nil {
+ 		return nil, nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+@@ -79,9 +80,19 @@ func PrepareResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, req *d
+ 	}
+ 
+ 	logger.LogDebug(c, "requestBody: %s", jsonData)
+-	body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
+-	if err != nil {
+-		return nil, nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
++	var body common.ReplayableBody
++	var closer io.Closer
++	if bodyPlan.storage != nil && responsesJSONSharesStorage(bodyPlan.canonical, jsonData) {
++		if _, err := bodyPlan.storage.Seek(0, io.SeekStart); err != nil {
++			return nil, nil, nil, types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
++		}
++		body = common.NewReplayableBodyReader(bodyPlan.storage)
++		closer = io.NopCloser(body)
++	} else {
++		body, closer, err = relaycommon.NewOutboundJSONBody(jsonData)
++		if err != nil {
++			return nil, nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
++		}
+ 	}
+ 	return adaptor, body, closer, nil
+ }
 diff --git a/relay/responses_request_clone.go b/relay/responses_request_clone.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..69ae02c20e62cc4cef6f87c755ccf8c71bde8a43
+index 000000000..69ae02c20
 --- /dev/null
 +++ b/relay/responses_request_clone.go
 @@ -0,0 +1,24 @@
@@ -1995,7 +1992,7 @@ index 0000000000000000000000000000000000000000..69ae02c20e62cc4cef6f87c755ccf8c7
 +}
 diff --git a/relay/responses_request_clone_test.go b/relay/responses_request_clone_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..d94d26fffbd460aa2e99f771f804f8858b8989cc
+index 000000000..d94d26fff
 --- /dev/null
 +++ b/relay/responses_request_clone_test.go
 @@ -0,0 +1,145 @@

@@ -1,8 +1,8 @@
 diff --git a/controller/relay.go b/controller/relay.go
-index 0b505e07ebf6611114cfd77caed17bebb345b445..704de8108310cdf9c6e1a49aa68790fea6e73468 100644
+index a98343a9a..b558e5395 100644
 --- a/controller/relay.go
 +++ b/controller/relay.go
-@@ -218,6 +218,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+@@ -215,6 +215,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
  		if newAPIError != nil {
  			logger.LogError(c, fmt.Sprintf("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
  			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
@@ -15,7 +15,7 @@ index 0b505e07ebf6611114cfd77caed17bebb345b445..704de8108310cdf9c6e1a49aa68790fe
  			switch relayFormat {
  			case types.RelayFormatOpenAIRealtime:
  				helper.WssError(c, ws, newAPIError.ToOpenAIError())
-@@ -402,6 +408,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+@@ -339,6 +345,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
  		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
  			break
  		}
@@ -23,19 +23,19 @@ index 0b505e07ebf6611114cfd77caed17bebb345b445..704de8108310cdf9c6e1a49aa68790fe
  	}
  
  	useChannel := c.GetStringSlice("use_channel")
-@@ -528,6 +535,9 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
- 	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
- 		return false
- 	}
+@@ -430,6 +437,9 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
+ }
+ 
+ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) bool {
 +	if helper.IsStreamDeliveryDisconnected(c) {
 +		return false
 +	}
- 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
- 		return false
- 	}
+ 	return service.ShouldRetryRelayError(c, openaiErr, retryTimes)
+ }
+ 
 diff --git a/controller/relay_stream_delivery_test.go b/controller/relay_stream_delivery_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..546301bd78fb434c1e74a933723ee8ed5cce72a7
+index 000000000..546301bd7
 --- /dev/null
 +++ b/controller/relay_stream_delivery_test.go
 @@ -0,0 +1,80 @@
@@ -120,7 +120,7 @@ index 0000000000000000000000000000000000000000..546301bd78fb434c1e74a933723ee8ed
 +	assert.Zero(t, writer.writes.Load())
 +}
 diff --git a/relay/channel/openai/chat_via_responses.go b/relay/channel/openai/chat_via_responses.go
-index 3b65d66fe21f87f836737c955549e3caabc0b21f..9aa5dfcef80adc2cfc9aeff34b5cd96dad11868f 100644
+index d66f4ac04..39ffdc6ce 100644
 --- a/relay/channel/openai/chat_via_responses.go
 +++ b/relay/channel/openai/chat_via_responses.go
 @@ -198,8 +198,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
@@ -134,7 +134,7 @@ index 3b65d66fe21f87f836737c955549e3caabc0b21f..9aa5dfcef80adc2cfc9aeff34b5cd96d
  	}
  
 diff --git a/relay/channel/openai/chat_via_responses_test.go b/relay/channel/openai/chat_via_responses_test.go
-index 27ee71c9aba78be88c4e86fdc9f4edc855968484..7cf8265617dda64580b07032719cd87b7e8121ab 100644
+index 8384c355c..d11327300 100644
 --- a/relay/channel/openai/chat_via_responses_test.go
 +++ b/relay/channel/openai/chat_via_responses_test.go
 @@ -1,6 +1,7 @@
@@ -201,7 +201,7 @@ index 27ee71c9aba78be88c4e86fdc9f4edc855968484..7cf8265617dda64580b07032719cd87b
  	oldMode := gin.Mode()
  	gin.SetMode(gin.TestMode)
 diff --git a/relay/channel/openai/helper.go b/relay/channel/openai/helper.go
-index cdcb37c4fb08d570511aa2385464d58eb3de1f0f..4ad37dea2cb01e858f5539589905a473960d461e 100644
+index 3967ed198..bba4cd4ea 100644
 --- a/relay/channel/openai/helper.go
 +++ b/relay/channel/openai/helper.go
 @@ -114,8 +114,9 @@ func sendGeminiStreamResults(c *gin.Context, results []relayconvert.ResponseResu
@@ -228,15 +228,10 @@ index cdcb37c4fb08d570511aa2385464d58eb3de1f0f..4ad37dea2cb01e858f5539589905a473
  			return
  		}
 diff --git a/relay/channel/openai/image_stream_test.go b/relay/channel/openai/image_stream_test.go
-index 1adde5c94c9a76268c41d2b395a79e25c30108a3..40e250aeb347123a944872a61f19f71060131324 100644
+index 4e57ad0f4..7d51dd0a6 100644
 --- a/relay/channel/openai/image_stream_test.go
 +++ b/relay/channel/openai/image_stream_test.go
-@@ -3,18 +3,20 @@ import (
- 	"context"
- 	"fmt"
- 	"io"
- 	"net/http"
- 	"net/http/httptest"
+@@ -9,11 +9,13 @@ import (
  	"strings"
  	"sync"
  	"testing"
@@ -250,9 +245,16 @@ index 1adde5c94c9a76268c41d2b395a79e25c30108a3..40e250aeb347123a944872a61f19f710
  	"github.com/QuantumNous/new-api/relaykit/dto"
  	"github.com/gin-gonic/gin"
  	"github.com/stretchr/testify/assert"
- 	"github.com/stretchr/testify/require"
- )
-@@ -139,40 +142,6 @@ func TestOpenaiImageStreamHandlerUsesCompletedEventCount(t *testing.T) {
+@@ -52,7 +54,7 @@ func TestImageExpressionUsesCompletedCountAndProtectsAbortedStreams(t *testing.T
+ 		{"JSON wrapped as SSE uses actual count", `{"data":[{"b64_json":"first"}]}`, true, false, 3, 1},
+ 		{"empty response retains request", `{"data":[]}`, false, false, 3, 3},
+ 		{"completed stream refunds missing images", "data: {\"type\":\"image_generation.completed\",\"b64_json\":\"first\"}\n\ndata: [DONE]\n\n", true, false, 3, 1},
+-		{"client abort cannot reduce count", "data: {\"type\":\"image_generation.completed\",\"b64_json\":\"first\"}\n\n", true, true, 3, 3},
++		{"client disconnect drains finite stream", "data: {\"type\":\"image_generation.completed\",\"b64_json\":\"first\"}\n\n", true, true, 3, 1},
+ 	} {
+ 		t.Run(tc.name, func(t *testing.T) {
+ 			contentType := "application/json"
+@@ -220,40 +222,6 @@ func TestOpenaiImageStreamHandlerUsesCompletedEventCount(t *testing.T) {
  	require.Equal(t, 2.0, info.PriceData.OtherRatios()["n"])
  }
  
@@ -293,7 +295,7 @@ index 1adde5c94c9a76268c41d2b395a79e25c30108a3..40e250aeb347123a944872a61f19f710
  // cancelAfterWriter cancels the request context right after the payload
  // containing needle has been written to the client, simulating a client that
  // disconnects after receiving that event. Cancelling from the write side (not
-@@ -208,19 +177,13 @@ func newDisconnectingImageStream(t *testing.T, sseBody, disconnectAfter string)
+@@ -289,19 +257,13 @@ func newDisconnectingImageStream(t *testing.T, sseBody, disconnectAfter string)
  	t.Cleanup(cancel)
  	c.Request = c.Request.WithContext(ctx)
  	c.Writer = &cancelAfterWriter{ResponseWriter: c.Writer, needle: disconnectAfter, cancel: cancel}
@@ -317,7 +319,7 @@ index 1adde5c94c9a76268c41d2b395a79e25c30108a3..40e250aeb347123a944872a61f19f710
  	oldMode := gin.Mode()
  	gin.SetMode(gin.TestMode)
  	t.Cleanup(func() { gin.SetMode(oldMode) })
-@@ -229,7 +192,16 @@ func TestOpenaiImageStreamHandlerClientDisconnectKeepsRequestedCount(t *testing.
+@@ -310,7 +272,16 @@ func TestOpenaiImageStreamHandlerClientDisconnectKeepsRequestedCount(t *testing.
  	constant.StreamingTimeout = 30
  	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
  
@@ -335,7 +337,7 @@ index 1adde5c94c9a76268c41d2b395a79e25c30108a3..40e250aeb347123a944872a61f19f710
  	c, recorder, resp, info := newDisconnectingImageStream(t, body, "first")
  	info.PriceData.UsePrice = true
  	info.PriceData.AddOtherRatio("n", 3)
-@@ -239,13 +211,62 @@ func TestOpenaiImageStreamHandlerClientDisconnectKeepsRequestedCount(t *testing.
+@@ -320,13 +291,62 @@ func TestOpenaiImageStreamHandlerClientDisconnectKeepsRequestedCount(t *testing.
  	require.Nil(t, err)
  	require.NotNil(t, usage)
  	require.NotNil(t, info.StreamStatus)
@@ -346,8 +348,7 @@ index 1adde5c94c9a76268c41d2b395a79e25c30108a3..40e250aeb347123a944872a61f19f710
 -		info.StreamStatus.EndReason)
 +	require.Equal(t, relaycommon.StreamEndReasonDone, info.StreamStatus.EndReason)
 +	require.True(t, relayhelper.IsStreamDeliveryDisconnected(c))
- 	require.Contains(t, recorder.Body.String(), `"b64_json":"first"`)
--	require.Equal(t, 3.0, info.PriceData.OtherRatios()["n"], "client abort must not reduce the billed image count")
++	require.Contains(t, recorder.Body.String(), `"b64_json":"first"`)
 +	require.NotContains(t, recorder.Body.String(), `"b64_json":"second"`)
 +	require.NotContains(t, recorder.Body.String(), `"b64_json":"third"`)
 +	require.Equal(t, 3.0, info.PriceData.OtherRatios()["n"], "drained completed events must determine the billed image count")
@@ -399,12 +400,13 @@ index 1adde5c94c9a76268c41d2b395a79e25c30108a3..40e250aeb347123a944872a61f19f710
 +
 +	require.Equal(t, relaycommon.StreamEndReasonTimeout, info.StreamStatus.EndReason)
 +	require.True(t, relayhelper.IsStreamDeliveryDisconnected(c))
-+	require.Contains(t, recorder.Body.String(), `"b64_json":"first"`)
+ 	require.Contains(t, recorder.Body.String(), `"b64_json":"first"`)
+-	require.Equal(t, 3.0, info.PriceData.OtherRatios()["n"], "client abort must not reduce the billed image count")
 +	require.Equal(t, 3.0, info.PriceData.OtherRatios()["n"], "an incomplete drain must not lower the requested image count")
  }
  
  // TestOpenaiImageStreamHandlerClientDisconnectRaisesCount covers the other
-@@ -267,7 +288,7 @@ func TestOpenaiImageStreamHandlerClientDisconnectRaisesCount(t *testing.T) {
+@@ -348,7 +368,7 @@ func TestOpenaiImageStreamHandlerClientDisconnectRaisesCount(t *testing.T) {
  		``,
  		``,
  	}, "\n")
@@ -413,7 +415,7 @@ index 1adde5c94c9a76268c41d2b395a79e25c30108a3..40e250aeb347123a944872a61f19f710
  	info.PriceData.UsePrice = true
  	info.PriceData.AddOtherRatio("n", 1)
  
-@@ -276,10 +297,11 @@ func TestOpenaiImageStreamHandlerClientDisconnectRaisesCount(t *testing.T) {
+@@ -357,10 +377,11 @@ func TestOpenaiImageStreamHandlerClientDisconnectRaisesCount(t *testing.T) {
  	require.Nil(t, err)
  	require.NotNil(t, usage)
  	require.NotNil(t, info.StreamStatus)
@@ -430,10 +432,10 @@ index 1adde5c94c9a76268c41d2b395a79e25c30108a3..40e250aeb347123a944872a61f19f710
  
  // TestOpenaiImageStreamHandlerWrapsJSONResponse covers the non-SSE fallback:
 diff --git a/relay/channel/openai/relay_image.go b/relay/channel/openai/relay_image.go
-index 1e6be0dd4cbef13c0ef1f7756a7263d183e0ae4c..3048bf7c9fea1d92fd186efbe4efaec5a9893f3c 100644
+index 12dedd161..aa6a48d9b 100644
 --- a/relay/channel/openai/relay_image.go
 +++ b/relay/channel/openai/relay_image.go
-@@ -146,13 +146,10 @@ func OpenaiImageStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+@@ -134,13 +134,10 @@ func OpenaiImageStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
  	}
  
  	applyUsagePostProcessing(info, usage, lastStreamData)
@@ -452,7 +454,7 @@ index 1e6be0dd4cbef13c0ef1f7756a7263d183e0ae4c..3048bf7c9fea1d92fd186efbe4efaec5
  		upstreamFinished := info.StreamStatus.EndReason == relaycommon.StreamEndReasonDone ||
  			info.StreamStatus.EndReason == relaycommon.StreamEndReasonEOF
 diff --git a/relay/helper/common.go b/relay/helper/common.go
-index fa363569c4155a0b33335177cd62c36510ff361c..8a1bd5a23de9087d71056e8f06d1da802a009583 100644
+index 6a37a3c23..6afe78217 100644
 --- a/relay/helper/common.go
 +++ b/relay/helper/common.go
 @@ -25,9 +25,25 @@ func FlushWriter(c *gin.Context) (err error) {
@@ -621,7 +623,7 @@ index fa363569c4155a0b33335177cd62c36510ff361c..8a1bd5a23de9087d71056e8f06d1da80
  func ObjectData(c *gin.Context, object any) error {
 diff --git a/relay/helper/stream_delivery.go b/relay/helper/stream_delivery.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..c42bc4b219332b194d6b6fafe0bb1492efd92a2a
+index 000000000..c42bc4b21
 --- /dev/null
 +++ b/relay/helper/stream_delivery.go
 @@ -0,0 +1,177 @@
@@ -803,10 +805,10 @@ index 0000000000000000000000000000000000000000..c42bc4b219332b194d6b6fafe0bb1492
 +	return true
 +}
 diff --git a/relay/helper/stream_scanner.go b/relay/helper/stream_scanner.go
-index af11631faaca0546a869c5a21d2b28078d78afc7..918f19d23a19e7da396c98adcc89a004ee2e9b39 100644
+index d5f5379f4..c513e09f4 100644
 --- a/relay/helper/stream_scanner.go
 +++ b/relay/helper/stream_scanner.go
-@@ -125,6 +125,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+@@ -131,6 +131,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
  
  	// 无条件新建 StreamStatus
  	info.StreamStatus = relaycommon.NewStreamStatus()
@@ -814,7 +816,7 @@ index af11631faaca0546a869c5a21d2b28078d78afc7..918f19d23a19e7da396c98adcc89a004
  
  	ctx, cancel := context.WithCancel(context.Background())
  
-@@ -211,16 +212,25 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+@@ -217,16 +218,25 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
  			for {
  				select {
  				case <-pingTicker.C:
@@ -842,7 +844,7 @@ index af11631faaca0546a869c5a21d2b28078d78afc7..918f19d23a19e7da396c98adcc89a004
  						return
  					}
  					logger.LogDebug(c, "ping data sent")
-@@ -257,7 +267,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+@@ -263,7 +273,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
  			func() {
  				writeMutex.Lock()
  				defer writeMutex.Unlock()
@@ -853,7 +855,7 @@ index af11631faaca0546a869c5a21d2b28078d78afc7..918f19d23a19e7da396c98adcc89a004
  				dataHandler(data, sr)
  			}()
  			if sr.IsStopped() {
-@@ -353,19 +365,30 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+@@ -359,19 +371,30 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
  		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonEOF, nil)
  	})
  
@@ -895,7 +897,7 @@ index af11631faaca0546a869c5a21d2b28078d78afc7..918f19d23a19e7da396c98adcc89a004
  		logger.LogInfo(c, fmt.Sprintf("stream ended: %s", info.StreamStatus.Summary()))
  	} else {
 diff --git a/relay/helper/stream_scanner_test.go b/relay/helper/stream_scanner_test.go
-index a211951287d230f628d05db14f8576bb0e0b75d2..3aa587f2ade437f385e82030b855a931d35d82f8 100644
+index b9823ba3e..8ea3b58f1 100644
 --- a/relay/helper/stream_scanner_test.go
 +++ b/relay/helper/stream_scanner_test.go
 @@ -2,7 +2,9 @@ package helper

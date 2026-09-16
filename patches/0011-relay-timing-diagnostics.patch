@@ -1,5 +1,5 @@
 diff --git a/common/constants.go b/common/constants.go
-index 94c8db7af1ff80a617843a24190490f6d5de6adc..ff3c99365f53eb4b158bef5b5f240e8e771a92ed 100644
+index 94c8db7af..ff3c99365 100644
 --- a/common/constants.go
 +++ b/common/constants.go
 @@ -178,6 +178,8 @@ var RelayIdleConnTimeout int // unit is second
@@ -12,7 +12,7 @@ index 94c8db7af1ff80a617843a24190490f6d5de6adc..ff3c99365f53eb4b158bef5b5f240e8e
  var RelayMaxIdleConnsPerHost int
  var RelayDirectNetworkFamily = RelayDirectNetworkFamilyAuto
 diff --git a/common/gin.go b/common/gin.go
-index 315e86613ec7ca85a92794975613125099ceb564..bc6979d5ac2e88c62bc1f82d578824307134b27c 100644
+index 315e86613..bc6979d5a 100644
 --- a/common/gin.go
 +++ b/common/gin.go
 @@ -22,6 +22,46 @@ const KeyBodyStorage = "key_body_storage"
@@ -134,7 +134,7 @@ index 315e86613ec7ca85a92794975613125099ceb564..bc6979d5ac2e88c62bc1f82d57882430
  	return nil
  }
 diff --git a/common/init.go b/common/init.go
-index eecde490cc6d218eaa9313a31d71af821956965d..5a29ebe540ed68c6b5702b294f90ded30b57caad 100644
+index 7b46fc60d..d9f3b40b1 100644
 --- a/common/init.go
 +++ b/common/init.go
 @@ -113,6 +113,8 @@ func InitEnv() {
@@ -147,7 +147,7 @@ index eecde490cc6d218eaa9313a31d71af821956965d..5a29ebe540ed68c6b5702b294f90ded3
  	RelayMaxIdleConnsPerHost = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS_PER_HOST", 100)
  	relayDirectNetworkFamilyRaw := GetEnvOrDefaultString("RELAY_DIRECT_NETWORK_FAMILY", RelayDirectNetworkFamilyAuto)
 diff --git a/common/sys_log.go b/common/sys_log.go
-index 2d6022f774eb5dbc45ec864d828267642ee5f39d..71902ccf4bd92f2d5e8b6876435991309b2c32aa 100644
+index 2d6022f77..71902ccf4 100644
 --- a/common/sys_log.go
 +++ b/common/sys_log.go
 @@ -17,21 +17,21 @@ var LogWriterMu sync.RWMutex
@@ -176,10 +176,10 @@ index 2d6022f774eb5dbc45ec864d828267642ee5f39d..71902ccf4bd92f2d5e8b687643599130
  	os.Exit(1)
  }
 diff --git a/controller/relay.go b/controller/relay.go
-index a5074ba3119c8face591f7bf84a047cd6dd47012..0b505e07ebf6611114cfd77caed17bebb345b445 100644
+index 6199c1cb0..905c7d053 100644
 --- a/controller/relay.go
 +++ b/controller/relay.go
-@@ -70,7 +70,130 @@ func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewA
+@@ -67,7 +67,130 @@ func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewA
  	return err
  }
  
@@ -310,7 +310,7 @@ index a5074ba3119c8face591f7bf84a047cd6dd47012..0b505e07ebf6611114cfd77caed17beb
  
  	requestId := c.GetString(common.RequestIdKey)
  	//group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
-@@ -112,6 +235,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+@@ -109,6 +232,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
  	}()
  
  	request, err := helper.GetAndValidateRequest(c, relayFormat)
@@ -321,7 +321,7 @@ index a5074ba3119c8face591f7bf84a047cd6dd47012..0b505e07ebf6611114cfd77caed17beb
  	if err != nil {
  		// Map "request body too large" to 413 so clients can handle it correctly
  		if common.IsRequestBodyTooLargeError(err) || errors.Is(err, common.ErrRequestBodyTooLarge) {
-@@ -127,6 +254,22 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+@@ -124,10 +251,30 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
  		newAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
  		return
  	}
@@ -342,60 +342,18 @@ index a5074ba3119c8face591f7bf84a047cd6dd47012..0b505e07ebf6611114cfd77caed17beb
 +		relayInfo.Timing.BodyStorageType = c.GetString("relay_timing_body_storage_type")
 +	}
  
- 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
- 	needCountToken := constant.CountToken
-@@ -137,6 +280,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
- 	} else {
- 		meta = fastTokenCountMetaForPricing(request)
- 	}
-+	if common.RelayTimingLogEnabled {
-+		relayInfo.Timing.TokenMetaReady = time.Now()
-+	}
- 
- 	if needSensitiveCheck && meta != nil {
- 		contains, words := service.CheckSensitiveText(meta.CombineText)
-@@ -146,6 +292,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
- 			return
- 		}
- 	}
-+	if common.RelayTimingLogEnabled {
-+		relayInfo.Timing.SensitiveChecked = time.Now()
-+	}
- 
- 	tokens, err := service.EstimateRequestToken(c, meta, relayInfo)
- 	if err != nil {
-@@ -154,12 +303,18 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
- 	}
- 
- 	relayInfo.SetEstimatePromptTokens(tokens)
-+	if common.RelayTimingLogEnabled {
-+		relayInfo.Timing.TokensEstimated = time.Now()
-+	}
- 
- 	priceData, err := helper.ModelPriceHelper(c, relayInfo, tokens, meta)
- 	if err != nil {
- 		newAPIError = types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest))
+ 	if newAPIError = relay.PrepareRequestBilling(c, relayInfo); newAPIError != nil {
  		return
- 	}
-+	if common.RelayTimingLogEnabled {
-+		relayInfo.Timing.PriceReady = time.Now()
-+	}
- 
- 	// common.SetContextKey(c, constant.ContextKeyTokenCountMeta, meta)
- 
-@@ -171,6 +326,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
- 			return
- 		}
  	}
 +	if common.RelayTimingLogEnabled {
 +		relayInfo.Timing.BillingReady = time.Now()
 +		logRelayPreflightTiming(c, relayFormat, relayInfo)
 +	}
- 
  	defer func() {
- 		// Only return quota if downstream failed and quota was actually pre-consumed
+ 		newAPIError = relay.RefundFailedRequestBilling(c, relayInfo, newAPIError)
+ 	}()
 diff --git a/logger/logger.go b/logger/logger.go
-index 8e8a2ef8f0bb1befce8a2152b5dab4ea12c1f444..a3e74672e5fbc6a29889942d9a65c0fdaf179188 100644
+index 8e8a2ef8f..a3e74672e 100644
 --- a/logger/logger.go
 +++ b/logger/logger.go
 @@ -110,7 +110,7 @@ func logHelper(ctx context.Context, level string, msg string) {
@@ -408,7 +366,7 @@ index 8e8a2ef8f0bb1befce8a2152b5dab4ea12c1f444..a3e74672e5fbc6a29889942d9a65c0fd
  	logCount++ // we don't need accurate count, so no lock here
  	if logCount > maxLogCount && !setupLogWorking {
 diff --git a/middleware/distributor.go b/middleware/distributor.go
-index e61bea44aa3f9780f53d1b7562e92b7a1bc497d3..b56bc5b73f94bb8cf1496c07042971c1ab7d039d 100644
+index 6bad3d80c..6288c364f 100644
 --- a/middleware/distributor.go
 +++ b/middleware/distributor.go
 @@ -33,6 +33,9 @@ type ModelRequest struct {
@@ -431,7 +389,7 @@ index e61bea44aa3f9780f53d1b7562e92b7a1bc497d3..b56bc5b73f94bb8cf1496c07042971c1
  		if err != nil {
  			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
  			return
-@@ -196,6 +202,9 @@ func Distribute() func(c *gin.Context) {
+@@ -195,6 +201,9 @@ func Distribute() func(c *gin.Context) {
  			}
  		}
  		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
@@ -441,7 +399,7 @@ index e61bea44aa3f9780f53d1b7562e92b7a1bc497d3..b56bc5b73f94bb8cf1496c07042971c1
  		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
  		c.Next()
  		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
-@@ -305,6 +314,14 @@ func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
+@@ -326,6 +335,14 @@ func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
  	if err != nil {
  		return nil, err
  	}
@@ -456,7 +414,7 @@ index e61bea44aa3f9780f53d1b7562e92b7a1bc497d3..b56bc5b73f94bb8cf1496c07042971c1
  	if !gjson.ValidBytes(requestBody) {
  		return nil, errors.New("invalid JSON request body")
  	}
-@@ -321,10 +338,20 @@ func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
+@@ -342,10 +359,20 @@ func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
  	if err != nil {
  		return nil, err
  	}
@@ -478,7 +436,7 @@ index e61bea44aa3f9780f53d1b7562e92b7a1bc497d3..b56bc5b73f94bb8cf1496c07042971c1
  
  	return &ModelRequest{
 diff --git a/middleware/logger.go b/middleware/logger.go
-index 90b2d2eef872c357b69173b90c906ac08d661e97..e8ad7e9742b43e897bcd54bbcdb36eb037f5542b 100644
+index bf16b6b61..b8016ef39 100644
 --- a/middleware/logger.go
 +++ b/middleware/logger.go
 @@ -1,10 +1,12 @@
@@ -550,7 +508,7 @@ index 90b2d2eef872c357b69173b90c906ac08d661e97..e8ad7e9742b43e897bcd54bbcdb36eb0
  	server.Use(redactTaskArtifactAccessQuery())
  	server.Use(gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
 diff --git a/middleware/request-id.go b/middleware/request-id.go
-index e1bf315a45e0ee409318275c7f3290d938a7b04e..c62680fe3dc545476c053cad12baea4c13b8ca63 100644
+index e1bf315a4..c62680fe3 100644
 --- a/middleware/request-id.go
 +++ b/middleware/request-id.go
 @@ -2,6 +2,7 @@ package middleware
@@ -572,7 +530,7 @@ index e1bf315a45e0ee409318275c7f3290d938a7b04e..c62680fe3dc545476c053cad12baea4c
  		c.Request = c.Request.WithContext(ctx)
  		c.Header(common.RequestIdKey, id)
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index dfc5d574e1edc9ba6832bfefd6902a16a3230646..e1be11e9a7bc58344fcdf5e86833ffe2cf94bf92 100644
+index dfc5d574e..e1be11e9a 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
 @@ -2,10 +2,12 @@ package channel
@@ -814,7 +772,7 @@ index dfc5d574e1edc9ba6832bfefd6902a16a3230646..e1be11e9a7bc58344fcdf5e86833ffe2
  	if err == nil {
  		return false
 diff --git a/relay/channel/api_request_test.go b/relay/channel/api_request_test.go
-index 07ea112dff32ff5e5d78cea2b76b639d50ba3e0d..932c45a99288b6de8d9c4a3241ca67a242ad29a5 100644
+index 07ea112df..932c45a99 100644
 --- a/relay/channel/api_request_test.go
 +++ b/relay/channel/api_request_test.go
 @@ -1,11 +1,16 @@
@@ -956,7 +914,7 @@ index 07ea112dff32ff5e5d78cea2b76b639d50ba3e0d..932c45a99288b6de8d9c4a3241ca67a2
 +	require.NotContains(t, logs.String(), "relay upstream request written")
 +}
 diff --git a/relay/common/relay_info.go b/relay/common/relay_info.go
-index 727476b1ece4a6d8d7fdcc9a42ee45106bdd0e02..16797f94b381430955f304622ea17ab26f30d12f 100644
+index 6d4a0ae85..6772d9278 100644
 --- a/relay/common/relay_info.go
 +++ b/relay/common/relay_info.go
 @@ -81,6 +81,101 @@ type TokenCountMeta struct {
@@ -1061,8 +1019,7 @@ index 727476b1ece4a6d8d7fdcc9a42ee45106bdd0e02..16797f94b381430955f304622ea17ab2
  type RelayInfo struct {
  	TokenId           int
  	TokenKey          string
-@@ -185,7 +280,8 @@ type RelayInfo struct {
- 	ImageRequestCount     int
+@@ -183,6 +278,7 @@ type RelayInfo struct {
  	ImageQuotaBeforeGroup float64
  
  	Request dto.Request
@@ -1070,7 +1027,7 @@ index 727476b1ece4a6d8d7fdcc9a42ee45106bdd0e02..16797f94b381430955f304622ea17ab2
  
  	// RequestConversionChain records request format conversions in order, e.g.
  	// ["openai", "openai_responses"] or ["openai", "claude"].
-@@ -888,8 +984,12 @@ func (info *RelayInfo) ConvOptions() *convmeta.Options {
+@@ -947,8 +1043,12 @@ func (info *RelayInfo) ConvOptions() *convmeta.Options {
  }
  
  func (info *RelayInfo) SetFirstResponseTime() {
@@ -1085,7 +1042,7 @@ index 727476b1ece4a6d8d7fdcc9a42ee45106bdd0e02..16797f94b381430955f304622ea17ab2
  	}
  }
 diff --git a/relay/helper/stream_scanner.go b/relay/helper/stream_scanner.go
-index f88bef5206fc531ad75757ba8bd00d334e18b3dd..af11631faaca0546a869c5a21d2b28078d78afc7 100644
+index e620469ae..d5f5379f4 100644
 --- a/relay/helper/stream_scanner.go
 +++ b/relay/helper/stream_scanner.go
 @@ -33,6 +33,46 @@ const (
@@ -1135,7 +1092,7 @@ index f88bef5206fc531ad75757ba8bd00d334e18b3dd..af11631faaca0546a869c5a21d2b2807
  func getScannerBufferSize() int {
  	if constant.StreamScannerMaxBufferMB > 0 {
  		return constant.StreamScannerMaxBufferMB << 20
-@@ -76,7 +116,10 @@ func ExtendWriteDeadline(c *gin.Context) {
+@@ -82,7 +122,10 @@ func ExtendWriteDeadline(c *gin.Context) {
  
  func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo, dataHandler func(data string, sr *StreamResult)) {
  
@@ -1147,7 +1104,7 @@ index f88bef5206fc531ad75757ba8bd00d334e18b3dd..af11631faaca0546a869c5a21d2b2807
  		return
  	}
  
-@@ -237,7 +280,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+@@ -243,7 +286,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
  			wg.Done()
  		}()
  
@@ -1157,7 +1114,7 @@ index f88bef5206fc531ad75757ba8bd00d334e18b3dd..af11631faaca0546a869c5a21d2b2807
  			// 检查是否需要停止
  			select {
  			case <-stopChan:
-@@ -249,6 +294,15 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+@@ -255,6 +300,15 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
  
  			ticker.Reset(streamingTimeout)
  			data := scanner.Text()
@@ -1173,7 +1130,7 @@ index f88bef5206fc531ad75757ba8bd00d334e18b3dd..af11631faaca0546a869c5a21d2b2807
  			logger.LogDebug(c, "stream scanner data: %s", data)
  
  			if len(data) < 6 {
-@@ -263,7 +317,14 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+@@ -269,7 +323,14 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
  				continue
  			}
  			if !strings.HasPrefix(data, "[DONE]") {
@@ -1189,7 +1146,7 @@ index f88bef5206fc531ad75757ba8bd00d334e18b3dd..af11631faaca0546a869c5a21d2b2807
  				info.ReceivedResponseCount++
  
  				select {
-@@ -276,6 +337,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+@@ -282,6 +343,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
  			} else {
  				info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
  				logger.LogDebug(c, "received [DONE], stopping scanner")
@@ -1199,7 +1156,7 @@ index f88bef5206fc531ad75757ba8bd00d334e18b3dd..af11631faaca0546a869c5a21d2b2807
  				return
  			}
  		}
-@@ -307,4 +371,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+@@ -313,4 +377,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
  	} else {
  		logger.LogError(c, fmt.Sprintf("stream ended: %s, received=%d", info.StreamStatus.Summary(), info.ReceivedResponseCount))
  	}
@@ -1207,11 +1164,62 @@ index f88bef5206fc531ad75757ba8bd00d334e18b3dd..af11631faaca0546a869c5a21d2b2807
 +		info.Timing.StreamEnd = time.Now()
 +	}
  }
+diff --git a/relay/request_billing.go b/relay/request_billing.go
+index d3394a3f3..1fc1b1217 100644
+--- a/relay/request_billing.go
++++ b/relay/request_billing.go
+@@ -5,7 +5,9 @@ import (
+ 	"fmt"
+ 	"net/http"
+ 	"strings"
++	"time"
+ 
++	"github.com/QuantumNous/new-api/common"
+ 	"github.com/QuantumNous/new-api/constant"
+ 	"github.com/QuantumNous/new-api/logger"
+ 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+@@ -39,6 +41,9 @@ func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.N
+ 			meta = request.GetTokenCountMeta()
+ 		}
+ 	}
++	if common.RelayTimingLogEnabled {
++		info.Timing.TokenMetaReady = time.Now()
++	}
+ 
+ 	if needSensitiveCheck && meta != nil {
+ 		if contains, words := service.CheckSensitiveText(meta.CombineText); contains {
+@@ -47,17 +52,26 @@ func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.N
+ 			return types.NewError(errors.New(message), types.ErrorCodeSensitiveWordsDetected)
+ 		}
+ 	}
++	if common.RelayTimingLogEnabled {
++		info.Timing.SensitiveChecked = time.Now()
++	}
+ 
+ 	tokens, err := service.EstimateRequestToken(c, meta, info)
+ 	if err != nil {
+ 		return types.NewError(err, types.ErrorCodeCountTokenFailed)
+ 	}
+ 	info.SetEstimatePromptTokens(tokens)
++	if common.RelayTimingLogEnabled {
++		info.Timing.TokensEstimated = time.Now()
++	}
+ 
+ 	priceData, err := helper.ModelPriceHelper(c, info, tokens, meta)
+ 	if err != nil {
+ 		return types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest))
+ 	}
++	if common.RelayTimingLogEnabled {
++		info.Timing.PriceReady = time.Now()
++	}
+ 	if priceData.FreeModel {
+ 		logger.LogInfo(c, fmt.Sprintf("模型 %s 免费，跳过预扣费", info.OriginModelName))
+ 		return nil
 diff --git a/service/text_quota.go b/service/text_quota.go
-index 604f61b646dbadd6bb69e35f4896853fbf33ef66..9dc0d2f607f21afd90610c7a4388aab297cf0fd9 100644
+index 543ebb000..3c887c7d6 100644
 --- a/service/text_quota.go
 +++ b/service/text_quota.go
-@@ -394,6 +394,79 @@ func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage)
+@@ -392,6 +392,79 @@ func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage)
  	return "openai"
  }
  
@@ -1291,7 +1299,7 @@ index 604f61b646dbadd6bb69e35f4896853fbf33ef66..9dc0d2f607f21afd90610c7a4388aab2
  func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []string) {
  	originUsage := usage
  	billingUsage := effectiveBillingUsage(usage)
-@@ -522,6 +595,10 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
+@@ -534,6 +607,10 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
  	}
  
  	attachQuotaSaturation(ctx, relayInfo, other)

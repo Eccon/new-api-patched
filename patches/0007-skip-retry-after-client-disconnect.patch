@@ -1,18 +1,8 @@
 diff --git a/controller/relay.go b/controller/relay.go
-index 5e2db44..d8b30f2 100644
+index 0129934b1..6199c1cb0 100644
 --- a/controller/relay.go
 +++ b/controller/relay.go
-@@ -325,6 +325,9 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
- 	if openaiErr == nil {
- 		return false
- 	}
-+	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
-+		return false
-+	}
- 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
- 		return false
- 	}
-@@ -614,6 +617,9 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError,
+@@ -725,6 +725,9 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *taskdto.TaskEr
  	if taskErr == nil || taskErr.NoRetry {
  		return false
  	}
@@ -20,5 +10,19 @@ index 5e2db44..d8b30f2 100644
 +		return false
 +	}
  	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
+ 		return false
+ 	}
+diff --git a/service/relay_error.go b/service/relay_error.go
+index 14462fbc4..02c9813eb 100644
+--- a/service/relay_error.go
++++ b/service/relay_error.go
+@@ -20,6 +20,9 @@ func ShouldRetryRelayError(c *gin.Context, openaiErr *types.NewAPIError, retryTi
+ 	if openaiErr == nil {
+ 		return false
+ 	}
++	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
++		return false
++	}
+ 	if ShouldSkipRetryAfterChannelAffinityFailure(c) {
  		return false
  	}

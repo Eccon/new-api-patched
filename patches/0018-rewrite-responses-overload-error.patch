@@ -1,5 +1,5 @@
 diff --git a/relay/channel/openai/relay_responses.go b/relay/channel/openai/relay_responses.go
-index b720ab42c2c6b8620d278a532b7a39f1cdd4395c..1030e8d8a92685d155ea0e1c40db3630f5cfca83 100644
+index a3e73ac0b..bbf36127d 100644
 --- a/relay/channel/openai/relay_responses.go
 +++ b/relay/channel/openai/relay_responses.go
 @@ -1,6 +1,7 @@
@@ -10,16 +10,7 @@ index b720ab42c2c6b8620d278a532b7a39f1cdd4395c..1030e8d8a92685d155ea0e1c40db3630
  	"fmt"
  	"io"
  	"net/http"
-@@ -15,6 +16,8 @@ import (
- 	"github.com/QuantumNous/new-api/service"
- 
- 	"github.com/gin-gonic/gin"
-+	"github.com/tidwall/gjson"
-+	"github.com/tidwall/sjson"
- )
- 
- func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
-@@ -104,6 +107,17 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+@@ -97,6 +98,17 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
  		if info.ResponseModelName == "" && streamResponse.Response != nil {
  			info.SetResponseModelName(streamResponse.Response.Model)
  		}
@@ -34,21 +25,21 @@ index b720ab42c2c6b8620d278a532b7a39f1cdd4395c..1030e8d8a92685d155ea0e1c40db3630
 +				data = patched
 +			}
 +		}
- 		sendResponsesStreamData(c, streamResponse, data)
- 		switch streamResponse.Type {
- 		case "response.completed", "response.done":
-@@ -144,6 +158,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
- 			}
+ 		if streamResponse.Response != nil {
+ 			data = string(rewriteSGLangResponsesCreatedAt(info, []byte(data), "response.created_at", streamResponse.Response.CreatedAt))
+ 		}
+@@ -107,6 +119,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+ 			sawTerminalEvent = true
  		case "error", "response.error", "response.failed", "response.incomplete", "response.cancelled", "response.canceled":
  			sawErrorEvent = true
 +			if isServerOverloaded {
 +				sr.Error(errors.New("upstream response.failed: code=" + responseErrorCode))
 +			}
- 			if !imageCommitted {
- 				imageCounter.Reset()
- 				imageCounter.Commit(info)
+ 		}
+ 	})
+ 	if info != nil && info.StreamStatus != nil && !sawTerminalEvent && !sawErrorEvent {
 diff --git a/relay/channel/openai/relay_responses_billing_test.go b/relay/channel/openai/relay_responses_billing_test.go
-index 0707ddf596831e0b1bfbcaf2e7e7b6d2573e9a58..fd9944269caa58e1f091d5f5198d4f20f287dcf1 100644
+index edc4cce4a..b5661572d 100644
 --- a/relay/channel/openai/relay_responses_billing_test.go
 +++ b/relay/channel/openai/relay_responses_billing_test.go
 @@ -12,6 +12,7 @@ import (
@@ -59,18 +50,16 @@ index 0707ddf596831e0b1bfbcaf2e7e7b6d2573e9a58..fd9944269caa58e1f091d5f5198d4f20
  	"github.com/QuantumNous/new-api/setting/operation_setting"
  	"github.com/gin-gonic/gin"
  	"github.com/stretchr/testify/assert"
-@@ -265,3 +266,68 @@ func TestOaiResponsesStreamHandlerDoesNotCountPartialImageEvent(t *testing.T) {
- 
- 	assert.Equal(t, 0, info.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolImageGeneration].CallCount)
+@@ -354,3 +355,50 @@ func TestOaiResponsesStreamHandlerKeepsNonSGLangCreatedAt(t *testing.T) {
+ 	require.Nil(t, apiErr)
+ 	assert.Contains(t, w.Body.String(), `1786588600.0`)
  }
 +
 +func TestOaiResponsesStreamHandlerRewritesServerOverloadAndRecordsStreamError(t *testing.T) {
 +	gin.SetMode(gin.TestMode)
 +	oldTimeout := constant.StreamingTimeout
 +	constant.StreamingTimeout = 30
-+	t.Cleanup(func() {
-+		constant.StreamingTimeout = oldTimeout
-+	})
++	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
 +
 +	for _, responseErrorCode := range []string{"server_is_overloaded", "slow_down"} {
 +		responseErrorCode := responseErrorCode
@@ -81,27 +70,13 @@ index 0707ddf596831e0b1bfbcaf2e7e7b6d2573e9a58..fd9944269caa58e1f091d5f5198d4f20
 +				`data: {"type":"response.failed","response":{"id":"resp_overloaded","status":"failed","error":{"code":"` + responseErrorCode + `","message":"Our servers are currently overloaded. Please try again later."},"custom":"preserved"},"sequence_number":3}`,
 +				``,
 +			}, "\n")
-+
 +			w := httptest.NewRecorder()
 +			c, _ := gin.CreateTestContext(w)
 +			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 +			c.Set(common.RequestIdKey, "responses-overload-rewrite-test")
-+			info := &relaycommon.RelayInfo{
-+				OriginModelName: "gpt-5.6-sol",
-+				DisablePing:     true,
-+				IsStream:        true,
-+				ChannelMeta: &relaycommon.ChannelMeta{
-+					UpstreamModelName: "gpt-5.6-sol",
-+				},
-+			}
-+			resp := &http.Response{
-+				StatusCode: http.StatusOK,
-+				Body:       io.NopCloser(strings.NewReader(body)),
-+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
-+			}
-+
++			info := &relaycommon.RelayInfo{OriginModelName: "gpt-5.6-sol", DisablePing: true, IsStream: true, ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "gpt-5.6-sol"}}
++			resp := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{"Content-Type": []string{"text/event-stream"}}}
 +			_, apiErr := OaiResponsesStreamHandler(c, info, resp)
-+
 +			require.Nil(t, apiErr)
 +			output := w.Body.String()
 +			assert.Contains(t, output, "event: error")
@@ -111,14 +86,12 @@ index 0707ddf596831e0b1bfbcaf2e7e7b6d2573e9a58..fd9944269caa58e1f091d5f5198d4f20
 +			assert.Contains(t, output, `"sequence_number":2`)
 +			assert.Contains(t, output, `"sequence_number":3`)
 +			assert.Contains(t, output, `"custom":"preserved"`)
-+
 +			require.NotNil(t, info.StreamStatus)
 +			assert.Equal(t, relaycommon.StreamEndReasonEOF, info.StreamStatus.EndReason)
 +			assert.True(t, info.StreamStatus.HasErrors())
 +			assert.Equal(t, 1, info.StreamStatus.TotalErrorCount())
 +			require.Len(t, info.StreamStatus.Errors, 1)
 +			assert.Equal(t, "upstream response.failed: code="+responseErrorCode, info.StreamStatus.Errors[0].Message)
-+
 +			other := service.GenerateTextOtherInfo(c, info, 1, 1, 1, 0, 0, 0, 1)
 +			streamStatus, ok := other.Snapshot()["stream_status"].(map[string]interface{})
 +			require.True(t, ok)
