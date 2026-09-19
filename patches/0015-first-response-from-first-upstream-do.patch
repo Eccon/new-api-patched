@@ -1,8 +1,8 @@
 diff --git a/pkg/perf_metrics/metrics.go b/pkg/perf_metrics/metrics.go
-index 2a68589e5..504a8c87a 100644
+index 54d4a7d76..cdabe8a5f 100644
 --- a/pkg/perf_metrics/metrics.go
 +++ b/pkg/perf_metrics/metrics.go
-@@ -32,7 +32,7 @@ func RecordRelaySample(info *relaycommon.RelayInfo, success bool, outputTokens i
+@@ -41,7 +41,7 @@ func RecordRelayResult(ctx context.Context, info *relaycommon.RelayInfo, apiErr
  	hasTtft := info.IsStream && info.HasSendResponse()
  	ttftMs := int64(0)
  	if hasTtft {
@@ -12,22 +12,14 @@ index 2a68589e5..504a8c87a 100644
  	latencyMs := now.Sub(info.StartTime).Milliseconds()
  	generationMs := latencyMs
 diff --git a/pkg/perf_metrics/metrics_test.go b/pkg/perf_metrics/metrics_test.go
-new file mode 100644
-index 000000000..96b85f0c9
---- /dev/null
+index 5a77cfcff..83492d996 100644
+--- a/pkg/perf_metrics/metrics_test.go
 +++ b/pkg/perf_metrics/metrics_test.go
-@@ -0,0 +1,41 @@
-+package perfmetrics
-+
-+import (
-+	"testing"
-+	"time"
-+
-+	relaycommon "github.com/QuantumNous/new-api/relay/common"
-+	"github.com/stretchr/testify/require"
-+)
-+
-+func TestRecordRelaySampleUsesFirstUpstreamDoForTTFT(t *testing.T) {
+@@ -109,6 +109,38 @@ func TestHourlySuccessSeriesWeightsSmallerBuckets(t *testing.T) {
+ 	assert.Equal(t, []SuccessRatePoint{{Ts: 3600, SuccessRate: 99.01}, {Ts: 7200, SuccessRate: 100}}, points)
+ }
+ 
++func TestRecordRelayResultUsesFirstUpstreamDoForTTFT(t *testing.T) {
 +	requestStart := time.Now().Add(-3 * time.Second)
 +	firstDo := requestStart.Add(time.Second)
 +	firstResponse := firstDo.Add(1500 * time.Millisecond)
@@ -40,7 +32,7 @@ index 000000000..96b85f0c9
 +	}
 +	info.MarkFirstUpstreamDoStart(firstDo)
 +
-+	RecordRelaySample(info, true, 0)
++	RecordRelayResult(context.Background(), info, nil)
 +
 +	var recorded counters
 +	found := false
@@ -58,19 +50,23 @@ index 000000000..96b85f0c9
 +	require.Equal(t, int64(1500), recorded.ttftSumMs)
 +	require.Equal(t, int64(1), recorded.ttftCount)
 +}
++
+ // TEST_PERF_MYSQL_DSN / TEST_PERF_POSTGRES_DSN optionally run the aggregation
+ // against isolated real MySQL/PostgreSQL databases.
+ func TestPerformanceAggregationAndFlush(t *testing.T) {
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index e1be11e9a..cd0368b63 100644
+index 1efdc8380..63372dc79 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
-@@ -399,6 +399,7 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
+@@ -404,6 +404,7 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
  	targetReq := &http.Request{Header: targetHeader}
  	applyDefaultUpstreamUserAgent(c, targetReq, info)
  	logUpstreamUserAgent(c, targetReq)
 +	info.PreserveLegacyFirstResponseStartTime()
- 	targetConn, _, err := websocket.DefaultDialer.Dial(fullRequestURL, targetHeader)
- 	if err != nil {
- 		return nil, fmt.Errorf("dial failed to %s: %w", common.SanitizeURLForLog(fullRequestURL), err)
-@@ -688,6 +689,7 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+ 	dialer := *websocket.DefaultDialer
+ 	if info.ChannelSetting.Proxy != "" {
+ 		proxyURL, _, proxyErr := common2.ParseProxyURLRuntime(info.ChannelSetting.Proxy)
+@@ -718,6 +719,7 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  		info.Timing.SetAttemptSnapshot(requestTrace.snapshot)
  		req = req.WithContext(httptrace.WithClientTrace(req.Context(), requestTrace.clientTrace()))
  	}
@@ -79,7 +75,7 @@ index e1be11e9a..cd0368b63 100644
  	if requestTrace != nil {
  		attempt, writeSeq := requestTrace.finish(resp)
 diff --git a/relay/channel/api_request_test.go b/relay/channel/api_request_test.go
-index 932c45a99..39f442bb5 100644
+index d16023aaa..a80c19634 100644
 --- a/relay/channel/api_request_test.go
 +++ b/relay/channel/api_request_test.go
 @@ -12,6 +12,7 @@ import (
@@ -90,7 +86,7 @@ index 932c45a99..39f442bb5 100644
  
  	"github.com/QuantumNous/new-api/common"
  	relaycommon "github.com/QuantumNous/new-api/relay/common"
-@@ -430,6 +431,50 @@ func TestDoRequestLogsRequestWriteAndResponseHeaders(t *testing.T) {
+@@ -442,6 +443,50 @@ func TestDoRequestLogsRequestWriteAndResponseHeaders(t *testing.T) {
  	require.GreaterOrEqual(t, responseHeadersAt, 0)
  }
  
@@ -178,7 +174,7 @@ index 2f8112f48..661addb9d 100644
  		usage, err = xunfeiStreamHandler(c, *a.request, splits[0], splits[1], splits[2])
  	} else {
 diff --git a/relay/common/relay_info.go b/relay/common/relay_info.go
-index 1d4937b8a..63a973b7b 100644
+index e7029fbd6..805175336 100644
 --- a/relay/common/relay_info.go
 +++ b/relay/common/relay_info.go
 @@ -185,6 +185,7 @@ type RelayInfo struct {
@@ -189,7 +185,7 @@ index 1d4937b8a..63a973b7b 100644
  	FirstResponseTime time.Time
  	isFirstResponse   bool
  	//SendLastReasoningResponse bool
-@@ -1068,6 +1069,23 @@ func (info *RelayInfo) SetFirstResponseTimeAt(t time.Time) {
+@@ -1059,6 +1060,23 @@ func (info *RelayInfo) SetFirstResponseTimeAt(t time.Time) {
  	}
  }
  
@@ -259,10 +255,10 @@ index 70c12968e..90a9d7871 100644
  	info := &RelayInfo{
  		RelayFormat:             types.RelayFormatOpenAI,
 diff --git a/service/log_info_generate.go b/service/log_info_generate.go
-index ec2881d10..2b26517f1 100644
+index 8e86debfb..af675f44b 100644
 --- a/service/log_info_generate.go
 +++ b/service/log_info_generate.go
-@@ -124,7 +124,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
+@@ -108,7 +108,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
  	other.SetPublic("cache_ratio", cacheRatio)
  	other.SetPublic("model_price", modelPrice)
  	other.SetPublic("user_group_ratio", userGroupRatio)
