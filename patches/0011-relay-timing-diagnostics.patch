@@ -176,10 +176,10 @@ index 2d6022f77..71902ccf4 100644
  	os.Exit(1)
  }
 diff --git a/controller/relay.go b/controller/relay.go
-index 6199c1cb0..905c7d053 100644
+index 1c42437e3..379d578b7 100644
 --- a/controller/relay.go
 +++ b/controller/relay.go
-@@ -67,7 +67,130 @@ func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewA
+@@ -65,7 +65,130 @@ func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewA
  	return err
  }
  
@@ -310,7 +310,7 @@ index 6199c1cb0..905c7d053 100644
  
  	requestId := c.GetString(common.RequestIdKey)
  	//group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
-@@ -109,6 +232,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+@@ -108,6 +231,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
  	}()
  
  	request, err := helper.GetAndValidateRequest(c, relayFormat)
@@ -321,7 +321,7 @@ index 6199c1cb0..905c7d053 100644
  	if err != nil {
  		// Map "request body too large" to 413 so clients can handle it correctly
  		if common.IsRequestBodyTooLargeError(err) || errors.Is(err, common.ErrRequestBodyTooLarge) {
-@@ -124,10 +251,30 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+@@ -123,6 +250,22 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
  		newAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
  		return
  	}
@@ -342,6 +342,9 @@ index 6199c1cb0..905c7d053 100644
 +		relayInfo.Timing.BodyStorageType = c.GetString("relay_timing_body_storage_type")
 +	}
  
+ 	defer func() {
+ 		recovered := recover()
+@@ -141,6 +284,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
  	if newAPIError = relay.PrepareRequestBilling(c, relayInfo); newAPIError != nil {
  		return
  	}
@@ -366,7 +369,7 @@ index 8e8a2ef8f..a3e74672e 100644
  	logCount++ // we don't need accurate count, so no lock here
  	if logCount > maxLogCount && !setupLogWorking {
 diff --git a/middleware/distributor.go b/middleware/distributor.go
-index 6bad3d80c..6288c364f 100644
+index a3a9ad0dd..15a6960ad 100644
 --- a/middleware/distributor.go
 +++ b/middleware/distributor.go
 @@ -33,6 +33,9 @@ type ModelRequest struct {
@@ -377,9 +380,9 @@ index 6bad3d80c..6288c364f 100644
 +			c.Set("relay_timing_distribute_start_at", time.Now())
 +		}
  		var channel *model.Channel
- 		constraints := service.GetChannelConstraints(c)
- 		constraints.AddFilter(taskdto.ChannelFilter{
-@@ -41,6 +44,9 @@ func Distribute() func(c *gin.Context) {
+ 		defer func() {
+ 			if c.Writer.Status() >= 400 {
+@@ -46,6 +49,9 @@ func Distribute() func(c *gin.Context) {
  		})
  		service.AppendTaskPluginIdentityFilter(c, c.GetString("expected_task_plugin_key"))
  		modelRequest, shouldSelectChannel, err := getModelRequest(c)
@@ -389,7 +392,7 @@ index 6bad3d80c..6288c364f 100644
  		if err != nil {
  			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
  			return
-@@ -195,6 +201,9 @@ func Distribute() func(c *gin.Context) {
+@@ -122,6 +128,9 @@ func Distribute() func(c *gin.Context) {
  			}
  		}
  		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
@@ -399,7 +402,7 @@ index 6bad3d80c..6288c364f 100644
  		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
  		c.Next()
  		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
-@@ -326,6 +335,14 @@ func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
+@@ -255,6 +264,14 @@ func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
  	if err != nil {
  		return nil, err
  	}
@@ -414,7 +417,7 @@ index 6bad3d80c..6288c364f 100644
  	if !gjson.ValidBytes(requestBody) {
  		return nil, errors.New("invalid JSON request body")
  	}
-@@ -342,10 +359,20 @@ func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
+@@ -271,10 +288,20 @@ func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
  	if err != nil {
  		return nil, err
  	}
@@ -530,7 +533,7 @@ index e1bf315a4..c62680fe3 100644
  		c.Request = c.Request.WithContext(ctx)
  		c.Header(common.RequestIdKey, id)
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index dfc5d574e..e1be11e9a 100644
+index c28f022bc..1efdc8380 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
 @@ -2,10 +2,12 @@ package channel
@@ -546,7 +549,7 @@ index dfc5d574e..e1be11e9a 100644
  	"regexp"
  	"strings"
  	"sync"
-@@ -492,6 +494,150 @@ func keepUpstreamRedirectResponse(_ *http.Request, _ []*http.Request) error {
+@@ -522,6 +524,150 @@ func keepUpstreamRedirectResponse(_ *http.Request, _ []*http.Request) error {
  	return http.ErrUseLastResponse
  }
  
@@ -697,7 +700,7 @@ index dfc5d574e..e1be11e9a 100644
  func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
  	client, err := service.GetHttpClientWithProxyForRelay(info.ChannelSetting.Proxy, info.ChannelSetting, info.IsStream)
  	if err != nil {
-@@ -536,7 +682,19 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -566,7 +712,19 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  
  	applyDefaultUpstreamUserAgent(c, req, info)
  	logUpstreamUserAgent(c, req)
@@ -717,7 +720,7 @@ index dfc5d574e..e1be11e9a 100644
  	if err != nil {
  		if IsResponseHeaderTimeout(err) {
  			logger.LogError(c, "do request failed: response header timeout: "+err.Error())
-@@ -573,6 +731,53 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -603,6 +761,53 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  	return resp, nil
  }
  
@@ -772,7 +775,7 @@ index dfc5d574e..e1be11e9a 100644
  	if err == nil {
  		return false
 diff --git a/relay/channel/api_request_test.go b/relay/channel/api_request_test.go
-index 07ea112df..932c45a99 100644
+index 7721d4580..d16023aaa 100644
 --- a/relay/channel/api_request_test.go
 +++ b/relay/channel/api_request_test.go
 @@ -1,11 +1,16 @@
@@ -792,7 +795,7 @@ index 07ea112df..932c45a99 100644
  	"testing"
  
  	"github.com/QuantumNous/new-api/common"
-@@ -15,6 +20,23 @@ import (
+@@ -16,6 +21,23 @@ import (
  	"github.com/stretchr/testify/require"
  )
  
@@ -816,7 +819,7 @@ index 07ea112df..932c45a99 100644
  func TestNewTaskAPIRequestInheritsClientCancellation(t *testing.T) {
  	recorder := httptest.NewRecorder()
  	c, _ := gin.CreateTestContext(recorder)
-@@ -347,3 +369,96 @@ func TestIsResponseHeaderTimeout(t *testing.T) {
+@@ -359,3 +381,96 @@ func TestIsResponseHeaderTimeout(t *testing.T) {
  		})
  	}
  }
@@ -914,7 +917,7 @@ index 07ea112df..932c45a99 100644
 +	require.NotContains(t, logs.String(), "relay upstream request written")
 +}
 diff --git a/relay/common/relay_info.go b/relay/common/relay_info.go
-index 6d4a0ae85..6772d9278 100644
+index 675815a7e..e7029fbd6 100644
 --- a/relay/common/relay_info.go
 +++ b/relay/common/relay_info.go
 @@ -81,6 +81,101 @@ type TokenCountMeta struct {
@@ -1019,7 +1022,7 @@ index 6d4a0ae85..6772d9278 100644
  type RelayInfo struct {
  	TokenId           int
  	TokenKey          string
-@@ -183,6 +278,7 @@ type RelayInfo struct {
+@@ -184,6 +279,7 @@ type RelayInfo struct {
  	ImageQuotaBeforeGroup float64
  
  	Request dto.Request
@@ -1027,7 +1030,7 @@ index 6d4a0ae85..6772d9278 100644
  
  	// RequestConversionChain records request format conversions in order, e.g.
  	// ["openai", "openai_responses"] or ["openai", "claude"].
-@@ -947,8 +1043,12 @@ func (info *RelayInfo) ConvOptions() *convmeta.Options {
+@@ -953,8 +1049,12 @@ func (info *RelayInfo) ConvOptions() *convmeta.Options {
  }
  
  func (info *RelayInfo) SetFirstResponseTime() {
@@ -1165,7 +1168,7 @@ index e620469ae..d5f5379f4 100644
 +	}
  }
 diff --git a/relay/request_billing.go b/relay/request_billing.go
-index d3394a3f3..1fc1b1217 100644
+index 4d7bd5d9f..c7a820514 100644
 --- a/relay/request_billing.go
 +++ b/relay/request_billing.go
 @@ -5,7 +5,9 @@ import (
@@ -1188,7 +1191,7 @@ index d3394a3f3..1fc1b1217 100644
  
  	if needSensitiveCheck && meta != nil {
  		if contains, words := service.CheckSensitiveText(meta.CombineText); contains {
-@@ -47,17 +52,26 @@ func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.N
+@@ -48,17 +53,26 @@ func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.N
  			return types.NewError(errors.New(message), types.ErrorCodeSensitiveWordsDetected)
  		}
  	}
@@ -1216,10 +1219,10 @@ index d3394a3f3..1fc1b1217 100644
  		logger.LogInfo(c, fmt.Sprintf("模型 %s 免费，跳过预扣费", info.OriginModelName))
  		return nil
 diff --git a/service/text_quota.go b/service/text_quota.go
-index 543ebb000..3c887c7d6 100644
+index d2df20427..31fd63ff4 100644
 --- a/service/text_quota.go
 +++ b/service/text_quota.go
-@@ -392,6 +392,79 @@ func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage)
+@@ -390,6 +390,79 @@ func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage)
  	return "openai"
  }
  
@@ -1299,7 +1302,7 @@ index 543ebb000..3c887c7d6 100644
  func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []string) {
  	originUsage := usage
  	billingUsage := effectiveBillingUsage(usage)
-@@ -534,6 +607,10 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
+@@ -532,6 +605,10 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
  	}
  
  	attachQuotaSaturation(ctx, relayInfo, other)

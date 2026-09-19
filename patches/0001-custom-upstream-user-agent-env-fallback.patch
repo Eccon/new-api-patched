@@ -1,8 +1,8 @@
 diff --git a/common/constants.go b/common/constants.go
-index d6b4fb52284c2a033797ea73922e55b5e5d7485f..bd2fd17693db3636553b3199b795927b83a393a6 100644
+index 2c7b90995..39223eacd 100644
 --- a/common/constants.go
 +++ b/common/constants.go
-@@ -159,6 +159,10 @@ var SyncFrequency int // unit is second
+@@ -160,6 +160,10 @@ var SyncFrequency int // unit is second
  var BatchUpdateEnabled = false
  var BatchUpdateInterval int
  
@@ -14,10 +14,10 @@ index d6b4fb52284c2a033797ea73922e55b5e5d7485f..bd2fd17693db3636553b3199b795927b
  
  var RelayIdleConnTimeout int // unit is second
 diff --git a/common/init.go b/common/init.go
-index 4d4c62b27cac7660a6b3e2c5100cf24b236696f8..0c505368d271772d782251281584f9d834bc1c85 100644
+index b34f4376d..8a33e9d5d 100644
 --- a/common/init.go
 +++ b/common/init.go
-@@ -116,6 +116,9 @@ func InitEnv() {
+@@ -118,6 +118,9 @@ func InitEnv() {
  	// Initialize string variables with GetEnvOrDefaultString
  	GeminiSafetySetting = GetEnvOrDefaultString("GEMINI_SAFETY_SETTING", "BLOCK_NONE")
  	CohereSafetySetting = GetEnvOrDefaultString("COHERE_SAFETY_SETTING", "NONE")
@@ -28,7 +28,7 @@ index 4d4c62b27cac7660a6b3e2c5100cf24b236696f8..0c505368d271772d782251281584f9d8
  	// Initialize rate limit variables
  	GlobalApiRateLimitEnable = GetEnvOrDefaultBool("GLOBAL_API_RATE_LIMIT_ENABLE", true)
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index 48241b14a5e98352db436455f0b1af2ae5c475a5..e751d0f986b8b7d400378379b9035a0fba88bb2a 100644
+index 7e6f76261..a9942115f 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
 @@ -196,6 +196,7 @@ func applyHeaderOverridePlaceholders(template string, c *gin.Context, apiKey str
@@ -47,17 +47,17 @@ index 48241b14a5e98352db436455f0b1af2ae5c475a5..e751d0f986b8b7d400378379b9035a0f
  	return headerOverride, nil
  }
  
-@@ -392,6 +394,9 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
+@@ -397,6 +399,9 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
  		targetHeader.Set(key, value)
  	}
  	targetHeader.Set("Content-Type", c.Request.Header.Get("Content-Type"))
 +	targetReq := &http.Request{Header: targetHeader}
 +	applyDefaultUpstreamUserAgent(c, targetReq, info)
 +	logUpstreamUserAgent(c, targetReq)
- 	targetConn, _, err := websocket.DefaultDialer.Dial(fullRequestURL, targetHeader)
- 	if err != nil {
- 		return nil, fmt.Errorf("dial failed to %s: %w", common.SanitizeURLForLog(fullRequestURL), err)
-@@ -529,6 +534,8 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+ 	dialer := *websocket.DefaultDialer
+ 	if info.ChannelSetting.Proxy != "" {
+ 		proxyURL, _, proxyErr := common2.ParseProxyURLRuntime(info.ChannelSetting.Proxy)
+@@ -559,6 +564,8 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  		}
  	}
  
@@ -67,10 +67,10 @@ index 48241b14a5e98352db436455f0b1af2ae5c475a5..e751d0f986b8b7d400378379b9035a0f
  	if err != nil {
  		logger.LogError(c, "do request failed: "+err.Error())
 diff --git a/relay/channel/api_request_test.go b/relay/channel/api_request_test.go
-index f697f8555692c0a00f85a69d6409c3fe180f9c5f..53cac84f9e295cbfdb604f00cfe868102320aba9 100644
+index 1b64ac970..8662c9db1 100644
 --- a/relay/channel/api_request_test.go
 +++ b/relay/channel/api_request_test.go
-@@ -5,7 +5,9 @@ import (
+@@ -6,7 +6,9 @@ import (
  	"net/http/httptest"
  	"testing"
  
@@ -78,11 +78,11 @@ index f697f8555692c0a00f85a69d6409c3fe180f9c5f..53cac84f9e295cbfdb604f00cfe86810
  	relaycommon "github.com/QuantumNous/new-api/relay/common"
 +	"github.com/QuantumNous/new-api/relaykit/types"
  	"github.com/gin-gonic/gin"
+ 	"github.com/stretchr/testify/assert"
  	"github.com/stretchr/testify/require"
- )
-@@ -191,3 +193,120 @@ func TestProcessHeaderOverride_PassHeadersTemplateSetsRuntimeHeaders(t *testing.
- 	require.Equal(t, "sess-123", upstreamReq.Header.Get("Session_id"))
- 	require.Empty(t, upstreamReq.Header.Get("X-Codex-Beta-Features"))
+@@ -217,3 +219,120 @@ func TestToWebSocketURL(t *testing.T) {
+ 		assert.Equal(t, want, toWebSocketURL(input), input)
+ 	}
  }
 +
 +func TestProcessHeaderOverrideSyncsUserAgentOverrideState(t *testing.T) {
@@ -203,7 +203,7 @@ index f697f8555692c0a00f85a69d6409c3fe180f9c5f..53cac84f9e295cbfdb604f00cfe86810
 +}
 diff --git a/relay/channel/upstream_user_agent.go b/relay/channel/upstream_user_agent.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..4172b5d6f50d8fb978495a5306288932640e9d3c
+index 000000000..4172b5d6f
 --- /dev/null
 +++ b/relay/channel/upstream_user_agent.go
 @@ -0,0 +1,118 @@

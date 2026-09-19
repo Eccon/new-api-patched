@@ -1,8 +1,8 @@
 diff --git a/relay/channel/openai/helper.go b/relay/channel/openai/helper.go
-index a3cbd115d..0bc72825e 100644
+index e52014e26..e13069e05 100644
 --- a/relay/channel/openai/helper.go
 +++ b/relay/channel/openai/helper.go
-@@ -267,3 +267,42 @@ func sendResponsesStreamData(c *gin.Context, streamResponse dto.ResponsesStreamR
+@@ -268,3 +268,42 @@ func sendResponsesStreamData(c *gin.Context, streamResponse dto.ResponsesStreamR
  	}
  	_ = helper.ResponseChunkData(c, streamResponse, data)
  }
@@ -46,10 +46,10 @@ index a3cbd115d..0bc72825e 100644
 +	}
 +}
 diff --git a/relay/channel/openai/relay_responses.go b/relay/channel/openai/relay_responses.go
-index da2e48a7b..ba6096730 100644
+index 3ed0b3bed..12f03ca69 100644
 --- a/relay/channel/openai/relay_responses.go
 +++ b/relay/channel/openai/relay_responses.go
-@@ -77,6 +77,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+@@ -78,6 +78,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
  	defer service.CloseResponseBodyGracefully(resp)
  
  	accumulator := service.NewResponsesUsageAccumulator(info)
@@ -59,7 +59,7 @@ index da2e48a7b..ba6096730 100644
  
  	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
  
-@@ -87,12 +90,33 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+@@ -88,12 +91,33 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
  			sr.Error(err)
  			return
  		}
@@ -91,10 +91,10 @@ index da2e48a7b..ba6096730 100644
 +		}
 +	}
  
- 	return accumulator.Finish(), nil
- }
+ 	common.SetContextKey(c, constant.ContextKeyResponseStreamStatus, info.StreamStatus)
+ 	info.StreamStatus.RequireTerminal()
 diff --git a/relay/common/stream_status.go b/relay/common/stream_status.go
-index 4734b2640..f9a1fcc7f 100644
+index 60c849564..955c040e6 100644
 --- a/relay/common/stream_status.go
 +++ b/relay/common/stream_status.go
 @@ -12,7 +12,7 @@ type StreamEndReason string
