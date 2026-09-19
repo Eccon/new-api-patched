@@ -1,9 +1,9 @@
 diff --git a/controller/relay.go b/controller/relay.go
-index a98343a9a..b558e5395 100644
+index 379d578b7..1f8fa1929 100644
 --- a/controller/relay.go
 +++ b/controller/relay.go
-@@ -215,6 +215,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
- 		if newAPIError != nil {
+@@ -214,6 +214,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+ 			service.RecordRequestPolicyTermination(c, newAPIError)
  			logger.LogError(c, fmt.Sprintf("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
  			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
 +			if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
@@ -15,30 +15,42 @@ index a98343a9a..b558e5395 100644
  			switch relayFormat {
  			case types.RelayFormatOpenAIRealtime:
  				helper.WssError(c, ws, newAPIError.ToOpenAIError())
-@@ -339,6 +345,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
- 		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
+@@ -351,13 +357,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+ 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
+ 		relayInfo.LastError = newAPIError
+ 
+-		decision := service.DecideRelayRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry())
++		decision := decideRelayRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry())
+ 		service.RecordPolicyFailure(c, channel.Id, newAPIError, decision)
+ 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, relayInfo)
+ 
+ 		if decision.Action != "retry" {
  			break
  		}
 +		helper.DeactivateStreamDrainForRetry(c)
  	}
  
  	useChannel := c.GetStringSlice("use_channel")
-@@ -430,6 +437,9 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
+@@ -440,6 +447,13 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
+ 	return channel, nil
  }
  
- func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) bool {
++func decideRelayRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) service.PolicyDecision {
 +	if helper.IsStreamDeliveryDisconnected(c) {
-+		return false
++		return service.PolicyDecision{Action: "stop", Reason: "request_cancelled", Source: "system"}
 +	}
- 	return service.ShouldRetryRelayError(c, openaiErr, retryTimes)
++	return service.DecideRelayRetry(c, openaiErr, retryTimes)
++}
++
+ func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, relayInfo *relaycommon.RelayInfo) {
+ 	service.ProcessChannelError(c, channelError, err, relayInfo)
  }
- 
 diff --git a/controller/relay_stream_delivery_test.go b/controller/relay_stream_delivery_test.go
 new file mode 100644
-index 000000000..546301bd7
+index 000000000..2d7488f8d
 --- /dev/null
 +++ b/controller/relay_stream_delivery_test.go
-@@ -0,0 +1,80 @@
+@@ -0,0 +1,81 @@
 +package controller
 +
 +import (
@@ -53,6 +65,7 @@ index 000000000..546301bd7
 +	"github.com/QuantumNous/new-api/common"
 +	relayhelper "github.com/QuantumNous/new-api/relay/helper"
 +	"github.com/QuantumNous/new-api/relaykit/types"
++	"github.com/QuantumNous/new-api/service"
 +
 +	"github.com/gin-gonic/gin"
 +	"github.com/stretchr/testify/assert"
@@ -86,11 +99,11 @@ index 000000000..546301bd7
 +	return c, writer
 +}
 +
-+func TestShouldRetryStopsAfterStreamDeliveryDisconnect(t *testing.T) {
++func TestDecideRelayRetryStopsAfterStreamDeliveryDisconnect(t *testing.T) {
 +	c, _ := newDisconnectedRelayContext(t, `{}`)
 +	retryable := types.NewError(errors.New("upstream failed"), types.ErrorCode("channel:test"))
 +
-+	assert.False(t, shouldRetry(c, retryable, 1))
++	assert.Equal(t, service.PolicyDecision{Action: "stop", Reason: "request_cancelled", Source: "system"}, decideRelayRetry(c, retryable, 1))
 +}
 +
 +func TestRelayDoesNotWriteFinalErrorAfterStreamDeliveryDisconnect(t *testing.T) {
@@ -120,10 +133,10 @@ index 000000000..546301bd7
 +	assert.Zero(t, writer.writes.Load())
 +}
 diff --git a/relay/channel/openai/chat_via_responses.go b/relay/channel/openai/chat_via_responses.go
-index d66f4ac04..39ffdc6ce 100644
+index 2767eb263..b74c58ffa 100644
 --- a/relay/channel/openai/chat_via_responses.go
 +++ b/relay/channel/openai/chat_via_responses.go
-@@ -198,8 +198,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
+@@ -201,8 +201,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
  			streamErr = types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
  			return false
  		}
@@ -201,7 +214,7 @@ index 8384c355c..d11327300 100644
  	oldMode := gin.Mode()
  	gin.SetMode(gin.TestMode)
 diff --git a/relay/channel/openai/helper.go b/relay/channel/openai/helper.go
-index 3967ed198..bba4cd4ea 100644
+index e13069e05..d70d6d95e 100644
 --- a/relay/channel/openai/helper.go
 +++ b/relay/channel/openai/helper.go
 @@ -114,8 +114,9 @@ func sendGeminiStreamResults(c *gin.Context, results []relayconvert.ResponseResu
@@ -216,7 +229,7 @@ index 3967ed198..bba4cd4ea 100644
  	}
  	return nil
  }
-@@ -299,9 +300,7 @@ func sendResponsesErrorEvent(c *gin.Context, reason string, sequenceNumber int)
+@@ -298,9 +299,7 @@ func sendResponsesErrorEvent(c *gin.Context, reason string, sequenceNumber int)
  	}
  
  	helper.ExtendWriteDeadline(c)
@@ -228,7 +241,7 @@ index 3967ed198..bba4cd4ea 100644
  			return
  		}
 diff --git a/relay/channel/openai/image_stream_test.go b/relay/channel/openai/image_stream_test.go
-index 4e57ad0f4..7d51dd0a6 100644
+index 92313e201..ebcb0b51d 100644
 --- a/relay/channel/openai/image_stream_test.go
 +++ b/relay/channel/openai/image_stream_test.go
 @@ -9,11 +9,13 @@ import (
@@ -245,16 +258,16 @@ index 4e57ad0f4..7d51dd0a6 100644
  	"github.com/QuantumNous/new-api/relaykit/dto"
  	"github.com/gin-gonic/gin"
  	"github.com/stretchr/testify/assert"
-@@ -52,7 +54,7 @@ func TestImageExpressionUsesCompletedCountAndProtectsAbortedStreams(t *testing.T
- 		{"JSON wrapped as SSE uses actual count", `{"data":[{"b64_json":"first"}]}`, true, false, 3, 1},
- 		{"empty response retains request", `{"data":[]}`, false, false, 3, 3},
+@@ -54,7 +56,7 @@ func TestImageExpressionUsesCompletedCountAndProtectsAbortedStreams(t *testing.T
+ 		{"JSON object data counts one image", `{"data":{"url":"https://example.com/a.png","b64_json":"first"}}`, false, false, 3, 1},
+ 		{"JSON wrapped as SSE counts object data once", `{"data":{"b64_json":"first"}}`, true, false, 3, 1},
  		{"completed stream refunds missing images", "data: {\"type\":\"image_generation.completed\",\"b64_json\":\"first\"}\n\ndata: [DONE]\n\n", true, false, 3, 1},
 -		{"client abort cannot reduce count", "data: {\"type\":\"image_generation.completed\",\"b64_json\":\"first\"}\n\n", true, true, 3, 3},
 +		{"client disconnect drains finite stream", "data: {\"type\":\"image_generation.completed\",\"b64_json\":\"first\"}\n\n", true, true, 3, 1},
  	} {
  		t.Run(tc.name, func(t *testing.T) {
  			contentType := "application/json"
-@@ -220,40 +222,6 @@ func TestOpenaiImageStreamHandlerUsesCompletedEventCount(t *testing.T) {
+@@ -249,40 +251,6 @@ func TestOpenaiImageStreamHandlerUsesCompletedEventCount(t *testing.T) {
  	require.Equal(t, 2.0, info.PriceData.OtherRatios()["n"])
  }
  
@@ -295,7 +308,7 @@ index 4e57ad0f4..7d51dd0a6 100644
  // cancelAfterWriter cancels the request context right after the payload
  // containing needle has been written to the client, simulating a client that
  // disconnects after receiving that event. Cancelling from the write side (not
-@@ -289,19 +257,13 @@ func newDisconnectingImageStream(t *testing.T, sseBody, disconnectAfter string)
+@@ -318,19 +286,13 @@ func newDisconnectingImageStream(t *testing.T, sseBody, disconnectAfter string)
  	t.Cleanup(cancel)
  	c.Request = c.Request.WithContext(ctx)
  	c.Writer = &cancelAfterWriter{ResponseWriter: c.Writer, needle: disconnectAfter, cancel: cancel}
@@ -319,7 +332,7 @@ index 4e57ad0f4..7d51dd0a6 100644
  	oldMode := gin.Mode()
  	gin.SetMode(gin.TestMode)
  	t.Cleanup(func() { gin.SetMode(oldMode) })
-@@ -310,7 +272,16 @@ func TestOpenaiImageStreamHandlerClientDisconnectKeepsRequestedCount(t *testing.
+@@ -339,7 +301,16 @@ func TestOpenaiImageStreamHandlerClientDisconnectKeepsRequestedCount(t *testing.
  	constant.StreamingTimeout = 30
  	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
  
@@ -337,7 +350,7 @@ index 4e57ad0f4..7d51dd0a6 100644
  	c, recorder, resp, info := newDisconnectingImageStream(t, body, "first")
  	info.PriceData.UsePrice = true
  	info.PriceData.AddOtherRatio("n", 3)
-@@ -320,13 +291,62 @@ func TestOpenaiImageStreamHandlerClientDisconnectKeepsRequestedCount(t *testing.
+@@ -349,13 +320,62 @@ func TestOpenaiImageStreamHandlerClientDisconnectKeepsRequestedCount(t *testing.
  	require.Nil(t, err)
  	require.NotNil(t, usage)
  	require.NotNil(t, info.StreamStatus)
@@ -406,7 +419,7 @@ index 4e57ad0f4..7d51dd0a6 100644
  }
  
  // TestOpenaiImageStreamHandlerClientDisconnectRaisesCount covers the other
-@@ -348,7 +368,7 @@ func TestOpenaiImageStreamHandlerClientDisconnectRaisesCount(t *testing.T) {
+@@ -377,7 +397,7 @@ func TestOpenaiImageStreamHandlerClientDisconnectRaisesCount(t *testing.T) {
  		``,
  		``,
  	}, "\n")
@@ -415,7 +428,7 @@ index 4e57ad0f4..7d51dd0a6 100644
  	info.PriceData.UsePrice = true
  	info.PriceData.AddOtherRatio("n", 1)
  
-@@ -357,10 +377,11 @@ func TestOpenaiImageStreamHandlerClientDisconnectRaisesCount(t *testing.T) {
+@@ -386,10 +406,11 @@ func TestOpenaiImageStreamHandlerClientDisconnectRaisesCount(t *testing.T) {
  	require.Nil(t, err)
  	require.NotNil(t, usage)
  	require.NotNil(t, info.StreamStatus)
@@ -432,10 +445,10 @@ index 4e57ad0f4..7d51dd0a6 100644
  
  // TestOpenaiImageStreamHandlerWrapsJSONResponse covers the non-SSE fallback:
 diff --git a/relay/channel/openai/relay_image.go b/relay/channel/openai/relay_image.go
-index 12dedd161..aa6a48d9b 100644
+index d17ab08b4..cb3eff819 100644
 --- a/relay/channel/openai/relay_image.go
 +++ b/relay/channel/openai/relay_image.go
-@@ -134,13 +134,10 @@ func OpenaiImageStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+@@ -176,13 +176,10 @@ func OpenaiImageStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
  	}
  
  	applyUsagePostProcessing(info, usage, lastStreamData)

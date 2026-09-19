@@ -1,28 +1,38 @@
-diff --git a/controller/relay.go b/controller/relay.go
-index 0129934b1..6199c1cb0 100644
---- a/controller/relay.go
-+++ b/controller/relay.go
-@@ -725,6 +725,9 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *taskdto.TaskEr
- 	if taskErr == nil || taskErr.NoRetry {
- 		return false
- 	}
-+	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
-+		return false
-+	}
- 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
- 		return false
- 	}
 diff --git a/service/relay_error.go b/service/relay_error.go
-index 14462fbc4..02c9813eb 100644
+index 32a0fe3be..b81aef3a1 100644
 --- a/service/relay_error.go
 +++ b/service/relay_error.go
-@@ -20,6 +20,9 @@ func ShouldRetryRelayError(c *gin.Context, openaiErr *types.NewAPIError, retryTi
- 	if openaiErr == nil {
- 		return false
+@@ -22,6 +22,9 @@ func DecideRelayRetry(c *gin.Context, err *types.NewAPIError, retryTimes int) Po
+ 	if err == nil {
+ 		return PolicyDecision{Action: "stop", Reason: "request_completed", Source: "system"}
  	}
 +	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
-+		return false
++		return PolicyDecision{Action: "stop", Reason: "request_cancelled", Source: "system"}
 +	}
  	if ShouldSkipRetryAfterChannelAffinityFailure(c) {
- 		return false
- 	}
+ 		source := RequestPolicy(c).SessionModeSource
+ 		if source == "" {
+diff --git a/service/relay_error_test.go b/service/relay_error_test.go
+index 6bcfe696c..93d426deb 100644
+--- a/service/relay_error_test.go
++++ b/service/relay_error_test.go
+@@ -1,6 +1,7 @@
+ package service
+ 
+ import (
++	"context"
+ 	"errors"
+ 	"fmt"
+ 	"io"
+@@ -143,6 +144,11 @@ func TestDecideRelayRetryReasons(t *testing.T) {
+ 		{name: "success status never retries", err: upstream(http.StatusOK), retries: 1, want: PolicyDecision{Action: "stop", Reason: "system_retry_exclusion", Source: "system"}},
+ 		{name: "skip retry error", err: types.NewErrorWithStatusCode(errors.New("local"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry()), retries: 1, want: PolicyDecision{Action: "stop", Reason: "non_retryable_error", Source: "system"}},
+ 		{name: "channel error retries without budget", err: types.NewError(errors.New("no key"), types.ErrorCodeChannelNoAvailableKey), retries: 0, want: PolicyDecision{Action: "retry", Reason: "channel_error", Source: "system"}},
++		{name: "cancelled request", err: types.NewError(errors.New("no key"), types.ErrorCodeChannelNoAvailableKey), retries: 1, setup: func(c *gin.Context) {
++			requestContext, cancel := context.WithCancel(context.Background())
++			cancel()
++			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(requestContext)
++		}, want: PolicyDecision{Action: "stop", Reason: "request_cancelled", Source: "system"}},
+ 		{name: "single attempt pin", err: upstream(http.StatusTooManyRequests), retries: 1, setup: func(c *gin.Context) {
+ 			GetChannelConstraints(c).AddPin(dto.ChannelPin{ChannelId: 1, Source: dto.PinSourceToken, Rank: dto.PinRankToken, RetryMode: dto.PinRetrySingleAttempt})
+ 		}, want: PolicyDecision{Action: "stop", Reason: "pinned_channel", Source: "channel_constraint"}},
