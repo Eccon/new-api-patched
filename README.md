@@ -133,12 +133,10 @@ No Docker image is built.
   - Covers requests sent through the shared relay `doRequest` path; SDK-managed and channel-specific auxiliary HTTP clients are outside these two transport event logs.
   - Does not log request bodies, response bodies, Authorization values, API keys, headers, or raw query strings; URL-like error text is masked before logging.
 
-- `0012-record-actual-response-model-in-usage-logs.patch`
-  - Captures the model reported by OpenAI Chat Completions and Responses responses/streams.
-  - Stores the captured model in usage-log `other.actual_model_name` when it is the actual served model.
-  - Keeps the existing mapped-model fallback for older logs and mapped channels.
-  - Shows `actual_model_name` before the mapped-model fallback in the web usage-log UI.
-  - Does not add or migrate any database columns.
+- `0012` (retired; no active patch file)
+  - Retired because upstream commit `ed7c4e35d` added structured response-model observation, persistence, and display across the supported protocol paths.
+  - The number is intentionally left unused and will not be reassigned; active patch ordering continues with `0013`.
+  - Legacy `actual_model_name` display compatibility and the prior synthetic usage-frame model fallback are intentionally not retained.
 
 - `0013-add-openai-alpha-search-relay.patch`
   - Extends the upstream `POST /v1/alpha/search` handler to allow ordinary OpenAI channels alongside Sub2API, Codex, and Advanced Custom channels.

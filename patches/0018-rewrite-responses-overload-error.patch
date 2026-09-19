@@ -1,5 +1,5 @@
 diff --git a/relay/channel/openai/relay_responses.go b/relay/channel/openai/relay_responses.go
-index a3e73ac0b..bbf36127d 100644
+index 12f03ca69..78f776512 100644
 --- a/relay/channel/openai/relay_responses.go
 +++ b/relay/channel/openai/relay_responses.go
 @@ -1,6 +1,7 @@
@@ -10,9 +10,9 @@ index a3e73ac0b..bbf36127d 100644
  	"fmt"
  	"io"
  	"net/http"
-@@ -97,6 +98,17 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
- 		if info.ResponseModelName == "" && streamResponse.Response != nil {
- 			info.SetResponseModelName(streamResponse.Response.Model)
+@@ -94,6 +95,17 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+ 		if streamResponse.SequenceNumber != nil {
+ 			lastSequenceNumber = *streamResponse.SequenceNumber
  		}
 +		responseErrorCode := gjson.Get(data, "response.error.code").String()
 +		isServerOverloaded := streamResponse.Type == "response.failed" &&
@@ -28,7 +28,7 @@ index a3e73ac0b..bbf36127d 100644
  		if streamResponse.Response != nil {
  			data = string(rewriteSGLangResponsesCreatedAt(info, []byte(data), "response.created_at", streamResponse.Response.CreatedAt))
  		}
-@@ -107,6 +119,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+@@ -104,6 +116,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
  			sawTerminalEvent = true
  		case "error", "response.error", "response.failed", "response.incomplete", "response.cancelled", "response.canceled":
  			sawErrorEvent = true
