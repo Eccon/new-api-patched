@@ -1,8 +1,8 @@
 diff --git a/web/src/features/usage-logs/components/columns/common-logs-columns.tsx b/web/src/features/usage-logs/components/columns/common-logs-columns.tsx
-index b0f57b2fd..5849a4244 100644
+index fefac4b24..530353805 100644
 --- a/web/src/features/usage-logs/components/columns/common-logs-columns.tsx
 +++ b/web/src/features/usage-logs/components/columns/common-logs-columns.tsx
-@@ -56,6 +56,7 @@ import { LOG_TYPE_ALL_VALUE } from '../../constants'
+@@ -57,6 +57,7 @@ import { LOG_TYPE_ALL_VALUE } from '../../constants'
  import type { UsageLog } from '../../data/schema'
  import {
    formatModelName,
@@ -10,34 +10,34 @@ index b0f57b2fd..5849a4244 100644
    decodeBillingExprB64,
    getTieredBillingSummary,
    hasAnyCacheTokens,
-@@ -700,6 +701,25 @@ export function useCommonLogsColumns(
+@@ -711,6 +712,25 @@ export function useCommonLogsColumns(
+         },
+         meta: { mobileTitle: true },
        },
-       meta: { mobileTitle: true },
-     },
-+    {
-+      id: 'reasoning_effort',
-+      header: t('Reasoning Effort'),
-+      accessorFn: (row) =>
-+        parseLogOther(row.other)?.reasoning_effort?.trim() || '',
-+      cell: ({ row }) => {
-+        const effort = row.getValue('reasoning_effort') as string
-+        if (!effort) return null
++      {
++        id: 'reasoning_effort',
++        header: t('Reasoning Effort'),
++        accessorFn: (row) =>
++          parseLogOther(row.other)?.reasoning_effort?.trim() || '',
++        cell: ({ row }) => {
++          const effort = row.getValue('reasoning_effort') as string
++          if (!effort) return null
 +
-+        return (
-+          <StatusBadge
-+            label={effort}
-+            variant={getReasoningEffortVariant(effort)}
-+          />
-+        )
++          return (
++            <StatusBadge
++              label={effort}
++              variant={getReasoningEffortVariant(effort)}
++            />
++          )
++        },
++        meta: { label: t('Reasoning Effort') },
++        enableSorting: false,
 +      },
-+      meta: { label: t('Reasoning Effort') },
-+      enableSorting: false,
-+    },
-     {
-       accessorKey: 'is_stream',
-       header: t('Stream'),
+       {
+         accessorKey: 'is_stream',
+         header: t('Stream'),
 diff --git a/web/src/features/usage-logs/components/common-log-mobile-card.tsx b/web/src/features/usage-logs/components/common-log-mobile-card.tsx
-index c334d3571..0be74102c 100644
+index 38a81dfb4..d91858db7 100644
 --- a/web/src/features/usage-logs/components/common-log-mobile-card.tsx
 +++ b/web/src/features/usage-logs/components/common-log-mobile-card.tsx
 @@ -32,7 +32,11 @@ import dayjs from '@/lib/dayjs'

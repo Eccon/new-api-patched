@@ -1,8 +1,8 @@
 diff --git a/pkg/perf_metrics/metrics.go b/pkg/perf_metrics/metrics.go
-index 54d4a7d76..cdabe8a5f 100644
+index 07d042ebc..e2586ed0d 100644
 --- a/pkg/perf_metrics/metrics.go
 +++ b/pkg/perf_metrics/metrics.go
-@@ -41,7 +41,7 @@ func RecordRelayResult(ctx context.Context, info *relaycommon.RelayInfo, apiErr
+@@ -42,7 +42,7 @@ func RecordRelayResult(ctx context.Context, info *relaycommon.RelayInfo, apiErr
  	hasTtft := info.IsStream && info.HasSendResponse()
  	ttftMs := int64(0)
  	if hasTtft {
@@ -12,7 +12,7 @@ index 54d4a7d76..cdabe8a5f 100644
  	latencyMs := now.Sub(info.StartTime).Milliseconds()
  	generationMs := latencyMs
 diff --git a/pkg/perf_metrics/metrics_test.go b/pkg/perf_metrics/metrics_test.go
-index 5a77cfcff..83492d996 100644
+index 72395dd74..2124da20a 100644
 --- a/pkg/perf_metrics/metrics_test.go
 +++ b/pkg/perf_metrics/metrics_test.go
 @@ -109,6 +109,38 @@ func TestHourlySuccessSeriesWeightsSmallerBuckets(t *testing.T) {
@@ -51,9 +51,9 @@ index 5a77cfcff..83492d996 100644
 +	require.Equal(t, int64(1), recorded.ttftCount)
 +}
 +
- // TEST_PERF_MYSQL_DSN / TEST_PERF_POSTGRES_DSN optionally run the aggregation
- // against isolated real MySQL/PostgreSQL databases.
- func TestPerformanceAggregationAndFlush(t *testing.T) {
+ // Terminal task sampling: success/failure counts, end-to-end latency, and
+ // token throughput only for successful tasks that report tokens.
+ func TestRecordTaskResultSamplesTerminalTasks(t *testing.T) {
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
 index 1efdc8380..63372dc79 100644
 --- a/relay/channel/api_request.go
@@ -255,7 +255,7 @@ index 70c12968e..90a9d7871 100644
  	info := &RelayInfo{
  		RelayFormat:             types.RelayFormatOpenAI,
 diff --git a/service/log_info_generate.go b/service/log_info_generate.go
-index 8e86debfb..af675f44b 100644
+index ac4e11bb1..070596c87 100644
 --- a/service/log_info_generate.go
 +++ b/service/log_info_generate.go
 @@ -108,7 +108,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
