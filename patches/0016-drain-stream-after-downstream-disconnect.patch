@@ -1,5 +1,5 @@
 diff --git a/controller/relay.go b/controller/relay.go
-index 379d578b7..1f8fa1929 100644
+index ca876c48d..6faa9f7e0 100644
 --- a/controller/relay.go
 +++ b/controller/relay.go
 @@ -214,6 +214,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
@@ -147,7 +147,7 @@ index 2767eb263..b74c58ffa 100644
  	}
  
 diff --git a/relay/channel/openai/chat_via_responses_test.go b/relay/channel/openai/chat_via_responses_test.go
-index 8384c355c..d11327300 100644
+index ab1bfeea5..c77fa6799 100644
 --- a/relay/channel/openai/chat_via_responses_test.go
 +++ b/relay/channel/openai/chat_via_responses_test.go
 @@ -1,6 +1,7 @@
@@ -164,9 +164,9 @@ index 8384c355c..d11327300 100644
  	relaycommon "github.com/QuantumNous/new-api/relay/common"
 +	relayhelper "github.com/QuantumNous/new-api/relay/helper"
  	"github.com/QuantumNous/new-api/relaykit/dto"
+ 	"github.com/QuantumNous/new-api/relaykit/relayconvert"
  	"github.com/QuantumNous/new-api/relaykit/types"
- 	"github.com/gin-gonic/gin"
-@@ -88,6 +90,46 @@ func TestOaiResponsesToChatStreamHandlerConvertsSSEOrderAndUsage(t *testing.T) {
+@@ -90,6 +92,46 @@ func TestOaiResponsesToChatStreamHandlerConvertsSSEOrderAndUsage(t *testing.T) {
  	)
  }
  

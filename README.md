@@ -184,6 +184,7 @@ No Docker image is built.
   - Upgrades `github.com/tiktoken-go/tokenizer` from `v0.6.2` to `v0.8.1` without changing the existing tokenizer call sites or imports.
   - Moves the module to Go 1.26, matching the repository build toolchain required by tokenizer `v0.8.1`.
   - Replaces the tokenizer's legacy `regexp2` dependency with generated-regex `regexp2/v2` and records the tidied module graph.
+  - After upstream commit `2ffc59590115bb99d5252ceaeb3e73f06dfcd1ae` replaced Sobek with moejs and removed `regexp2/v2 v2.2.2`, adds `regexp2/v2 v2.5.1` for tokenizer `v0.8.1` instead of replacing the removed requirement; removes the old tokenizer's `regexp2 v1.11.5` and preserves moejs and unrelated upstream dependencies.
   - Leaves New API's existing `ForModel` selection, unknown-model fallback, token billing flow, and cancellation behavior unchanged.
 
 - `0021-show-reasoning-effort-in-usage-logs.patch`
