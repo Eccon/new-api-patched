@@ -46,10 +46,10 @@ index e52014e26..e13069e05 100644
 +	}
 +}
 diff --git a/relay/channel/openai/relay_responses.go b/relay/channel/openai/relay_responses.go
-index 3ed0b3bed..12f03ca69 100644
+index 0104b1491..4118995c2 100644
 --- a/relay/channel/openai/relay_responses.go
 +++ b/relay/channel/openai/relay_responses.go
-@@ -78,6 +78,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+@@ -76,6 +76,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
  	defer service.CloseResponseBodyGracefully(resp)
  
  	accumulator := service.NewResponsesUsageAccumulator(info)
@@ -59,7 +59,7 @@ index 3ed0b3bed..12f03ca69 100644
  
  	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
  
-@@ -88,12 +91,33 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+@@ -86,12 +89,33 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
  			sr.Error(err)
  			return
  		}
@@ -70,7 +70,7 @@ index 3ed0b3bed..12f03ca69 100644
  			data = string(rewriteSGLangResponsesCreatedAt(info, []byte(data), "response.created_at", streamResponse.Response.CreatedAt))
  		}
  		sendResponsesStreamData(c, streamResponse, data)
- 		accumulator.Observe(&streamResponse)
+ 		accumulator.Observe(&streamResponse, common.StringToByteSlice(data))
 +		switch streamResponse.Type {
 +		case "response.completed", "response.done":
 +			sawTerminalEvent = true
