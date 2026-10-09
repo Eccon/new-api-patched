@@ -180,12 +180,10 @@ No Docker image is built.
   - Falls back to the existing typed marshal behavior for small bodies, unsupported adaptors, incompatible JSON shapes, unknown top-level fields, or changes outside the audited patch set.
   - Preserves disabled-field removal and channel parameter-override ordering, while adding ownership, retry isolation, body-storage, semantic-equivalence, race, and optional captured-corpus coverage.
 
-- `0020-upgrade-tiktoken-tokenizer.patch`
-  - Upgrades `github.com/tiktoken-go/tokenizer` from `v0.6.2` to `v0.8.1` without changing the existing tokenizer call sites or imports.
-  - Moves the module to Go 1.26, matching the repository build toolchain required by tokenizer `v0.8.1`.
-  - Replaces the tokenizer's legacy `regexp2` dependency with generated-regex `regexp2/v2` and records the tidied module graph.
-  - After upstream commit `2ffc59590115bb99d5252ceaeb3e73f06dfcd1ae` replaced Sobek with moejs and removed `regexp2/v2 v2.2.2`, adds `regexp2/v2 v2.5.1` for tokenizer `v0.8.1` instead of replacing the removed requirement; removes the old tokenizer's `regexp2 v1.11.5` and preserves moejs and unrelated upstream dependencies.
-  - Leaves New API's existing `ForModel` selection, unknown-model fallback, token billing flow, and cancellation behavior unchanged.
+- `0020` (retired; no active patch file)
+  - Retired because upstream commit `bb28f2ccad3f6286a9dc4a0ad9e20f571f57533b` absorbed all dependency changes: Go `1.26`, tokenizer `v0.8.1`, `regexp2/v2 v2.5.1`, and the matching `go.sum` entries.
+  - The upstream commit also moved token counting into the independent `tokenkit` module. That broader implementation change is upstream code, not a remaining local patch.
+  - The number is intentionally left unused. Active patch ordering continues with `0021`.
 
 - `0021-show-reasoning-effort-in-usage-logs.patch`
   - Adds a `Reasoning Effort` column immediately to the right of the model column in common usage logs.
