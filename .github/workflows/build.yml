@@ -245,12 +245,14 @@ jobs:
 
             if [[ "$goos" == "linux" && "$goarch" == "amd64" ]]; then
               CGO_ENABLED=1 GOOS="$goos" GOARCH="$goarch" go build \
+                -pgo="$(go list -m -f '{{.Dir}}' github.com/Calcium-Ion/moejs)/default.pgo" \
                 -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=${VERSION}' -extldflags '-static'" \
                 -o "dist/${name}"
               return
             fi
 
             CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build \
+              -pgo="$(go list -m -f '{{.Dir}}' github.com/Calcium-Ion/moejs)/default.pgo" \
               -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=${VERSION}'" \
               -o "dist/${name}"
           }
