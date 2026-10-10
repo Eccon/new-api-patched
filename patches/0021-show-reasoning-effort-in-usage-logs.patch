@@ -1,5 +1,5 @@
 diff --git a/web/src/features/usage-logs/components/columns/common-logs-columns.tsx b/web/src/features/usage-logs/components/columns/common-logs-columns.tsx
-index fefac4b24..530353805 100644
+index 7f8245a7d..4f1a07222 100644
 --- a/web/src/features/usage-logs/components/columns/common-logs-columns.tsx
 +++ b/web/src/features/usage-logs/components/columns/common-logs-columns.tsx
 @@ -57,6 +57,7 @@ import { LOG_TYPE_ALL_VALUE } from '../../constants'
@@ -10,7 +10,7 @@ index fefac4b24..530353805 100644
    decodeBillingExprB64,
    getTieredBillingSummary,
    hasAnyCacheTokens,
-@@ -711,6 +712,25 @@ export function useCommonLogsColumns(
+@@ -713,6 +714,25 @@ export function useCommonLogsColumns(
          },
          meta: { mobileTitle: true },
        },
@@ -37,23 +37,24 @@ index fefac4b24..530353805 100644
          accessorKey: 'is_stream',
          header: t('Stream'),
 diff --git a/web/src/features/usage-logs/components/common-log-mobile-card.tsx b/web/src/features/usage-logs/components/common-log-mobile-card.tsx
-index 38a81dfb4..d91858db7 100644
+index 1e1add762..bfafbe653 100644
 --- a/web/src/features/usage-logs/components/common-log-mobile-card.tsx
 +++ b/web/src/features/usage-logs/components/common-log-mobile-card.tsx
-@@ -32,7 +32,11 @@ import dayjs from '@/lib/dayjs'
+@@ -32,7 +32,12 @@ import dayjs from '@/lib/dayjs'
  import { formatLogQuota, formatTimestampToDate } from '@/lib/format'
  
  import type { UsageLog } from '../data/schema'
--import { formatModelName, parseLogOther } from '../lib/format'
+-import { formatModelName, logTokenName, parseLogOther } from '../lib/format'
 +import {
 +  formatModelName,
 +  getReasoningEffortVariant,
++  logTokenName,
 +  parseLogOther,
 +} from '../lib/format'
  import {
    getLogTypeConfig,
    isDisplayableLogType,
-@@ -145,7 +149,7 @@ export function CommonLogMobileCard<TData>(props: {
+@@ -145,7 +150,7 @@ export function CommonLogMobileCard<TData>(props: {
      <div className='min-w-0 space-y-2.5 text-sm leading-5'>
        <div className='flex min-w-0 flex-wrap items-start gap-x-3 gap-y-2'>
          {fields.model.visible && (
@@ -62,7 +63,7 @@ index 38a81dfb4..d91858db7 100644
              <ModelBadge
                modelName={model.name}
                actualModel={model.actualModel}
-@@ -153,6 +157,14 @@ export function CommonLogMobileCard<TData>(props: {
+@@ -153,6 +158,14 @@ export function CommonLogMobileCard<TData>(props: {
                wrapText
                onInspect={() => setSelectedField('model')}
              />

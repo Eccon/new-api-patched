@@ -1,8 +1,8 @@
 diff --git a/common/constants.go b/common/constants.go
-index 2c7b90995..39223eacd 100644
+index b450c67bb..c7aff5c40 100644
 --- a/common/constants.go
 +++ b/common/constants.go
-@@ -160,6 +160,10 @@ var SyncFrequency int // unit is second
+@@ -168,6 +168,10 @@ var SyncFrequency int // unit is second
  var BatchUpdateEnabled = false
  var BatchUpdateInterval int
  
@@ -14,10 +14,10 @@ index 2c7b90995..39223eacd 100644
  
  var RelayIdleConnTimeout int // unit is second
 diff --git a/common/init.go b/common/init.go
-index b34f4376d..8a33e9d5d 100644
+index 8188102d7..9f7b91856 100644
 --- a/common/init.go
 +++ b/common/init.go
-@@ -118,6 +118,9 @@ func InitEnv() {
+@@ -120,6 +120,9 @@ func InitEnv() {
  	// Initialize string variables with GetEnvOrDefaultString
  	GeminiSafetySetting = GetEnvOrDefaultString("GEMINI_SAFETY_SETTING", "BLOCK_NONE")
  	CohereSafetySetting = GetEnvOrDefaultString("COHERE_SAFETY_SETTING", "NONE")
@@ -28,7 +28,7 @@ index b34f4376d..8a33e9d5d 100644
  	// Initialize rate limit variables
  	GlobalApiRateLimitEnable = GetEnvOrDefaultBool("GLOBAL_API_RATE_LIMIT_ENABLE", true)
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index 7e6f76261..a9942115f 100644
+index 0efdddf11..c8eb93946 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
 @@ -196,6 +196,7 @@ func applyHeaderOverridePlaceholders(template string, c *gin.Context, apiKey str
@@ -57,7 +57,7 @@ index 7e6f76261..a9942115f 100644
  	dialer := *websocket.DefaultDialer
  	if info.ChannelSetting.Proxy != "" {
  		proxyURL, _, proxyErr := common2.ParseProxyURLRuntime(info.ChannelSetting.Proxy)
-@@ -559,6 +564,8 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -560,6 +565,8 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  		}
  	}
  
@@ -65,7 +65,7 @@ index 7e6f76261..a9942115f 100644
 +	logUpstreamUserAgent(c, req)
  	resp, err := relayClient.Do(req)
  	if err != nil {
- 		logger.LogError(c, "do request failed: "+err.Error())
+ 		logger.LogError(c, common2.LogText("do request failed: %s", err.Error()))
 diff --git a/relay/channel/api_request_test.go b/relay/channel/api_request_test.go
 index 1b64ac970..8662c9db1 100644
 --- a/relay/channel/api_request_test.go

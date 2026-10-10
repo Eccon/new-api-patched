@@ -1,8 +1,8 @@
 diff --git a/common/constants.go b/common/constants.go
-index 2964f8ad4f497b1b501973bd2956554fda82a4d7..94c8db7af1ff80a617843a24190490f6d5de6adc 100644
+index e5b434c31..c924f141f 100644
 --- a/common/constants.go
 +++ b/common/constants.go
-@@ -177,6 +177,7 @@ var RelayIdleConnTimeout int // unit is second
+@@ -185,6 +185,7 @@ var RelayIdleConnTimeout int // unit is second
  // ResponseHeaderTimeout only bounds the wait for the response headers; once the
  // headers arrive, streaming is unaffected.
  var RelayResponseHeaderTimeout int // unit is second
@@ -11,10 +11,10 @@ index 2964f8ad4f497b1b501973bd2956554fda82a4d7..94c8db7af1ff80a617843a24190490f6
  var RelayMaxIdleConnsPerHost int
  var RelayDirectNetworkFamily = RelayDirectNetworkFamilyAuto
 diff --git a/common/init.go b/common/init.go
-index 7f9aedcac7be211ad6fbdbeec5a5242e643529de..eecde490cc6d218eaa9313a31d71af821956965d 100644
+index a5589f2fe..59fe443b3 100644
 --- a/common/init.go
 +++ b/common/init.go
-@@ -112,6 +112,7 @@ func InitEnv() {
+@@ -114,6 +114,7 @@ func InitEnv() {
  	RelayTimeout = GetEnvOrDefault("RELAY_TIMEOUT", 0)
  	RelayIdleConnTimeout = GetEnvOrDefault("RELAY_IDLE_CONN_TIMEOUT", 90)
  	RelayResponseHeaderTimeout = GetEnvOrDefault("RELAY_RESPONSE_HEADER_TIMEOUT", 1800)
@@ -23,10 +23,10 @@ index 7f9aedcac7be211ad6fbdbeec5a5242e643529de..eecde490cc6d218eaa9313a31d71af82
  	RelayMaxIdleConnsPerHost = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS_PER_HOST", 100)
  	relayDirectNetworkFamilyRaw := GetEnvOrDefaultString("RELAY_DIRECT_NETWORK_FAMILY", RelayDirectNetworkFamilyAuto)
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index 3f6665696aeb1071f17cad94a7a00521df4acb59..dfc5d574e1edc9ba6832bfefd6902a16a3230646 100644
+index c8eb93946..49824abad 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
-@@ -493,7 +493,7 @@ func keepUpstreamRedirectResponse(_ *http.Request, _ []*http.Request) error {
+@@ -526,7 +526,7 @@ func keepUpstreamRedirectResponse(_ *http.Request, _ []*http.Request) error {
  }
  
  func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
@@ -35,7 +35,7 @@ index 3f6665696aeb1071f17cad94a7a00521df4acb59..dfc5d574e1edc9ba6832bfefd6902a16
  	if err != nil {
  		return nil, fmt.Errorf("new proxy http client failed: %w", err)
  	}
-@@ -538,6 +538,14 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -569,6 +569,14 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  	logUpstreamUserAgent(c, req)
  	resp, err := relayClient.Do(req)
  	if err != nil {
@@ -47,10 +47,10 @@ index 3f6665696aeb1071f17cad94a7a00521df4acb59..dfc5d574e1edc9ba6832bfefd6902a16
 +				types.ErrOptionWithHideErrMsg("upstream error: response header timeout"),
 +			)
 +		}
- 		logger.LogError(c, "do request failed: "+err.Error())
+ 		logger.LogError(c, common2.LogText("do request failed: %s", err.Error()))
  		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
  	}
-@@ -565,6 +573,15 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -594,6 +602,15 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  	return resp, nil
  }
  
@@ -67,7 +67,7 @@ index 3f6665696aeb1071f17cad94a7a00521df4acb59..dfc5d574e1edc9ba6832bfefd6902a16
  	fullRequestURL, err := a.BuildRequestURL(info)
  	if err != nil {
 diff --git a/relay/channel/api_request_test.go b/relay/channel/api_request_test.go
-index 704d746d908fe8b3a0fb585cf3fe6dbfb4398afb..07ea112dff32ff5e5d78cea2b76b639d50ba3e0d 100644
+index 8662c9db1..7721d4580 100644
 --- a/relay/channel/api_request_test.go
 +++ b/relay/channel/api_request_test.go
 @@ -2,6 +2,8 @@ package channel
@@ -79,7 +79,7 @@ index 704d746d908fe8b3a0fb585cf3fe6dbfb4398afb..07ea112dff32ff5e5d78cea2b76b639d
  	"net/http"
  	"net/http/httptest"
  	"testing"
-@@ -324,3 +326,24 @@ func TestConfiguredUpstreamUserAgentOpenAIFormats(t *testing.T) {
+@@ -336,3 +338,24 @@ func TestConfiguredUpstreamUserAgentOpenAIFormats(t *testing.T) {
  		})
  	}
  }
@@ -105,7 +105,7 @@ index 704d746d908fe8b3a0fb585cf3fe6dbfb4398afb..07ea112dff32ff5e5d78cea2b76b639d
 +	}
 +}
 diff --git a/relay/channel/aws/relay-aws.go b/relay/channel/aws/relay-aws.go
-index c4751b5af855520f4008e3ab67789c573784e8d2..346262fff43874914d7c4645aadf6b75bd445e68 100644
+index cfded9af4..debfec70a 100644
 --- a/relay/channel/aws/relay-aws.go
 +++ b/relay/channel/aws/relay-aws.go
 @@ -23,6 +23,7 @@ import (
@@ -174,7 +174,7 @@ index c4751b5af855520f4008e3ab67789c573784e8d2..346262fff43874914d7c4645aadf6b75
  	default:
  		return nil, errors.New("invalid aws secret key")
 diff --git a/relay/channel/aws/relay_aws_test.go b/relay/channel/aws/relay_aws_test.go
-index 5f92566984ffd579531eb34323a3169fbd380044..d30809780a95c065c44e7dc17424cf8a43fc937d 100644
+index 5f9256698..d30809780 100644
 --- a/relay/channel/aws/relay_aws_test.go
 +++ b/relay/channel/aws/relay_aws_test.go
 @@ -15,16 +15,68 @@ import (
@@ -291,10 +291,10 @@ index 5f92566984ffd579531eb34323a3169fbd380044..d30809780a95c065c44e7dc17424cf8a
  	t.Parallel()
  
 diff --git a/service/http_client.go b/service/http_client.go
-index ff1135d04f4247b0ffb05dbcb501f665a659a805..d6156fb1d2abba002b2c10e8f69b53c49d95ebdd 100644
+index eaed751f0..a90558b14 100644
 --- a/service/http_client.go
 +++ b/service/http_client.go
-@@ -433,6 +433,40 @@ func GetHttpClientWithProxySettings(rawProxyURL string, settings dto.ChannelSett
+@@ -436,6 +436,40 @@ func GetHttpClientWithProxySettings(rawProxyURL string, settings dto.ChannelSett
  	})
  }
  
@@ -336,7 +336,7 @@ index ff1135d04f4247b0ffb05dbcb501f665a659a805..d6156fb1d2abba002b2c10e8f69b53c4
  	defaultPolicy := defaultHTTPTransportPolicy()
  	if policy == defaultPolicy {
 diff --git a/service/http_client_transport_test.go b/service/http_client_transport_test.go
-index 56989bba53f2e8e519b8754baa07afce5a0e76b3..8e9a000ebdeac26ddf39413de27d2e753e285246 100644
+index b390bb2a5..00e3b47a8 100644
 --- a/service/http_client_transport_test.go
 +++ b/service/http_client_transport_test.go
 @@ -15,6 +15,7 @@ import (
@@ -347,8 +347,8 @@ index 56989bba53f2e8e519b8754baa07afce5a0e76b3..8e9a000ebdeac26ddf39413de27d2e75
  
  	"github.com/QuantumNous/new-api/common"
  	"github.com/QuantumNous/new-api/relaykit/dto"
-@@ -474,6 +475,67 @@ func TestHTTPClientCachePolicyAndCompatibility(t *testing.T) {
- 	assert.NotSame(t, clientA, proxyHTTP1)
+@@ -543,6 +544,67 @@ func TestChannelTLSInsecureSkipVerifyAcceptsUntrustedUpstream(t *testing.T) {
+ 	}
  }
  
 +func TestRelayHTTPClientTimeoutSelection(t *testing.T) {

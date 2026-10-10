@@ -1,10 +1,10 @@
 diff --git a/controller/relay.go b/controller/relay.go
-index ca876c48d..6faa9f7e0 100644
+index 0ef9d4289..682598f91 100644
 --- a/controller/relay.go
 +++ b/controller/relay.go
-@@ -214,6 +214,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+@@ -215,6 +215,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
  			service.RecordRequestPolicyTermination(c, newAPIError)
- 			logger.LogError(c, fmt.Sprintf("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
+ 			logger.LogError(c, common.LogText("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
  			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
 +			if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
 +				return
@@ -15,7 +15,7 @@ index ca876c48d..6faa9f7e0 100644
  			switch relayFormat {
  			case types.RelayFormatOpenAIRealtime:
  				helper.WssError(c, ws, newAPIError.ToOpenAIError())
-@@ -351,13 +357,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+@@ -352,13 +358,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
  		newAPIError = service.NormalizeViolationFeeError(newAPIError)
  		relayInfo.LastError = newAPIError
  
@@ -31,7 +31,7 @@ index ca876c48d..6faa9f7e0 100644
  	}
  
  	useChannel := c.GetStringSlice("use_channel")
-@@ -440,6 +447,13 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
+@@ -441,6 +448,13 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
  	return channel, nil
  }
  
@@ -133,10 +133,10 @@ index 000000000..2d7488f8d
 +	assert.Zero(t, writer.writes.Load())
 +}
 diff --git a/relay/channel/openai/chat_via_responses.go b/relay/channel/openai/chat_via_responses.go
-index 2767eb263..b74c58ffa 100644
+index be8dcc913..0205fd4d7 100644
 --- a/relay/channel/openai/chat_via_responses.go
 +++ b/relay/channel/openai/chat_via_responses.go
-@@ -201,8 +201,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
+@@ -217,8 +217,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
  			streamErr = types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
  			return false
  		}
@@ -214,11 +214,11 @@ index ab1bfeea5..c77fa6799 100644
  	oldMode := gin.Mode()
  	gin.SetMode(gin.TestMode)
 diff --git a/relay/channel/openai/helper.go b/relay/channel/openai/helper.go
-index e13069e05..d70d6d95e 100644
+index 4911d6b69..445e8f7e2 100644
 --- a/relay/channel/openai/helper.go
 +++ b/relay/channel/openai/helper.go
 @@ -114,8 +114,9 @@ func sendGeminiStreamResults(c *gin.Context, results []relayconvert.ResponseResu
- 			logger.LogError(c, "failed to marshal gemini response: "+err.Error())
+ 			logger.LogError(c, common.LogText("failed to marshal gemini response: %s", err.Error()))
  			return err
  		}
 -		c.Render(-1, common.CustomEvent{Data: "data: " + string(data)})
@@ -445,7 +445,7 @@ index 92313e201..ebcb0b51d 100644
  
  // TestOpenaiImageStreamHandlerWrapsJSONResponse covers the non-SSE fallback:
 diff --git a/relay/channel/openai/relay_image.go b/relay/channel/openai/relay_image.go
-index d17ab08b4..cb3eff819 100644
+index 3ef47c801..3e25232d5 100644
 --- a/relay/channel/openai/relay_image.go
 +++ b/relay/channel/openai/relay_image.go
 @@ -176,13 +176,10 @@ func OpenaiImageStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
@@ -467,7 +467,7 @@ index d17ab08b4..cb3eff819 100644
  		upstreamFinished := info.StreamStatus.EndReason == relaycommon.StreamEndReasonDone ||
  			info.StreamStatus.EndReason == relaycommon.StreamEndReasonEOF
 diff --git a/relay/helper/common.go b/relay/helper/common.go
-index 6a37a3c23..6afe78217 100644
+index 24dd89770..b503d20e4 100644
 --- a/relay/helper/common.go
 +++ b/relay/helper/common.go
 @@ -25,9 +25,25 @@ func FlushWriter(c *gin.Context) (err error) {
@@ -512,7 +512,7 @@ index 6a37a3c23..6afe78217 100644
  
 @@ -67,30 +89,57 @@ func ClaudeData(c *gin.Context, resp dto.ClaudeResponse) error {
  	if err != nil {
- 		common.SysError("error marshalling stream response: " + err.Error())
+ 		common.SysError(common.LogText("error marshalling stream response: %s", err.Error()))
  	} else {
 -		c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
 -		c.Render(-1, common.CustomEvent{Data: "data: " + string(jsonData)})
@@ -818,7 +818,7 @@ index 000000000..c42bc4b21
 +	return true
 +}
 diff --git a/relay/helper/stream_scanner.go b/relay/helper/stream_scanner.go
-index d5f5379f4..c513e09f4 100644
+index 1702f957a..a344ce159 100644
 --- a/relay/helper/stream_scanner.go
 +++ b/relay/helper/stream_scanner.go
 @@ -131,6 +131,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
@@ -852,7 +852,7 @@ index d5f5379f4..c513e09f4 100644
 +						return
 +					}
  					if err != nil {
- 						logger.LogError(c, "ping data error: "+err.Error())
+ 						logger.LogError(c, common.LogText("ping data error: %s", err.Error()))
 -						info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonPingFail, err)
  						return
  					}
@@ -907,7 +907,7 @@ index d5f5379f4..c513e09f4 100644
 +		markStreamDeliveryDisconnected(c)
 +	}
  	if info.StreamStatus.IsNormalEnd() && !info.StreamStatus.HasErrors() {
- 		logger.LogInfo(c, fmt.Sprintf("stream ended: %s", info.StreamStatus.Summary()))
+ 		logger.LogInfo(c, common.LogText("stream ended: %s", info.StreamStatus.Summary()))
  	} else {
 diff --git a/relay/helper/stream_scanner_test.go b/relay/helper/stream_scanner_test.go
 index b9823ba3e..8ea3b58f1 100644

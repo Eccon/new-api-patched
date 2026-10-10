@@ -1,8 +1,9 @@
 diff --git a/common/constants.go b/common/constants.go
-index bd2fd17693db3636553b3199b795927b83a393a6..0909016b776d8c35ee9a5b45cbb6a094f6fe73d1 100644
+index c7aff5c40..e5b434c31 100644
 --- a/common/constants.go
 +++ b/common/constants.go
-@@ -180,4 +180,11 @@ var RelayMaxIdleConns int
+@@ -187,6 +187,13 @@ var RelayIdleConnTimeout int // unit is second
+ var RelayResponseHeaderTimeout int // unit is second
  var RelayMaxIdleConns int
  var RelayMaxIdleConnsPerHost int
 +var RelayDirectNetworkFamily = RelayDirectNetworkFamilyAuto
@@ -16,11 +17,10 @@ index bd2fd17693db3636553b3199b795927b83a393a6..0909016b776d8c35ee9a5b45cbb6a094
  var GeminiSafetySetting string
  
 diff --git a/common/init.go b/common/init.go
-index 0c505368d271772d782251281584f9d834bc1c85..11df7a183166c443f696b21602a305bf2db0fc90 100644
+index 9f7b91856..a5589f2fe 100644
 --- a/common/init.go
 +++ b/common/init.go
-@@ -113,7 +113,17 @@ func InitEnv() {
- 	RelayIdleConnTimeout = GetEnvOrDefault("RELAY_IDLE_CONN_TIMEOUT", 90)
+@@ -116,6 +116,16 @@ func InitEnv() {
  	RelayResponseHeaderTimeout = GetEnvOrDefault("RELAY_RESPONSE_HEADER_TIMEOUT", 1800)
  	RelayMaxIdleConns = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS", 500)
  	RelayMaxIdleConnsPerHost = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS_PER_HOST", 100)
@@ -37,7 +37,7 @@ index 0c505368d271772d782251281584f9d834bc1c85..11df7a183166c443f696b21602a305bf
  
  	// Initialize string variables with GetEnvOrDefaultString
  	GeminiSafetySetting = GetEnvOrDefaultString("GEMINI_SAFETY_SETTING", "BLOCK_NONE")
-@@ -139,6 +149,20 @@ func InitEnv() {
+@@ -147,6 +157,20 @@ func InitEnv() {
  	initConstantEnv()
  }
  
@@ -60,7 +60,7 @@ index 0c505368d271772d782251281584f9d834bc1c85..11df7a183166c443f696b21602a305bf
  	UserSessionIssuanceLimit = positiveUserSessionEnv("USER_SESSION_ISSUANCE_LIMIT", DefaultUserSessionIssuanceLimit)
 diff --git a/common/relay_network_family_test.go b/common/relay_network_family_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..856a5b52cf6906effeff75fc34c1d7855dd818f1
+index 000000000..856a5b52c
 --- /dev/null
 +++ b/common/relay_network_family_test.go
 @@ -0,0 +1,28 @@
@@ -93,10 +93,10 @@ index 0000000000000000000000000000000000000000..856a5b52cf6906effeff75fc34c1d785
 +	}
 +}
 diff --git a/service/http_client.go b/service/http_client.go
-index f5c19eafedc80ec2b9995c0a97a4364080ac9483..169dc63a9f9cf04d2aaac245c775581c0fa512bb 100644
+index 5f50863c4..eaed751f0 100644
 --- a/service/http_client.go
 +++ b/service/http_client.go
-@@ -287,6 +287,27 @@ func configureProxyTransport(transport *http.Transport, proxyURL *url.URL) error
+@@ -310,6 +310,27 @@ func configureProxyTransport(transport *http.Transport, proxyURL *url.URL) error
  	}
  }
  
@@ -124,7 +124,7 @@ index f5c19eafedc80ec2b9995c0a97a4364080ac9483..169dc63a9f9cf04d2aaac245c775581c
  func newTransportFactory(proxyURL *url.URL, tlsConfig *tls.Config) (func() *http.Transport, error) {
  	// Validate proxy configuration once before creating shard transports.
  	if proxyURL != nil {
-@@ -301,6 +322,7 @@ func newTransportFactory(proxyURL *url.URL, tlsConfig *tls.Config) (func() *http
+@@ -324,6 +345,7 @@ func newTransportFactory(proxyURL *url.URL, tlsConfig *tls.Config) (func() *http
  			_ = configureProxyTransport(transport, proxyURL)
  		} else {
  			transport.Proxy = http.ProxyFromEnvironment
@@ -133,10 +133,10 @@ index f5c19eafedc80ec2b9995c0a97a4364080ac9483..169dc63a9f9cf04d2aaac245c775581c
  		if tlsConfig != nil {
  			transport.TLSClientConfig = tlsConfig.Clone()
 diff --git a/service/http_client_transport_test.go b/service/http_client_transport_test.go
-index b2f83a1a0270b7db70b934c23364c66f2f2f1256..56989bba53f2e8e519b8754baa07afce5a0e76b3 100644
+index d274c56a4..b390bb2a5 100644
 --- a/service/http_client_transport_test.go
 +++ b/service/http_client_transport_test.go
-@@ -1,13 +1,17 @@
+@@ -1,14 +1,17 @@
  package service
  
  import (
@@ -147,14 +147,14 @@ index b2f83a1a0270b7db70b934c23364c66f2f2f1256..56989bba53f2e8e519b8754baa07afce
 +	"errors"
  	"fmt"
  	"io"
-+	"net"
+ 	"net"
  	"net/http"
  	"net/http/httptest"
 +	"net/url"
  	"sync"
  	"sync/atomic"
  	"testing"
-@@ -46,6 +50,177 @@ func initDefaultHTTPClientFixture(t *testing.T) *http.Client {
+@@ -47,6 +50,177 @@ func initDefaultHTTPClientFixture(t *testing.T) *http.Client {
  	return httpClient
  }
  

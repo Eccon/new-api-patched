@@ -1,16 +1,16 @@
 diff --git a/controller/log.go b/controller/log.go
-index ce9b4666fa5e7c376f3a74f4a48fd576dbe8ef1c..9dba0349e31bccbf7702b3ce9cea84d0f88881a9 100644
+index a575f1b96..50c02dc7f 100644
 --- a/controller/log.go
 +++ b/controller/log.go
-@@ -5,6 +5,7 @@ import (
- 	"strconv"
+@@ -6,6 +6,7 @@ import (
  
  	"github.com/QuantumNous/new-api/common"
+ 	"github.com/QuantumNous/new-api/i18n"
 +	"github.com/QuantumNous/new-api/middleware"
  	"github.com/QuantumNous/new-api/model"
  
  	"github.com/gin-gonic/gin"
-@@ -114,9 +115,10 @@ func GetLogsStat(c *gin.Context) {
+@@ -111,9 +112,10 @@ func GetLogsStat(c *gin.Context) {
  		"success": true,
  		"message": "",
  		"data": gin.H{
@@ -25,10 +25,10 @@ index ce9b4666fa5e7c376f3a74f4a48fd576dbe8ef1c..9dba0349e31bccbf7702b3ce9cea84d0
  	})
  	return
 diff --git a/web/src/features/usage-logs/components/common-logs-stats.tsx b/web/src/features/usage-logs/components/common-logs-stats.tsx
-index dd754e227acba7204f3d74a9831af25115e9c72b..874c3d5285f8da4e20834aff66421e335cfaa43a 100644
+index 91b82af7d..cccb5a359 100644
 --- a/web/src/features/usage-logs/components/common-logs-stats.tsx
 +++ b/web/src/features/usage-logs/components/common-logs-stats.tsx
-@@ -73,6 +73,7 @@ export function CommonLogsStats() {
+@@ -74,6 +74,7 @@ export function CommonLogsStats() {
          : DEFAULT_LOG_STATS
      },
      placeholderData: (previousData) => previousData,
@@ -36,7 +36,7 @@ index dd754e227acba7204f3d74a9831af25115e9c72b..874c3d5285f8da4e20834aff66421e33
    })
  
    if (isLoading) {
-@@ -92,6 +93,13 @@ export function CommonLogsStats() {
+@@ -93,6 +94,13 @@ export function CommonLogsStats() {
          value={sensitiveVisible ? formatLogQuota(stats?.quota || 0) : '••••'}
          accent='bg-sky-500/70'
        />
@@ -51,7 +51,7 @@ index dd754e227acba7204f3d74a9831af25115e9c72b..874c3d5285f8da4e20834aff66421e33
          label={t('RPM')}
          value={stats?.rpm || 0}
 diff --git a/web/src/features/usage-logs/constants.ts b/web/src/features/usage-logs/constants.ts
-index 26255250ed5201304058e9a04ed6c9fa37ea6d20..08c5c817b71458e9218eeb6ddcc9f4a14ed2429e 100644
+index 95f2647ce..3a4997e5d 100644
 --- a/web/src/features/usage-logs/constants.ts
 +++ b/web/src/features/usage-logs/constants.ts
 @@ -33,6 +33,7 @@ import type { LogStatistics, LogCategory } from './types'
@@ -63,10 +63,10 @@ index 26255250ed5201304058e9a04ed6c9fa37ea6d20..08c5c817b71458e9218eeb6ddcc9f4a1
  }
  
 diff --git a/web/src/features/usage-logs/lib/utils.ts b/web/src/features/usage-logs/lib/utils.ts
-index 22a648f87f1b0f86be6c7b612a701112300dc455..a9c2a9c2e8de40866db3494b3a255beda56d9787 100644
+index 53c316447..242445b5b 100644
 --- a/web/src/features/usage-logs/lib/utils.ts
 +++ b/web/src/features/usage-logs/lib/utils.ts
-@@ -73,13 +73,14 @@ export function isPerCallBilling(modelPrice?: number): boolean {
+@@ -75,13 +75,14 @@ export function isPerCallBilling(modelPrice?: number): boolean {
  }
  
  /**
@@ -84,10 +84,10 @@ index 22a648f87f1b0f86be6c7b612a701112300dc455..a9c2a9c2e8de40866db3494b3a255bed
    return { start, end }
  }
 diff --git a/web/src/features/usage-logs/types.ts b/web/src/features/usage-logs/types.ts
-index 7f96adef9b941826baa0e5686da845bbf040e801..7640261644627000927307710c2d83232946a238 100644
+index 56647745d..0b82ade1b 100644
 --- a/web/src/features/usage-logs/types.ts
 +++ b/web/src/features/usage-logs/types.ts
-@@ -227,6 +227,7 @@ export interface LogOtherData {
+@@ -285,6 +285,7 @@ export interface LogOtherData {
  export interface LogStatistics {
    quota: number
    rpm: number
