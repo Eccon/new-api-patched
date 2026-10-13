@@ -1,5 +1,5 @@
 diff --git a/controller/log.go b/controller/log.go
-index a575f1b96..50c02dc7f 100644
+index 4df6fc19f..a347ff4ac 100644
 --- a/controller/log.go
 +++ b/controller/log.go
 @@ -6,6 +6,7 @@ import (
@@ -8,9 +8,9 @@ index a575f1b96..50c02dc7f 100644
  	"github.com/QuantumNous/new-api/i18n"
 +	"github.com/QuantumNous/new-api/middleware"
  	"github.com/QuantumNous/new-api/model"
- 
- 	"github.com/gin-gonic/gin"
-@@ -111,9 +112,10 @@ func GetLogsStat(c *gin.Context) {
+ 	"github.com/QuantumNous/new-api/service"
+ 	"github.com/QuantumNous/new-api/setting/operation_setting"
+@@ -219,9 +220,10 @@ func GetLogsStat(c *gin.Context) {
  		"success": true,
  		"message": "",
  		"data": gin.H{

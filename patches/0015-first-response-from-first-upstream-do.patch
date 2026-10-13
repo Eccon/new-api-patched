@@ -1,8 +1,8 @@
 diff --git a/pkg/perf_metrics/metrics.go b/pkg/perf_metrics/metrics.go
-index 07d042ebc..e2586ed0d 100644
+index cf6af6d7d..44a7d1e47 100644
 --- a/pkg/perf_metrics/metrics.go
 +++ b/pkg/perf_metrics/metrics.go
-@@ -42,7 +42,7 @@ func RecordRelayResult(ctx context.Context, info *relaycommon.RelayInfo, apiErr
+@@ -47,7 +47,7 @@ func RecordRelayResult(ctx context.Context, info *relaycommon.RelayInfo, apiErr
  	hasTtft := info.IsStream && info.HasSendResponse()
  	ttftMs := int64(0)
  	if hasTtft {
@@ -12,7 +12,7 @@ index 07d042ebc..e2586ed0d 100644
  	latencyMs := now.Sub(info.StartTime).Milliseconds()
  	generationMs := latencyMs
 diff --git a/pkg/perf_metrics/metrics_test.go b/pkg/perf_metrics/metrics_test.go
-index 72395dd74..2124da20a 100644
+index b4ac25a4e..33d1ee5c3 100644
 --- a/pkg/perf_metrics/metrics_test.go
 +++ b/pkg/perf_metrics/metrics_test.go
 @@ -109,6 +109,38 @@ func TestHourlySuccessSeriesWeightsSmallerBuckets(t *testing.T) {
@@ -51,11 +51,11 @@ index 72395dd74..2124da20a 100644
 +	require.Equal(t, int64(1), recorded.ttftCount)
 +}
 +
- // Terminal task sampling: success/failure counts, end-to-end latency, and
- // token throughput only for successful tasks that report tokens.
- func TestRecordTaskResultSamplesTerminalTasks(t *testing.T) {
+ func TestRecentHistoryRejectsOversizedModelLists(t *testing.T) {
+ 	_, err := QuerySummaryAll(24, nil, make([]string, 51)...)
+ 	require.EqualError(t, err, "Invalid parameters")
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index 1efdc8380..63372dc79 100644
+index 707267d62..3f07bd7ec 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
 @@ -404,6 +404,7 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
@@ -66,7 +66,7 @@ index 1efdc8380..63372dc79 100644
  	dialer := *websocket.DefaultDialer
  	if info.ChannelSetting.Proxy != "" {
  		proxyURL, _, proxyErr := common2.ParseProxyURLRuntime(info.ChannelSetting.Proxy)
-@@ -718,6 +719,7 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -719,6 +720,7 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  		info.Timing.SetAttemptSnapshot(requestTrace.snapshot)
  		req = req.WithContext(httptrace.WithClientTrace(req.Context(), requestTrace.clientTrace()))
  	}
@@ -138,7 +138,7 @@ index d16023aaa..a80c19634 100644
  	var logs synchronizedLogBuffer
  	common.LogWriterMu.Lock()
 diff --git a/relay/channel/aws/relay-aws.go b/relay/channel/aws/relay-aws.go
-index 80c89b696..33e4ed6c0 100644
+index debfec70a..4498fdc0b 100644
 --- a/relay/channel/aws/relay-aws.go
 +++ b/relay/channel/aws/relay-aws.go
 @@ -286,6 +286,7 @@ func awsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (
@@ -174,10 +174,10 @@ index 2f8112f48..661addb9d 100644
  		usage, err = xunfeiStreamHandler(c, *a.request, splits[0], splits[1], splits[2])
  	} else {
 diff --git a/relay/common/relay_info.go b/relay/common/relay_info.go
-index e7029fbd6..805175336 100644
+index 2b500653f..bb46cbf40 100644
 --- a/relay/common/relay_info.go
 +++ b/relay/common/relay_info.go
-@@ -185,6 +185,7 @@ type RelayInfo struct {
+@@ -184,6 +184,7 @@ type RelayInfo struct {
  	UserGroup         string // 用户所在分组
  	TokenUnlimited    bool
  	StartTime         time.Time
@@ -185,7 +185,7 @@ index e7029fbd6..805175336 100644
  	FirstResponseTime time.Time
  	isFirstResponse   bool
  	//SendLastReasoningResponse bool
-@@ -1059,6 +1060,23 @@ func (info *RelayInfo) SetFirstResponseTimeAt(t time.Time) {
+@@ -1094,6 +1095,23 @@ func (info *RelayInfo) SetFirstResponseTimeAt(t time.Time) {
  	}
  }
  
@@ -210,7 +210,7 @@ index e7029fbd6..805175336 100644
  	return info.FirstResponseTime.After(info.StartTime)
  }
 diff --git a/relay/common/relay_info_test.go b/relay/common/relay_info_test.go
-index 70c12968e..90a9d7871 100644
+index cbfa396e7..d3f439862 100644
 --- a/relay/common/relay_info_test.go
 +++ b/relay/common/relay_info_test.go
 @@ -5,6 +5,7 @@ import (
@@ -255,10 +255,10 @@ index 70c12968e..90a9d7871 100644
  	info := &RelayInfo{
  		RelayFormat:             types.RelayFormatOpenAI,
 diff --git a/service/log_info_generate.go b/service/log_info_generate.go
-index ac4e11bb1..070596c87 100644
+index bda3e6120..167cc341c 100644
 --- a/service/log_info_generate.go
 +++ b/service/log_info_generate.go
-@@ -108,7 +108,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
+@@ -107,7 +107,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
  	other.SetPublic("cache_ratio", cacheRatio)
  	other.SetPublic("model_price", modelPrice)
  	other.SetPublic("user_group_ratio", userGroupRatio)
