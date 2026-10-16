@@ -55,10 +55,10 @@ index b4ac25a4e..33d1ee5c3 100644
  	_, err := QuerySummaryAll(24, nil, make([]string, 51)...)
  	require.EqualError(t, err, "Invalid parameters")
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index 707267d62..3f07bd7ec 100644
+index 369cc148e..08ced52ba 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
-@@ -404,6 +404,7 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
+@@ -409,6 +409,7 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
  	targetReq := &http.Request{Header: targetHeader}
  	applyDefaultUpstreamUserAgent(c, targetReq, info)
  	logUpstreamUserAgent(c, targetReq)
@@ -66,7 +66,7 @@ index 707267d62..3f07bd7ec 100644
  	dialer := *websocket.DefaultDialer
  	if info.ChannelSetting.Proxy != "" {
  		proxyURL, _, proxyErr := common2.ParseProxyURLRuntime(info.ChannelSetting.Proxy)
-@@ -719,6 +720,7 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -725,6 +726,7 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  		info.Timing.SetAttemptSnapshot(requestTrace.snapshot)
  		req = req.WithContext(httptrace.WithClientTrace(req.Context(), requestTrace.clientTrace()))
  	}
@@ -75,7 +75,7 @@ index 707267d62..3f07bd7ec 100644
  	if requestTrace != nil {
  		attempt, writeSeq := requestTrace.finish(resp)
 diff --git a/relay/channel/api_request_test.go b/relay/channel/api_request_test.go
-index d16023aaa..a80c19634 100644
+index 6bdf80c54..31e323092 100644
 --- a/relay/channel/api_request_test.go
 +++ b/relay/channel/api_request_test.go
 @@ -12,6 +12,7 @@ import (
@@ -85,8 +85,8 @@ index d16023aaa..a80c19634 100644
 +	"time"
  
  	"github.com/QuantumNous/new-api/common"
- 	relaycommon "github.com/QuantumNous/new-api/relay/common"
-@@ -442,6 +443,50 @@ func TestDoRequestLogsRequestWriteAndResponseHeaders(t *testing.T) {
+ 	"github.com/QuantumNous/new-api/constant"
+@@ -443,6 +444,50 @@ func TestDoRequestLogsRequestWriteAndResponseHeaders(t *testing.T) {
  	require.GreaterOrEqual(t, responseHeadersAt, 0)
  }
  
@@ -134,9 +134,9 @@ index d16023aaa..a80c19634 100644
 +	require.Equal(t, firstDo, info.FirstResponseStartTime())
 +}
 +
- func TestRelayHTTPTraceCapturesLateWriteErrorWithoutSuccessLog(t *testing.T) {
- 	var logs synchronizedLogBuffer
- 	common.LogWriterMu.Lock()
+ func TestRelayFailedAttemptTimingMasksConfiguredUpstreamAddresses(t *testing.T) {
+ 	previousTimingLogEnabled := common.RelayTimingLogEnabled
+ 	common.RelayTimingLogEnabled = true
 diff --git a/relay/channel/aws/relay-aws.go b/relay/channel/aws/relay-aws.go
 index debfec70a..4498fdc0b 100644
 --- a/relay/channel/aws/relay-aws.go

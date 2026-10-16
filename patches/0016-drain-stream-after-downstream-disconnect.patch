@@ -1,11 +1,11 @@
 diff --git a/controller/relay.go b/controller/relay.go
-index 0ef9d4289..682598f91 100644
+index ee74d0613..3b36047b0 100644
 --- a/controller/relay.go
 +++ b/controller/relay.go
-@@ -215,6 +215,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
- 			service.RecordRequestPolicyTermination(c, newAPIError)
+@@ -216,6 +216,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
  			logger.LogError(c, common.LogText("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
  			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
+ 			upstreamURLs := common.UpstreamAddresses(c)
 +			if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
 +				return
 +			}
@@ -14,8 +14,8 @@ index 0ef9d4289..682598f91 100644
 +			}
  			switch relayFormat {
  			case types.RelayFormatOpenAIRealtime:
- 				helper.WssError(c, ws, newAPIError.ToOpenAIError())
-@@ -352,13 +358,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+ 				helper.WssError(c, ws, newAPIError.ToOpenAIError(upstreamURLs...))
+@@ -353,13 +359,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
  		newAPIError = service.NormalizeViolationFeeError(newAPIError)
  		relayInfo.LastError = newAPIError
  
@@ -31,7 +31,7 @@ index 0ef9d4289..682598f91 100644
  	}
  
  	useChannel := c.GetStringSlice("use_channel")
-@@ -441,6 +448,13 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
+@@ -442,6 +449,13 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
  	return channel, nil
  }
  
@@ -133,7 +133,7 @@ index 000000000..2d7488f8d
 +	assert.Zero(t, writer.writes.Load())
 +}
 diff --git a/relay/channel/openai/chat_via_responses.go b/relay/channel/openai/chat_via_responses.go
-index be8dcc913..0205fd4d7 100644
+index 34d6dd658..edd2b2656 100644
 --- a/relay/channel/openai/chat_via_responses.go
 +++ b/relay/channel/openai/chat_via_responses.go
 @@ -217,8 +217,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo

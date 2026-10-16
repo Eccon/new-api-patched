@@ -28,10 +28,10 @@ index 8188102d7..9f7b91856 100644
  	// Initialize rate limit variables
  	GlobalApiRateLimitEnable = GetEnvOrDefaultBool("GLOBAL_API_RATE_LIMIT_ENABLE", true)
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index 0efdddf11..c8eb93946 100644
+index ae72b034c..fc4abefdb 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
-@@ -196,6 +196,7 @@ func applyHeaderOverridePlaceholders(template string, c *gin.Context, apiKey str
+@@ -198,6 +198,7 @@ func applyHeaderOverridePlaceholders(template string, c *gin.Context, apiKey str
  func processHeaderOverride(info *common.RelayInfo, c *gin.Context) (map[string]string, error) {
  	headerOverride := make(map[string]string)
  	if info == nil {
@@ -39,7 +39,7 @@ index 0efdddf11..c8eb93946 100644
  		return headerOverride, nil
  	}
  
-@@ -290,6 +291,7 @@ func processHeaderOverride(info *common.RelayInfo, c *gin.Context) (map[string]s
+@@ -292,6 +293,7 @@ func processHeaderOverride(info *common.RelayInfo, c *gin.Context) (map[string]s
  
  		headerOverride[key] = value
  	}
@@ -47,7 +47,7 @@ index 0efdddf11..c8eb93946 100644
  	return headerOverride, nil
  }
  
-@@ -397,6 +399,9 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
+@@ -402,6 +404,9 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
  		targetHeader.Set(key, value)
  	}
  	targetHeader.Set("Content-Type", c.Request.Header.Get("Content-Type"))
@@ -57,10 +57,10 @@ index 0efdddf11..c8eb93946 100644
  	dialer := *websocket.DefaultDialer
  	if info.ChannelSetting.Proxy != "" {
  		proxyURL, _, proxyErr := common2.ParseProxyURLRuntime(info.ChannelSetting.Proxy)
-@@ -560,6 +565,8 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
- 		}
+@@ -566,6 +571,8 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  	}
  
+ 	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestOrigin, req.URL.Scheme+"://"+req.URL.Host)
 +	applyDefaultUpstreamUserAgent(c, req, info)
 +	logUpstreamUserAgent(c, req)
  	resp, err := relayClient.Do(req)
