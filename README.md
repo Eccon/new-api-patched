@@ -131,7 +131,9 @@ No Docker image is built.
   - Logs failed upstream attempt timing before relay retry overwrites the final attempt timing.
   - Logs timing fields, event kind, line length, path, client IP, model/channel/status, connection reuse data, and upstream write error text when present.
   - Covers requests sent through the shared relay `doRequest` path; SDK-managed and channel-specific auxiliary HTTP clients are outside these two transport event logs.
-  - Does not log request bodies, response bodies, Authorization values, API keys, headers, or raw query strings; URL-like error text is masked before logging.
+  - Does not log request bodies, response bodies, Authorization values, API keys, headers, or raw query strings.
+  - Passes the request's upstream addresses to the upstream masking helper before logging error text. Custom upstream and proxy addresses are masked; preset official endpoints and unrelated URLs remain readable. IP addresses, URL query values, URL userinfo, and `api_key` values remain masked.
+  - Adapts the three error-text masking calls to upstream commit `19d435e7fdfdaa2b9a734a76393f112cf980b815`; this refresh includes masking behavior changes as well as context updates.
 
 - `0012` (retired; no active patch file)
   - Retired because upstream commit `ed7c4e35d` added structured response-model observation, persistence, and display across the supported protocol paths.

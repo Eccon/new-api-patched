@@ -12,10 +12,10 @@ index c924f141f..fda6901c4 100644
  var RelayMaxIdleConnsPerHost int
  var RelayDirectNetworkFamily = RelayDirectNetworkFamilyAuto
 diff --git a/common/gin.go b/common/gin.go
-index 3a351cd6f..4c4cd5b90 100644
+index de692e1ef..b08c28c60 100644
 --- a/common/gin.go
 +++ b/common/gin.go
-@@ -23,6 +23,46 @@ const KeyBodyStorage = "key_body_storage"
+@@ -27,6 +27,46 @@ const keyBodyReadError = "key_body_read_error"
  
  var ErrRequestBodyTooLarge = errors.New("request body too large")
  
@@ -62,7 +62,7 @@ index 3a351cd6f..4c4cd5b90 100644
  func IsRequestBodyTooLargeError(err error) bool {
  	if err == nil {
  		return false
-@@ -38,9 +78,11 @@ func GetRequestBody(c *gin.Context) (io.Seeker, error) {
+@@ -42,9 +82,11 @@ func GetRequestBody(c *gin.Context) (io.Seeker, error) {
  	// 首先检查是否有 BodyStorage 缓存
  	if storage, exists := c.Get(KeyBodyStorage); exists && storage != nil {
  		if bs, ok := storage.(BodyStorage); ok {
@@ -74,7 +74,7 @@ index 3a351cd6f..4c4cd5b90 100644
  			return bs, nil
  		}
  	}
-@@ -54,6 +96,8 @@ func GetRequestBody(c *gin.Context) (io.Seeker, error) {
+@@ -58,6 +100,8 @@ func GetRequestBody(c *gin.Context) (io.Seeker, error) {
  				return nil, err
  			}
  			c.Set(KeyBodyStorage, bs)
@@ -83,7 +83,7 @@ index 3a351cd6f..4c4cd5b90 100644
  			return bs, nil
  		}
  	}
-@@ -67,6 +111,7 @@ func GetRequestBody(c *gin.Context) (io.Seeker, error) {
+@@ -77,6 +121,7 @@ func GetRequestBody(c *gin.Context) (io.Seeker, error) {
  	contentLength := c.Request.ContentLength
  
  	// 使用新的存储系统
@@ -91,7 +91,7 @@ index 3a351cd6f..4c4cd5b90 100644
  	storage, err := CreateBodyStorageFromReader(c.Request.Body, contentLength, maxBytes)
  	_ = c.Request.Body.Close()
  
-@@ -79,6 +124,7 @@ func GetRequestBody(c *gin.Context) (io.Seeker, error) {
+@@ -90,6 +135,7 @@ func GetRequestBody(c *gin.Context) (io.Seeker, error) {
  
  	// 缓存存储对象
  	c.Set(KeyBodyStorage, storage)
@@ -99,7 +99,7 @@ index 3a351cd6f..4c4cd5b90 100644
  
  	return storage, nil
  }
-@@ -123,9 +169,11 @@ func UnmarshalBodyReusable(c *gin.Context, v any) error {
+@@ -134,9 +180,11 @@ func UnmarshalBodyReusable(c *gin.Context, v any) error {
  		if err := DecodeJson(storage, v); err != nil {
  			return err
  		}
@@ -111,7 +111,7 @@ index 3a351cd6f..4c4cd5b90 100644
  		c.Request.Body = io.NopCloser(storage)
  		return nil
  	}
-@@ -134,6 +182,8 @@ func UnmarshalBodyReusable(c *gin.Context, v any) error {
+@@ -145,6 +193,8 @@ func UnmarshalBodyReusable(c *gin.Context, v any) error {
  	if err != nil {
  		return err
  	}
@@ -120,7 +120,7 @@ index 3a351cd6f..4c4cd5b90 100644
  	if strings.HasPrefix(contentType, "application/json") {
  		err = Unmarshal(requestBody, v)
  	} else if strings.Contains(contentType, gin.MIMEPOSTForm) {
-@@ -147,10 +197,12 @@ func UnmarshalBodyReusable(c *gin.Context, v any) error {
+@@ -158,10 +208,12 @@ func UnmarshalBodyReusable(c *gin.Context, v any) error {
  	if err != nil {
  		return err
  	}
@@ -176,7 +176,7 @@ index d0f3468cb..f592193a5 100644
  	os.Exit(1)
  }
 diff --git a/controller/relay.go b/controller/relay.go
-index 31fd128b2..0ef9d4289 100644
+index 837c065ed..ee74d0613 100644
 --- a/controller/relay.go
 +++ b/controller/relay.go
 @@ -66,7 +66,130 @@ func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewA
@@ -310,7 +310,7 @@ index 31fd128b2..0ef9d4289 100644
  
  	requestId := c.GetString(common.RequestIdKey)
  	//group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
-@@ -109,6 +232,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+@@ -110,6 +233,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
  	}()
  
  	request, err := helper.GetAndValidateRequest(c, relayFormat)
@@ -321,7 +321,7 @@ index 31fd128b2..0ef9d4289 100644
  	if err != nil {
  		// Map "request body too large" to 413 so clients can handle it correctly
  		if common.IsRequestBodyTooLargeError(err) || errors.Is(err, common.ErrRequestBodyTooLarge) {
-@@ -124,6 +251,22 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+@@ -125,6 +252,22 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
  		newAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
  		return
  	}
@@ -344,7 +344,7 @@ index 31fd128b2..0ef9d4289 100644
  
  	defer func() {
  		recovered := recover()
-@@ -142,6 +285,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+@@ -143,6 +286,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
  	if newAPIError = relay.PrepareRequestBilling(c, relayInfo); newAPIError != nil {
  		return
  	}
@@ -369,7 +369,7 @@ index 2a81f439d..1e6821131 100644
  	logCount++ // we don't need accurate count, so no lock here
  	if logCount > maxLogCount && !setupLogWorking {
 diff --git a/middleware/distributor.go b/middleware/distributor.go
-index 43b2288c6..a928ed210 100644
+index 374a3b7f3..0a419bb1e 100644
 --- a/middleware/distributor.go
 +++ b/middleware/distributor.go
 @@ -33,6 +33,9 @@ type ModelRequest struct {
@@ -390,7 +390,7 @@ index 43b2288c6..a928ed210 100644
 +			c.Set("relay_timing_model_request_done_at", time.Now())
 +		}
  		if err != nil {
- 			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
+ 			abortWithOpenAiMessage(c, invalidRequestStatus(err), i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
  			return
 @@ -122,6 +128,9 @@ func Distribute() func(c *gin.Context) {
  			}
@@ -402,7 +402,7 @@ index 43b2288c6..a928ed210 100644
  		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
  		c.Next()
  		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
-@@ -260,6 +269,14 @@ func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
+@@ -256,6 +265,14 @@ func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
  	if err != nil {
  		return nil, err
  	}
@@ -417,7 +417,7 @@ index 43b2288c6..a928ed210 100644
  	if !gjson.ValidBytes(requestBody) {
  		return nil, errors.New("invalid JSON request body")
  	}
-@@ -276,10 +293,20 @@ func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
+@@ -272,10 +289,20 @@ func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
  	if err != nil {
  		return nil, err
  	}
@@ -533,7 +533,7 @@ index e1bf315a4..c62680fe3 100644
  		c.Request = c.Request.WithContext(ctx)
  		c.Header(common.RequestIdKey, id)
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index 49824abad..707267d62 100644
+index 69558ff31..369cc148e 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
 @@ -2,10 +2,12 @@ package channel
@@ -546,10 +546,10 @@ index 49824abad..707267d62 100644
  	"io"
  	"net/http"
 +	"net/http/httptrace"
+ 	"net/url"
  	"regexp"
  	"strings"
- 	"sync"
-@@ -525,6 +527,150 @@ func keepUpstreamRedirectResponse(_ *http.Request, _ []*http.Request) error {
+@@ -530,6 +532,150 @@ func keepUpstreamRedirectResponse(_ *http.Request, _ []*http.Request) error {
  	return http.ErrUseLastResponse
  }
  
@@ -700,8 +700,8 @@ index 49824abad..707267d62 100644
  func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
  	client, err := service.GetHttpClientWithProxyForRelay(info.ChannelSetting.Proxy, info.ChannelSetting, info.IsStream)
  	if err != nil {
-@@ -567,7 +713,19 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
- 
+@@ -573,7 +719,19 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+ 	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestOrigin, req.URL.Scheme+"://"+req.URL.Host)
  	applyDefaultUpstreamUserAgent(c, req, info)
  	logUpstreamUserAgent(c, req)
 +	var requestTrace *relayHTTPTrace
@@ -720,7 +720,7 @@ index 49824abad..707267d62 100644
  	if err != nil {
  		if IsResponseHeaderTimeout(err) {
  			logger.LogError(c, "do request failed: response header timeout: "+err.Error())
-@@ -602,6 +760,53 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -608,6 +766,54 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  	return resp, nil
  }
  
@@ -746,8 +746,9 @@ index 49824abad..707267d62 100644
 +	if attempt.WasIdleConn {
 +		idle = fmt.Sprintf("%dms", attempt.IdleTime.Milliseconds())
 +	}
-+	writeErr := common2.MaskSensitiveInfo(attempt.WriteErr)
-+	errText := common2.MaskSensitiveInfo(err.Error())
++	upstreamURLs := common2.UpstreamAddresses(c)
++	writeErr := common2.MaskSensitiveInfo(attempt.WriteErr, upstreamURLs...)
++	errText := common2.MaskSensitiveInfo(err.Error(), upstreamURLs...)
 +	logger.LogInfo(c, fmt.Sprintf(
 +		"relay failed attempt timing: channel=%d model=%q stream=%t upstream_status=%d reused=%t was_idle=%t idle=%s write_err=%q error=%q since_attempt{got_conn=%s wrote_req=%s first_byte=%s do_return=%s} duration{dns=%s connect=%s tls=%s write_to_first_byte=%s do_total=%s}",
 +		info.ChannelId,
@@ -775,10 +776,10 @@ index 49824abad..707267d62 100644
  	if err == nil {
  		return false
 diff --git a/relay/channel/api_request_test.go b/relay/channel/api_request_test.go
-index 7721d4580..d16023aaa 100644
+index 7721d4580..6bdf80c54 100644
 --- a/relay/channel/api_request_test.go
 +++ b/relay/channel/api_request_test.go
-@@ -1,11 +1,16 @@
+@@ -1,14 +1,20 @@
  package channel
  
  import (
@@ -795,7 +796,11 @@ index 7721d4580..d16023aaa 100644
  	"testing"
  
  	"github.com/QuantumNous/new-api/common"
-@@ -16,6 +21,23 @@ import (
++	"github.com/QuantumNous/new-api/constant"
+ 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+ 	"github.com/QuantumNous/new-api/relaykit/types"
+ 	"github.com/gin-gonic/gin"
+@@ -16,6 +22,23 @@ import (
  	"github.com/stretchr/testify/require"
  )
  
@@ -819,7 +824,7 @@ index 7721d4580..d16023aaa 100644
  func TestNewTaskAPIRequestInheritsClientCancellation(t *testing.T) {
  	recorder := httptest.NewRecorder()
  	c, _ := gin.CreateTestContext(recorder)
-@@ -359,3 +381,96 @@ func TestIsResponseHeaderTimeout(t *testing.T) {
+@@ -359,3 +382,158 @@ func TestIsResponseHeaderTimeout(t *testing.T) {
  		})
  	}
  }
@@ -884,6 +889,68 @@ index 7721d4580..d16023aaa 100644
 +	require.GreaterOrEqual(t, responseHeadersAt, 0)
 +}
 +
++func TestRelayFailedAttemptTimingMasksConfiguredUpstreamAddresses(t *testing.T) {
++	previousTimingLogEnabled := common.RelayTimingLogEnabled
++	common.RelayTimingLogEnabled = true
++	t.Cleanup(func() { common.RelayTimingLogEnabled = previousTimingLogEnabled })
++	for _, name := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
++		t.Setenv(name, "")
++	}
++
++	for _, tc := range []struct {
++		name         string
++		baseURL      string
++		writeErr     string
++		err          string
++		wantWriteErr string
++		wantErr      string
++	}{
++		{
++			name:         "custom upstream is masked while documentation stays readable",
++			baseURL:      "https://relay.private.example",
++			writeErr:     `Post "https://relay.private.example/v1/responses?api_key=write-secret": EOF`,
++			err:          `lookup relay.private.example: no such host; see https://docs.example.org/errors?token=read-secret`,
++			wantWriteErr: `Post "https://***.example/***/***?api_key=***": EOF`,
++			wantErr:      `lookup ***.***.example: no such host; see https://docs.example.org/errors?token=***`,
++		},
++		{
++			name:         "preset endpoint stays readable while credentials are masked",
++			baseURL:      "https://api.openai.com",
++			writeErr:     `Post "https://api.openai.com/v1/responses?api_key=write-secret": EOF`,
++			err:          `see https://docs.example.org/errors?token=read-secret; api_key:test-secret`,
++			wantWriteErr: `Post "https://api.openai.com/v1/responses?api_key=***": EOF`,
++			wantErr:      `see https://docs.example.org/errors?token=***; api_key:***`,
++		},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			var logs synchronizedLogBuffer
++			common.LogWriterMu.Lock()
++			previousWriter := gin.DefaultWriter
++			gin.DefaultWriter = &logs
++			common.LogWriterMu.Unlock()
++			t.Cleanup(func() {
++				common.LogWriterMu.Lock()
++				gin.DefaultWriter = previousWriter
++				common.LogWriterMu.Unlock()
++			})
++
++			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
++			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", http.NoBody)
++			common.SetContextKey(ctx, constant.ContextKeyChannelBaseUrl, tc.baseURL)
++			common.SetContextKey(ctx, constant.ContextKeyChannelType, constant.ChannelTypeOpenAI)
++			info := &relaycommon.RelayInfo{
++				OriginModelName: "test-model",
++				ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: 17},
++			}
++			logRelayFailedAttemptTiming(ctx, info, relaycommon.RelayTimingInfo{WriteErr: tc.writeErr}, errors.New(tc.err))
++
++			output := logs.String()
++			require.Contains(t, output, "relay failed attempt timing:")
++			assert.Contains(t, output, fmt.Sprintf("write_err=%q error=%q", tc.wantWriteErr, tc.wantErr))
++		})
++	}
++}
++
 +func TestRelayHTTPTraceCapturesLateWriteErrorWithoutSuccessLog(t *testing.T) {
 +	var logs synchronizedLogBuffer
 +	common.LogWriterMu.Lock()
@@ -917,7 +984,7 @@ index 7721d4580..d16023aaa 100644
 +	require.NotContains(t, logs.String(), "relay upstream request written")
 +}
 diff --git a/relay/common/relay_info.go b/relay/common/relay_info.go
-index cee37b41e..1f73897dc 100644
+index af7f516e4..2b500653f 100644
 --- a/relay/common/relay_info.go
 +++ b/relay/common/relay_info.go
 @@ -80,6 +80,101 @@ type TokenCountMeta struct {
@@ -1030,7 +1097,7 @@ index cee37b41e..1f73897dc 100644
  
  	// RequestConversionChain records request format conversions in order, e.g.
  	// ["openai", "openai_responses"] or ["openai", "claude"].
-@@ -982,8 +1078,12 @@ func (info *RelayInfo) ConvOptions() *convmeta.Options {
+@@ -988,8 +1084,12 @@ func (info *RelayInfo) ConvOptions() *convmeta.Options {
  }
  
  func (info *RelayInfo) SetFirstResponseTime() {
@@ -1217,7 +1284,7 @@ index d534ad528..2daabd4aa 100644
  		logger.LogInfo(c, common.LogText("model %s is free, skipping pre-consume", info.OriginModelName))
  		return nil
 diff --git a/service/text_quota.go b/service/text_quota.go
-index b5cb682ee..a807ab975 100644
+index 47aba0800..100d6e46b 100644
 --- a/service/text_quota.go
 +++ b/service/text_quota.go
 @@ -1,6 +1,7 @@
@@ -1228,7 +1295,7 @@ index b5cb682ee..a807ab975 100644
  	"math"
  	"sort"
  	"strings"
-@@ -383,6 +384,79 @@ func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage)
+@@ -387,6 +388,79 @@ func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage)
  	return "openai"
  }
  
@@ -1273,7 +1340,7 @@ index b5cb682ee..a807ab975 100644
 +	if t.WasIdleConn {
 +		idle = fmt.Sprintf("%dms", t.IdleTime.Milliseconds())
 +	}
-+	writeErr := common.MaskSensitiveInfo(t.WriteErr)
++	writeErr := common.MaskSensitiveInfo(t.WriteErr, common.UpstreamAddresses(ctx)...)
 +	logger.LogInfo(ctx, fmt.Sprintf(
 +		"relay timing: channel=%d model=%q stream=%t upstream_status=%d reused=%t was_idle=%t idle=%s write_err=%q since_start{do_start=%s got_conn=%s wrote_req=%s first_byte=%s do_return=%s first_data=%s stream_end=%s quota_log=%s} duration{pre_do=%s dns=%s connect=%s tls=%s write_to_first_byte=%s do_total=%s do_return_to_first_data=%s first_byte_to_first_data=%s first_data_to_stream_end=%s total=%s}",
 +		relayInfo.ChannelId,
@@ -1308,7 +1375,7 @@ index b5cb682ee..a807ab975 100644
  func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []*common.Message) {
  	originUsage := usage
  	billingUsage := effectiveBillingUsage(usage)
-@@ -523,6 +597,10 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
+@@ -527,6 +601,10 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
  	}
  
  	attachQuotaSaturation(ctx, relayInfo, other)
