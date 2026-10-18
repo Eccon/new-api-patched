@@ -1,8 +1,8 @@
 diff --git a/common/constants.go b/common/constants.go
-index e5b434c31..c924f141f 100644
+index 6799fdc5e..7d8ce8504 100644
 --- a/common/constants.go
 +++ b/common/constants.go
-@@ -185,6 +185,7 @@ var RelayIdleConnTimeout int // unit is second
+@@ -186,6 +186,7 @@ var RelayIdleConnTimeout int // unit is second
  // ResponseHeaderTimeout only bounds the wait for the response headers; once the
  // headers arrive, streaming is unaffected.
  var RelayResponseHeaderTimeout int // unit is second
@@ -23,10 +23,10 @@ index a5589f2fe..59fe443b3 100644
  	RelayMaxIdleConnsPerHost = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS_PER_HOST", 100)
  	relayDirectNetworkFamilyRaw := GetEnvOrDefaultString("RELAY_DIRECT_NETWORK_FAMILY", RelayDirectNetworkFamilyAuto)
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index c8eb93946..49824abad 100644
+index fc4abefdb..69558ff31 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
-@@ -526,7 +526,7 @@ func keepUpstreamRedirectResponse(_ *http.Request, _ []*http.Request) error {
+@@ -531,7 +531,7 @@ func keepUpstreamRedirectResponse(_ *http.Request, _ []*http.Request) error {
  }
  
  func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
@@ -35,7 +35,7 @@ index c8eb93946..49824abad 100644
  	if err != nil {
  		return nil, fmt.Errorf("new proxy http client failed: %w", err)
  	}
-@@ -569,6 +569,14 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -575,6 +575,14 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  	logUpstreamUserAgent(c, req)
  	resp, err := relayClient.Do(req)
  	if err != nil {
@@ -50,7 +50,7 @@ index c8eb93946..49824abad 100644
  		logger.LogError(c, common2.LogText("do request failed: %s", err.Error()))
  		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
  	}
-@@ -594,6 +602,15 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -600,6 +608,15 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  	return resp, nil
  }
  
@@ -174,10 +174,10 @@ index cfded9af4..debfec70a 100644
  	default:
  		return nil, errors.New("invalid aws secret key")
 diff --git a/relay/channel/aws/relay_aws_test.go b/relay/channel/aws/relay_aws_test.go
-index 5f9256698..d30809780 100644
+index 859443693..2a16f593b 100644
 --- a/relay/channel/aws/relay_aws_test.go
 +++ b/relay/channel/aws/relay_aws_test.go
-@@ -15,16 +15,68 @@ import (
+@@ -22,17 +22,69 @@ import (
  	relaycommon "github.com/QuantumNous/new-api/relay/common"
  	"github.com/QuantumNous/new-api/relaykit/dto"
  	relaytypes "github.com/QuantumNous/new-api/relaykit/types"
@@ -185,6 +185,7 @@ index 5f9256698..d30809780 100644
  	"github.com/aws/aws-sdk-go-v2/aws"
  	"github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream"
  	"github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream/eventstreamapi"
+ 	"github.com/aws/aws-sdk-go-v2/aws/signer/v4"
  	"github.com/aws/aws-sdk-go-v2/credentials"
  	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 +	smithyhttp "github.com/aws/smithy-go/transport/http"
@@ -246,7 +247,7 @@ index 5f9256698..d30809780 100644
  const awsTestModel = "anthropic.claude-3-5-sonnet-20240620-v1:0"
  
  type awsHTTPClientFunc func(*http.Request) (*http.Response, error)
-@@ -141,6 +193,43 @@ func newAwsStreamResponse(request *http.Request, body io.ReadCloser) *http.Respo
+@@ -149,6 +201,43 @@ func newAwsStreamResponse(request *http.Request, body io.ReadCloser) *http.Respo
  	}
  }
  
