@@ -1,8 +1,48 @@
+diff --git a/controller/relay_stream_test.go b/controller/relay_stream_test.go
+index 8f011306a..5e067f1d2 100644
+--- a/controller/relay_stream_test.go
++++ b/controller/relay_stream_test.go
+@@ -72,12 +72,11 @@ func TestRelayKeepAliveDuringImagePreparation(t *testing.T) {
+ 	require.Equal(t, "text/event-stream", response.Header.Get("Content-Type"))
+ 	reader := bufio.NewReader(response.Body)
+ 	for range 2 {
+-		line, readErr := reader.ReadString('\n')
+-		require.NoError(t, readErr)
+-		require.Equal(t, ": PING\n", line)
+-		line, readErr = reader.ReadString('\n')
+-		require.NoError(t, readErr)
+-		require.Equal(t, "\n", line)
++		for _, want := range []string{": PING\n", "event: ping\n", "data: {\"type\":\"ping\"}\n", "\n"} {
++			line, readErr := reader.ReadString('\n')
++			require.NoError(t, readErr)
++			require.Equal(t, want, line)
++		}
+ 	}
+ 	select {
+ 	case <-imageRequested:
+@@ -155,12 +154,11 @@ func TestRelayKeepAliveAcrossUpstreamRetries(t *testing.T) {
+ 	}
+ 	reader := bufio.NewReader(response.Body)
+ 	for range 2 {
+-		line, readErr := reader.ReadString('\n')
+-		require.NoError(t, readErr)
+-		require.Equal(t, ": PING\n", line)
+-		line, readErr = reader.ReadString('\n')
+-		require.NoError(t, readErr)
+-		require.Equal(t, "\n", line)
++		for _, want := range []string{": PING\n", "event: ping\n", "data: {\"type\":\"ping\"}\n", "\n"} {
++			line, readErr := reader.ReadString('\n')
++			require.NoError(t, readErr)
++			require.Equal(t, want, line)
++		}
+ 	}
+ 	releaseOnce.Do(func() { close(release) })
+ 	body, err := io.ReadAll(reader)
 diff --git a/relay/helper/common.go b/relay/helper/common.go
-index 8a1bd5a2..f343da36 100644
+index 2003e7e8a..19cec3923 100644
 --- a/relay/helper/common.go
 +++ b/relay/helper/common.go
-@@ -186,7 +186,17 @@ func PingData(c *gin.Context) (err error) {
+@@ -310,7 +310,17 @@ func PingData(c *gin.Context) (err error) {
  		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
  	}
  
@@ -22,10 +62,19 @@ index 8a1bd5a2..f343da36 100644
  		return fmt.Errorf("write ping data failed: %w", err)
  	}
 diff --git a/relay/helper/stream_scanner_test.go b/relay/helper/stream_scanner_test.go
-index 3aa587f2..a37e16ff 100644
+index 12585a432..2e96998e7 100644
 --- a/relay/helper/stream_scanner_test.go
 +++ b/relay/helper/stream_scanner_test.go
-@@ -692,6 +692,47 @@ func TestPingData_NonIOFailuresDoNotMarkDisconnected(t *testing.T) {
+@@ -89,7 +89,7 @@ func TestStreamScannerHandler_RequestKeepAliveHandoff(t *testing.T) {
+ 			assert.Equal(t, []string{"chunk"}, received)
+ 			assert.True(t, strings.HasSuffix(writer.Body.String(), "data: chunk\n\n"))
+ 			if test.waitForPing {
+-				assert.True(t, strings.HasPrefix(writer.Body.String(), ": PING\n\n"))
++				assert.True(t, strings.HasPrefix(writer.Body.String(), ": PING\nevent: ping\ndata: {\"type\":\"ping\"}\n\n"))
+ 			} else {
+ 				assert.Equal(t, "data: chunk\n\n", writer.Body.String())
+ 				assert.Equal(t, "true", writer.Result().Header.Get("X-Reasoning-Included"))
+@@ -832,6 +832,47 @@ func TestPingData_NonIOFailuresDoNotMarkDisconnected(t *testing.T) {
  	})
  }
  
