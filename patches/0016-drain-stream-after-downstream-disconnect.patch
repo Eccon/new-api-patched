@@ -1,8 +1,8 @@
 diff --git a/controller/relay.go b/controller/relay.go
-index ee74d0613..3b36047b0 100644
+index 2cee2ca52..47beaf8aa 100644
 --- a/controller/relay.go
 +++ b/controller/relay.go
-@@ -216,6 +216,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+@@ -219,6 +219,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
  			logger.LogError(c, common.LogText("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
  			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
  			upstreamURLs := common.UpstreamAddresses(c)
@@ -12,10 +12,10 @@ index ee74d0613..3b36047b0 100644
 +			if helper.IsStreamDeliveryDisconnected(c) {
 +				return
 +			}
- 			switch relayFormat {
- 			case types.RelayFormatOpenAIRealtime:
- 				helper.WssError(c, ws, newAPIError.ToOpenAIError(upstreamURLs...))
-@@ -353,13 +359,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+ 			if relayFormat != types.RelayFormatOpenAIRealtime && c.Writer.Written() &&
+ 				strings.HasPrefix(c.Writer.Header().Get("Content-Type"), "text/event-stream") {
+ 				writeRelayStreamError(c, relayFormat, newAPIError)
+@@ -370,13 +376,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
  		newAPIError = service.NormalizeViolationFeeError(newAPIError)
  		relayInfo.LastError = newAPIError
  
@@ -31,7 +31,7 @@ index ee74d0613..3b36047b0 100644
  	}
  
  	useChannel := c.GetStringSlice("use_channel")
-@@ -442,6 +449,13 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
+@@ -477,6 +484,13 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
  	return channel, nil
  }
  
@@ -467,10 +467,20 @@ index 3ef47c801..3e25232d5 100644
  		upstreamFinished := info.StreamStatus.EndReason == relaycommon.StreamEndReasonDone ||
  			info.StreamStatus.EndReason == relaycommon.StreamEndReasonEOF
 diff --git a/relay/helper/common.go b/relay/helper/common.go
-index 24dd89770..b503d20e4 100644
+index 33f51386b..2003e7e8a 100644
 --- a/relay/helper/common.go
 +++ b/relay/helper/common.go
-@@ -25,9 +25,25 @@ func FlushWriter(c *gin.Context) (err error) {
+@@ -104,6 +104,9 @@ func StartStreamKeepAlive(c *gin.Context, interval time.Duration) func() {
+ 	}
+ 	SetEventStreamHeaders(c)
+ 	ctx, cancel := context.WithTimeout(c.Request.Context(), 120*time.Minute)
++	if getStreamDeliveryState(c) == nil {
++		c.Set(streamDeliveryStateKey, &streamDeliveryState{})
++	}
+ 	pingContext := c.Copy()
+ 	// 心跳使用原 writer，业务写入才会触发交接。
+ 	pingContext.Writer = c.Writer
+@@ -146,9 +149,25 @@ func FlushWriter(c *gin.Context) (err error) {
  		return nil
  	}
  
@@ -496,7 +506,7 @@ index 24dd89770..b503d20e4 100644
  
  	flusher, ok := c.Writer.(http.Flusher)
  	if !ok {
-@@ -59,7 +75,13 @@ func SetEventStreamHeaders(c *gin.Context) {
+@@ -180,7 +199,13 @@ func SetEventStreamHeaders(c *gin.Context) {
  }
  
  func ClaudeData(c *gin.Context, resp dto.ClaudeResponse) error {
@@ -510,7 +520,7 @@ index 24dd89770..b503d20e4 100644
  		return nil
  	}
  
-@@ -67,30 +89,57 @@ func ClaudeData(c *gin.Context, resp dto.ClaudeResponse) error {
+@@ -188,30 +213,57 @@ func ClaudeData(c *gin.Context, resp dto.ClaudeResponse) error {
  	if err != nil {
  		common.SysError(common.LogText("error marshalling stream response: %s", err.Error()))
  	} else {
@@ -574,7 +584,7 @@ index 24dd89770..b503d20e4 100644
  	return FlushWriter(c)
  }
  
-@@ -99,27 +148,56 @@ func StringData(c *gin.Context, str string) error {
+@@ -220,27 +272,56 @@ func StringData(c *gin.Context, str string) error {
  		return errors.New("context or writer is nil")
  	}
  
@@ -818,10 +828,10 @@ index 000000000..c42bc4b21
 +	return true
 +}
 diff --git a/relay/helper/stream_scanner.go b/relay/helper/stream_scanner.go
-index 1702f957a..a344ce159 100644
+index 9e621b725..41f913023 100644
 --- a/relay/helper/stream_scanner.go
 +++ b/relay/helper/stream_scanner.go
-@@ -131,6 +131,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+@@ -137,6 +137,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
  
  	// 无条件新建 StreamStatus
  	info.StreamStatus = relaycommon.NewStreamStatus()
@@ -829,7 +839,7 @@ index 1702f957a..a344ce159 100644
  
  	ctx, cancel := context.WithCancel(context.Background())
  
-@@ -217,16 +218,25 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+@@ -223,16 +224,25 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
  			for {
  				select {
  				case <-pingTicker.C:
@@ -857,7 +867,7 @@ index 1702f957a..a344ce159 100644
  						return
  					}
  					logger.LogDebug(c, "ping data sent")
-@@ -263,7 +273,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+@@ -269,7 +279,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
  			func() {
  				writeMutex.Lock()
  				defer writeMutex.Unlock()
@@ -868,7 +878,7 @@ index 1702f957a..a344ce159 100644
  				dataHandler(data, sr)
  			}()
  			if sr.IsStopped() {
-@@ -359,19 +371,30 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
+@@ -365,19 +377,30 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
  		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonEOF, nil)
  	})
  
@@ -910,7 +920,7 @@ index 1702f957a..a344ce159 100644
  		logger.LogInfo(c, common.LogText("stream ended: %s", info.StreamStatus.Summary()))
  	} else {
 diff --git a/relay/helper/stream_scanner_test.go b/relay/helper/stream_scanner_test.go
-index b9823ba3e..8ea3b58f1 100644
+index fc2dff039..12585a432 100644
 --- a/relay/helper/stream_scanner_test.go
 +++ b/relay/helper/stream_scanner_test.go
 @@ -2,7 +2,9 @@ package helper
@@ -931,7 +941,7 @@ index b9823ba3e..8ea3b58f1 100644
  	"github.com/QuantumNous/new-api/setting/operation_setting"
  	"github.com/gin-gonic/gin"
  	"github.com/stretchr/testify/assert"
-@@ -211,12 +214,7 @@ func TestStreamScannerHandler_DataWithExtraSpaces(t *testing.T) {
+@@ -286,12 +289,7 @@ func TestStreamScannerHandler_DataWithExtraSpaces(t *testing.T) {
  	assert.Equal(t, "{\"trimmed\":true}", got)
  }
  
@@ -945,7 +955,7 @@ index b9823ba3e..8ea3b58f1 100644
  	ctx, cancel := context.WithCancel(context.Background())
  	defer cancel()
  
-@@ -237,6 +235,7 @@ func TestStreamScannerHandler_ClientCancelAbortsUpstreamAndReturns(t *testing.T)
+@@ -312,6 +310,7 @@ func TestStreamScannerHandler_ClientCancelAbortsUpstreamAndReturns(t *testing.T)
  	}
  
  	var count atomic.Int64
@@ -953,7 +963,7 @@ index b9823ba3e..8ea3b58f1 100644
  	firstHandled := make(chan struct{})
  	done := make(chan struct{})
  	go func() {
-@@ -246,6 +245,9 @@ func TestStreamScannerHandler_ClientCancelAbortsUpstreamAndReturns(t *testing.T)
+@@ -321,6 +320,9 @@ func TestStreamScannerHandler_ClientCancelAbortsUpstreamAndReturns(t *testing.T)
  			if data == "first" {
  				close(firstHandled)
  			}
@@ -963,7 +973,7 @@ index b9823ba3e..8ea3b58f1 100644
  		})
  		close(done)
  	}()
-@@ -261,26 +263,608 @@ func TestStreamScannerHandler_ClientCancelAbortsUpstreamAndReturns(t *testing.T)
+@@ -336,26 +338,673 @@ func TestStreamScannerHandler_ClientCancelAbortsUpstreamAndReturns(t *testing.T)
  
  	cancel()
  
@@ -1168,12 +1178,15 @@ index b9823ba3e..8ea3b58f1 100644
 +
 +type flushErrorHTTPWriter struct {
 +	http.ResponseWriter
-+	err     error
-+	flushes atomic.Int64
++	err       error
++	flushes   atomic.Int64
++	attempted chan struct{}
 +}
 +
 +func (w *flushErrorHTTPWriter) FlushError() error {
-+	w.flushes.Add(1)
++	if w.flushes.Add(1) == 1 && w.attempted != nil {
++		close(w.attempted)
++	}
 +	return w.err
 +}
 +
@@ -1339,6 +1352,68 @@ index b9823ba3e..8ea3b58f1 100644
 +	assert.Equal(t, relaycommon.StreamEndReasonDone, info.StreamStatus.EndReason)
 +	assert.True(t, IsStreamDeliveryDisconnected(c))
 +	assert.NotContains(t, recorder.Body.String(), "usage")
++}
++
++func TestStreamKeepAliveFailureCarriesIntoDrain(t *testing.T) {
++	for _, tc := range []struct {
++		name      string
++		failFlush bool
++	}{
++		{name: "write failure"},
++		{name: "flush failure", failFlush: true},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			recorder := httptest.NewRecorder()
++			c, _ := gin.CreateTestContext(recorder)
++			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
++			pingAttempted := make(chan struct{})
++			if tc.failFlush {
++				unwrapper, ok := c.Writer.(interface{ Unwrap() http.ResponseWriter })
++				require.True(t, ok)
++				flushTarget := &flushErrorHTTPWriter{
++					ResponseWriter: unwrapper.Unwrap(),
++					err:            errors.New("client connection closed during keepalive flush"),
++					attempted:      pingAttempted,
++				}
++				c.Writer = &flushErrorGinWriter{ResponseWriter: c.Writer, underlying: flushTarget}
++			} else {
++				releasePing := make(chan struct{})
++				close(releasePing)
++				c.Writer = &failingPingWriter{
++					ResponseWriter: c.Writer,
++					err:            errors.New("client connection closed during keepalive write"),
++					attempted:      pingAttempted,
++					release:        releasePing,
++				}
++			}
++
++			stop := StartStreamKeepAlive(c, time.Millisecond)
++			t.Cleanup(stop)
++			select {
++			case <-pingAttempted:
++			case <-time.After(2 * time.Second):
++				t.Fatal("request keepalive was not attempted")
++			}
++			stop()
++			assert.True(t, IsStreamDeliveryDisconnected(c), "keepalive failure must reach the original request")
++			require.NoError(t, c.Request.Context().Err())
++			bodyAfterPing := recorder.Body.String()
++
++			info := &relaycommon.RelayInfo{DisablePing: true, ChannelMeta: &relaycommon.ChannelMeta{}}
++			var usageSeen bool
++			resp := &http.Response{Body: io.NopCloser(strings.NewReader("data: usage\ndata: [DONE]\n"))}
++			StreamScannerHandler(c, resp, info, func(data string, sr *StreamResult) {
++				assert.NoError(t, StringData(c, data))
++				if data == "usage" {
++					usageSeen = true
++				}
++			})
++			assert.True(t, usageSeen)
++			assert.Equal(t, relaycommon.StreamEndReasonDone, info.StreamStatus.EndReason)
++			assert.True(t, IsStreamDeliveryDisconnected(c))
++			assert.Equal(t, bodyAfterPing, recorder.Body.String(), "failed keepalive must suppress later downstream writes")
++		})
++	}
 +}
 +
 +func TestStreamScannerHandler_PreScannerPingFailureCarriesIntoDrain(t *testing.T) {
