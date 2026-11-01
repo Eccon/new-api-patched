@@ -1,5 +1,5 @@
 diff --git a/relay/channel/openai/relay_responses.go b/relay/channel/openai/relay_responses.go
-index 4118995c2..a017c1c9c 100644
+index c0a1624655f7af65bac51e9115a4d83cbb64090a..54aabcb157fa892ef578a14d9d5219a9b96afbe7 100644
 --- a/relay/channel/openai/relay_responses.go
 +++ b/relay/channel/openai/relay_responses.go
 @@ -1,6 +1,7 @@
@@ -28,7 +28,7 @@ index 4118995c2..a017c1c9c 100644
  		if streamResponse.Response != nil {
  			data = string(rewriteSGLangResponsesCreatedAt(info, []byte(data), "response.created_at", streamResponse.Response.CreatedAt))
  		}
-@@ -102,6 +114,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+@@ -101,6 +113,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
  			sawTerminalEvent = true
  		case "error", "response.error", "response.failed", "response.incomplete", "response.cancelled", "response.canceled":
  			sawErrorEvent = true
@@ -36,21 +36,13 @@ index 4118995c2..a017c1c9c 100644
 +				sr.Error(errors.New("upstream response.failed: code=" + responseErrorCode))
 +			}
  		}
- 	})
- 	if info != nil && info.StreamStatus != nil && !sawTerminalEvent && !sawErrorEvent {
+ 		if err := helper.ResponseChunkData(c, streamResponse, data); err != nil {
+ 			sr.Stop(err)
 diff --git a/relay/channel/openai/relay_responses_billing_test.go b/relay/channel/openai/relay_responses_billing_test.go
-index 739f27e19..323360eb3 100644
+index 7235b540a160283739d15c03e6fa0f2134243bb3..88c26f556574ede131ccfaea42cb07b2afb356b6 100644
 --- a/relay/channel/openai/relay_responses_billing_test.go
 +++ b/relay/channel/openai/relay_responses_billing_test.go
-@@ -15,6 +15,7 @@ import (
- 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
- 	"github.com/QuantumNous/new-api/relaykit/dto"
- 	"github.com/QuantumNous/new-api/relaykit/types"
-+	"github.com/QuantumNous/new-api/service"
- 	"github.com/QuantumNous/new-api/setting/operation_setting"
- 	"github.com/gin-gonic/gin"
- 	"github.com/stretchr/testify/assert"
-@@ -452,3 +453,50 @@ func TestAzureHostedWebSearch(t *testing.T) {
+@@ -785,3 +785,50 @@ func TestAzureHostedWebSearch(t *testing.T) {
  		})
  	}
  }
