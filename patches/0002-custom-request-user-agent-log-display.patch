@@ -123,74 +123,74 @@ index ae6f91c81..56647745d 100644
    request_conversion?: string[]
    ws?: boolean
 diff --git a/web/src/i18n/locales/en.json b/web/src/i18n/locales/en.json
-index 382c8fdd8..1ed25b641 100644
+index ad1ed53..caeecdf 100644
 --- a/web/src/i18n/locales/en.json
 +++ b/web/src/i18n/locales/en.json
-@@ -6894,6 +6894,7 @@
+@@ -6996,6 +6996,7 @@
      "User Subscription Management": "User Subscription Management",
      "User updated successfully": "User updated successfully",
      "User Verification": "User Verification",
 +    "User-Agent": "User-Agent",
      "User-Agent include (one per line)": "User-Agent include (one per line)",
      "Username": "Username",
-     "Username confirmation does not match": "Username confirmation does not match",
+     "Username already exists or has been deleted": "Username already exists or has been deleted",
 diff --git a/web/src/i18n/locales/fr.json b/web/src/i18n/locales/fr.json
-index 0e8cc48f3..8c4a80890 100644
+index 347d231..cc25bd3 100644
 --- a/web/src/i18n/locales/fr.json
 +++ b/web/src/i18n/locales/fr.json
-@@ -6894,6 +6894,7 @@
+@@ -6996,6 +6996,7 @@
      "User Subscription Management": "Gestion des abonnements utilisateur",
      "User updated successfully": "Utilisateur mis à jour avec succès",
      "User Verification": "Vérification de l'utilisateur",
 +    "User-Agent": "User-Agent",
      "User-Agent include (one per line)": "User-Agent inclus (un par ligne)",
      "Username": "Nom d'utilisateur",
-     "Username confirmation does not match": "La confirmation du nom d'utilisateur ne correspond pas",
+     "Username already exists or has been deleted": "Ce nom d’utilisateur existe déjà ou a été supprimé",
 diff --git a/web/src/i18n/locales/ja.json b/web/src/i18n/locales/ja.json
-index 7913083aa..8852faa19 100644
+index 944adc2..efe293f 100644
 --- a/web/src/i18n/locales/ja.json
 +++ b/web/src/i18n/locales/ja.json
-@@ -6894,6 +6894,7 @@
+@@ -6996,6 +6996,7 @@
      "User Subscription Management": "ユーザーサブスクリプション管理",
      "User updated successfully": "ユーザーの更新に成功しました",
      "User Verification": "ユーザー認証",
 +    "User-Agent": "User-Agent",
      "User-Agent include (one per line)": "User-Agent include（1行に1つ）",
      "Username": "ユーザー名",
-     "Username confirmation does not match": "ユーザー名の確認が一致しません",
+     "Username already exists or has been deleted": "このユーザー名は既に存在するか、削除済みです",
 diff --git a/web/src/i18n/locales/ru.json b/web/src/i18n/locales/ru.json
-index 43776c890..7381d211b 100644
+index c2d954e..48801eb 100644
 --- a/web/src/i18n/locales/ru.json
 +++ b/web/src/i18n/locales/ru.json
-@@ -6894,6 +6894,7 @@
+@@ -6996,6 +6996,7 @@
      "User Subscription Management": "Управление подписками пользователя",
      "User updated successfully": "Пользователь успешно обновлен",
      "User Verification": "Проверка пользователя",
 +    "User-Agent": "User-Agent",
      "User-Agent include (one per line)": "User-Agent include (по одному на строку)",
      "Username": "Имя пользователя",
-     "Username confirmation does not match": "Подтверждение имени пользователя не совпадает",
+     "Username already exists or has been deleted": "Имя пользователя уже занято или было удалено",
 diff --git a/web/src/i18n/locales/vi.json b/web/src/i18n/locales/vi.json
-index 7f967ced5..ac6ec9fc5 100644
+index 9f9f8cf..2750eb2 100644
 --- a/web/src/i18n/locales/vi.json
 +++ b/web/src/i18n/locales/vi.json
-@@ -6894,6 +6894,7 @@
+@@ -6996,6 +6996,7 @@
      "User Subscription Management": "Quản lý đăng ký người dùng",
      "User updated successfully": "Cập nhật người dùng thành công",
      "User Verification": "Xác minh người dùng",
 +    "User-Agent": "User-Agent",
      "User-Agent include (one per line)": "User-Agent include (mỗi dòng một mục)",
      "Username": "Tên người dùng",
-     "Username confirmation does not match": "Xác nhận tên người dùng không khớp",
+     "Username already exists or has been deleted": "Tên người dùng đã tồn tại hoặc đã bị xóa",
 diff --git a/web/src/i18n/locales/zh.json b/web/src/i18n/locales/zh.json
-index bb4b063d5..08da4a2f7 100644
+index ffc3432..accedfa 100644
 --- a/web/src/i18n/locales/zh.json
 +++ b/web/src/i18n/locales/zh.json
-@@ -6894,6 +6894,7 @@
+@@ -6996,6 +6996,7 @@
      "User Subscription Management": "用户订阅管理",
      "User updated successfully": "用户更新成功",
      "User Verification": "用户验证",
 +    "User-Agent": "User-Agent",
      "User-Agent include (one per line)": "User-Agent include（每行一个）",
      "Username": "用户名",
-     "Username confirmation does not match": "用户名确认不匹配",
+     "Username already exists or has been deleted": "用户名已存在，或已注销",
