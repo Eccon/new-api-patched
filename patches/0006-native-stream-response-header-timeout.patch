@@ -177,11 +177,12 @@ diff --git a/relay/channel/aws/relay_aws_test.go b/relay/channel/aws/relay_aws_t
 index 859443693..2a16f593b 100644
 --- a/relay/channel/aws/relay_aws_test.go
 +++ b/relay/channel/aws/relay_aws_test.go
-@@ -22,17 +22,69 @@ import (
+@@ -22,18 +22,70 @@ import (
  	relaycommon "github.com/QuantumNous/new-api/relay/common"
  	"github.com/QuantumNous/new-api/relaykit/dto"
  	relaytypes "github.com/QuantumNous/new-api/relaykit/types"
 +	"github.com/QuantumNous/new-api/service"
+ 	"github.com/QuantumNous/new-api/setting/model_setting"
  	"github.com/aws/aws-sdk-go-v2/aws"
  	"github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream"
  	"github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream/eventstreamapi"
