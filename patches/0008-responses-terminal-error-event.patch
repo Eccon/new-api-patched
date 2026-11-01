@@ -1,10 +1,10 @@
 diff --git a/relay/channel/openai/helper.go b/relay/channel/openai/helper.go
-index e52014e26..e13069e05 100644
+index 34a1405222040cb3b6fdc2272395ced4abe1ed93..8141e62c86da687fbd7b23570909ea34c11a5ecf 100644
 --- a/relay/channel/openai/helper.go
 +++ b/relay/channel/openai/helper.go
-@@ -268,3 +268,42 @@ func sendResponsesStreamData(c *gin.Context, streamResponse dto.ResponsesStreamR
+@@ -261,3 +261,41 @@ func HandleFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, lastStream
+ 		}
  	}
- 	_ = helper.ResponseChunkData(c, streamResponse, data)
  }
 +
 +func sendResponsesErrorEvent(c *gin.Context, reason string, sequenceNumber int) {
@@ -35,7 +35,6 @@ index e52014e26..e13069e05 100644
 +		return
 +	}
 +
-+	helper.ExtendWriteDeadline(c)
 +	c.Render(-1, common.CustomEvent{Data: "event: error\n"})
 +	c.Render(-1, common.CustomEvent{Data: "data: " + string(jsonData)})
 +	if err := helper.FlushWriter(c); err != nil {
@@ -46,7 +45,7 @@ index e52014e26..e13069e05 100644
 +	}
 +}
 diff --git a/relay/channel/openai/relay_responses.go b/relay/channel/openai/relay_responses.go
-index 0104b1491..4118995c2 100644
+index 7d98b6eb57e75e2bc8adfed26ceec88ff9afbe6e..c0a1624655f7af65bac51e9115a4d83cbb64090a 100644
 --- a/relay/channel/openai/relay_responses.go
 +++ b/relay/channel/openai/relay_responses.go
 @@ -76,6 +76,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
@@ -59,7 +58,7 @@ index 0104b1491..4118995c2 100644
  
  	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
  
-@@ -86,12 +89,33 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+@@ -86,10 +89,19 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
  			sr.Error(err)
  			return
  		}
@@ -69,7 +68,6 @@ index 0104b1491..4118995c2 100644
  		if streamResponse.Response != nil {
  			data = string(rewriteSGLangResponsesCreatedAt(info, []byte(data), "response.created_at", streamResponse.Response.CreatedAt))
  		}
- 		sendResponsesStreamData(c, streamResponse, data)
  		accumulator.Observe(&streamResponse, common.StringToByteSlice(data))
 +		switch streamResponse.Type {
 +		case "response.completed", "response.done":
@@ -77,6 +75,12 @@ index 0104b1491..4118995c2 100644
 +		case "error", "response.error", "response.failed", "response.incomplete", "response.cancelled", "response.canceled":
 +			sawErrorEvent = true
 +		}
+ 		if err := helper.ResponseChunkData(c, streamResponse, data); err != nil {
+ 			sr.Stop(err)
+ 			return
+@@ -99,6 +111,18 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+ 			sr.Done()
+ 		}
  	})
 +	if info != nil && info.StreamStatus != nil && !sawTerminalEvent && !sawErrorEvent {
 +		nextSequenceNumber := 0
@@ -93,8 +97,112 @@ index 0104b1491..4118995c2 100644
  
  	common.SetContextKey(c, constant.ContextKeyResponseStreamStatus, info.StreamStatus)
  	info.StreamStatus.RequireTerminal()
+diff --git a/relay/channel/openai/relay_responses_billing_test.go b/relay/channel/openai/relay_responses_billing_test.go
+index cf0f9336459cf8da21b811c66cc6a31f972015a0..5857cb7afccae97b53e97a2b76acbcac7ccd1b31 100644
+--- a/relay/channel/openai/relay_responses_billing_test.go
++++ b/relay/channel/openai/relay_responses_billing_test.go
+@@ -18,6 +18,7 @@ import (
+ 	"github.com/QuantumNous/new-api/constant"
+ 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+ 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
++	"github.com/QuantumNous/new-api/relay/helper"
+ 	"github.com/QuantumNous/new-api/relaykit/dto"
+ 	"github.com/QuantumNous/new-api/relaykit/types"
+ 	"github.com/QuantumNous/new-api/service"
+@@ -189,6 +190,7 @@ func TestOaiResponsesStreamHandlerCompletionLifecycle(t *testing.T) {
+ 			usage, apiErr := OaiResponsesStreamHandler(c, info, resp)
+ 			require.Nil(t, apiErr)
+ 			require.NotNil(t, usage)
++			assert.NotContains(t, writer.Body.String(), "event: error\n", "terminal events and downstream failures must not produce a synthetic error")
+ 			require.NotNil(t, info.StreamStatus)
+ 			assert.Equal(t, tc.wantEnd, info.StreamStatus.EndReason)
+ 			assert.Equal(t, tc.responseStatus, info.StreamStatus.ResponseOutcome())
+@@ -221,6 +223,83 @@ func TestOaiResponsesStreamHandlerCompletionLifecycle(t *testing.T) {
+ 	}
+ }
+ 
++type responsesErrorDeadlineWriter struct {
++	*httptest.ResponseRecorder
++	deadlines []time.Time
++	writeErr  error
++}
++
++func (w *responsesErrorDeadlineWriter) SetWriteDeadline(deadline time.Time) error {
++	w.deadlines = append(w.deadlines, deadline)
++	return nil
++}
++
++func (w *responsesErrorDeadlineWriter) Write(p []byte) (int, error) {
++	if w.writeErr != nil {
++		return 0, w.writeErr
++	}
++	return w.ResponseRecorder.Write(p)
++}
++
++func TestResponsesSyntheticErrorUsesStreamWriteBudget(t *testing.T) {
++	for _, tc := range []struct {
++		name     string
++		reason   string
++		sequence int
++		cancel   bool
++		fail     bool
++	}{
++		{name: "inactivity timeout retains prior large event budget", reason: "stream_timeout", sequence: 8},
++		{name: "read error retains prior large event budget", reason: "stream_read_error", sequence: 0},
++		{name: "disconnected client receives no error event", reason: "stream_timeout", cancel: true},
++		{name: "error event write failure aborts delivery", reason: "stream_read_error", fail: true},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			writer := &responsesErrorDeadlineWriter{ResponseRecorder: httptest.NewRecorder()}
++			c, _ := gin.CreateTestContext(writer)
++			ctx, cancel := context.WithCancel(context.Background())
++			t.Cleanup(cancel)
++			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(ctx)
++			helper.SetEventStreamHeaders(c)
++
++			// Seed a large-event budget without waiting for a real slow socket.
++			require.NoError(t, helper.StringData(c, strings.Repeat("x", 3600<<10)))
++			require.NotEmpty(t, writer.deadlines)
++			previousDeadline := writer.deadlines[len(writer.deadlines)-1]
++			writer.Body.Reset()
++			writer.deadlines = nil
++			if tc.cancel {
++				cancel()
++			}
++			if tc.fail {
++				writer.writeErr = errors.New("client stopped reading")
++			}
++
++			sendResponsesErrorEvent(c, tc.reason, tc.sequence)
++
++			if tc.cancel {
++				assert.Empty(t, writer.Body.String())
++				assert.Empty(t, writer.deadlines)
++				return
++			}
++			require.NotEmpty(t, writer.deadlines)
++			assert.True(t, writer.deadlines[0].After(previousDeadline), "error event must keep the existing stream budget")
++			if tc.fail {
++				assert.True(t, c.IsAborted())
++				require.NotEmpty(t, c.Errors)
++				assert.ErrorIs(t, c.Errors.Last().Err, writer.writeErr)
++				assert.Empty(t, writer.Body.String())
++				return
++			}
++			assert.True(t, writer.Flushed)
++			assert.True(t, strings.HasPrefix(writer.Body.String(), "event: error\ndata: "))
++			assert.True(t, strings.HasSuffix(writer.Body.String(), "\n\n"))
++			payload := strings.TrimSuffix(strings.TrimPrefix(writer.Body.String(), "event: error\ndata: "), "\n\n")
++			assert.JSONEq(t, fmt.Sprintf(`{"type":"error","sequence_number":%d,"code":%q,"message":%q,"param":null}`, tc.sequence, tc.reason, tc.reason), payload)
++		})
++	}
++}
++
+ func TestOaiResponsesHandlerCountsOutputCallsNotDeclarations(t *testing.T) {
+ 	gin.SetMode(gin.TestMode)
+ 	operation_setting.SetToolPriceForTest("priced_fn", 5.0)
 diff --git a/relay/common/stream_status.go b/relay/common/stream_status.go
-index 60c849564..955c040e6 100644
+index 60c849564fb0006e6a550c6c53e8383dc7916359..955c040e63bdd1dd269026bf708f4caa64e9da22 100644
 --- a/relay/common/stream_status.go
 +++ b/relay/common/stream_status.go
 @@ -12,7 +12,7 @@ type StreamEndReason string
@@ -107,7 +215,7 @@ index 60c849564..955c040e6 100644
  	StreamEndReasonScannerErr  StreamEndReason = "scanner_error"
  	StreamEndReasonHandlerStop StreamEndReason = "handler_stop"
 diff --git a/relay/common/stream_status_test.go b/relay/common/stream_status_test.go
-index 4936b3a06..d75f2ca67 100644
+index 4936b3a06cd38d142636f3544e6378823886cbf5..d75f2ca674262cc39a24b17cbbe20bc54296d7d6 100644
 --- a/relay/common/stream_status_test.go
 +++ b/relay/common/stream_status_test.go
 @@ -171,7 +171,7 @@ func TestStreamStatus_Summary(t *testing.T) {
