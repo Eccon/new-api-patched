@@ -369,7 +369,7 @@ index 2a81f439d0272afc76d43fbe08cef08e176ca13a..1e68211311836b34dc30cef2e4e83965
  	logCount++ // we don't need accurate count, so no lock here
  	if logCount > maxLogCount && !setupLogWorking {
 diff --git a/middleware/distributor.go b/middleware/distributor.go
-index f9dfa037a19a3493b493f80a64aeeec6694f5cbd..72630bd608b48ccb011e5181221fe2869f62ac4e 100644
+index 8e2af0b81f3afd395229c57ba893aa2ecd5f762a..bfea6d080175254fe71e68703ac10b3104721fc0 100644
 --- a/middleware/distributor.go
 +++ b/middleware/distributor.go
 @@ -33,6 +33,9 @@ type ModelRequest struct {
@@ -414,7 +414,7 @@ index f9dfa037a19a3493b493f80a64aeeec6694f5cbd..72630bd608b48ccb011e5181221fe286
 +			c.Set("relay_timing_body_size_bytes", int64(len(requestBody)))
 +		}
 +	}
- 	if !gjson.ValidBytes(requestBody) {
+ 	if !ojson.ValidBytes(requestBody) {
  		return nil, errors.New("invalid JSON request body")
  	}
 @@ -307,10 +324,20 @@ func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
@@ -985,7 +985,7 @@ index 7721d4580ea4fe0803924d5cec561bef198fc871..6bdf80c54600e697d407e9a5d5f0c62f
 +	require.NotContains(t, logs.String(), "relay upstream request written")
 +}
 diff --git a/relay/common/relay_info.go b/relay/common/relay_info.go
-index bd3da246807b0e3ea257f7d582a8dba6860c73fb..4b2f700eb9574cc4c1947433bbb3e87c48011234 100644
+index 8129bdaa0fe4b50be0db1d4f71f792abf191b52c..8a8c5a0c3b31568f5abd92126954870d28843bad 100644
 --- a/relay/common/relay_info.go
 +++ b/relay/common/relay_info.go
 @@ -80,6 +80,101 @@ type TokenCountMeta struct {
