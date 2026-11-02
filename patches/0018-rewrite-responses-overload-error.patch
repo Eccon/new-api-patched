@@ -1,5 +1,5 @@
 diff --git a/relay/channel/openai/relay_responses.go b/relay/channel/openai/relay_responses.go
-index c0a1624655f7af65bac51e9115a4d83cbb64090a..54aabcb157fa892ef578a14d9d5219a9b96afbe7 100644
+index d7a26ba1f119b2efd021d2f5db87bdb5883d9644..2675b63d33ba764825e12ae36b2744b4e2d883c6 100644
 --- a/relay/channel/openai/relay_responses.go
 +++ b/relay/channel/openai/relay_responses.go
 @@ -1,6 +1,7 @@
@@ -10,15 +10,15 @@ index c0a1624655f7af65bac51e9115a4d83cbb64090a..54aabcb157fa892ef578a14d9d5219a9
  	"fmt"
  	"io"
  	"net/http"
-@@ -92,6 +93,17 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+@@ -91,6 +92,17 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
  		if streamResponse.SequenceNumber != nil {
  			lastSequenceNumber = *streamResponse.SequenceNumber
  		}
-+		responseErrorCode := gjson.Get(data, "response.error.code").String()
++		responseErrorCode := ojson.Get(data, "response.error.code").String()
 +		isServerOverloaded := streamResponse.Type == "response.failed" &&
 +			(responseErrorCode == "server_is_overloaded" || responseErrorCode == "slow_down")
 +		if isServerOverloaded {
-+			patched, err := sjson.Set(data, "response.error.code", "server_error")
++			patched, err := ojson.Set(data, "response.error.code", "server_error")
 +			if err != nil {
 +				logger.LogError(c, "failed to rewrite responses overload error: "+err.Error())
 +			} else {
@@ -28,7 +28,7 @@ index c0a1624655f7af65bac51e9115a4d83cbb64090a..54aabcb157fa892ef578a14d9d5219a9
  		if streamResponse.Response != nil {
  			data = string(rewriteSGLangResponsesCreatedAt(info, []byte(data), "response.created_at", streamResponse.Response.CreatedAt))
  		}
-@@ -101,6 +113,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
+@@ -100,6 +112,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
  			sawTerminalEvent = true
  		case "error", "response.error", "response.failed", "response.incomplete", "response.cancelled", "response.canceled":
  			sawErrorEvent = true
