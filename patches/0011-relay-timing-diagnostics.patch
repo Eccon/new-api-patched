@@ -1,8 +1,8 @@
 diff --git a/common/constants.go b/common/constants.go
-index 7d8ce8504fe27fda989b1bf5a3d469e37f3427aa..96e132650665ff8f07ca029d2908443d15a47d99 100644
+index 8029ef56947129e3b3e6198a8398ad1524fd402a..01c1a34dd7fe51e5e112fc099bed92a192ac6538 100644
 --- a/common/constants.go
 +++ b/common/constants.go
-@@ -187,6 +187,8 @@ var RelayIdleConnTimeout int // unit is second
+@@ -190,6 +190,8 @@ var RelayHTTP2PingTimeout int     // seconds to wait for a PING acknowledgement
  // headers arrive, streaming is unaffected.
  var RelayResponseHeaderTimeout int // unit is second
  var RelayNonStreamTimeout int      // unit is second
@@ -134,11 +134,11 @@ index de692e1ef6446fc84f1f02c7885de8d82b1bd30d..b08c28c60ea27ebcf9eb92ca46b9e633
  	return nil
  }
 diff --git a/common/init.go b/common/init.go
-index 3e61f8555c5f694ba014658d1d786757907175bf..5ab4502f50a71a7e11e9bb65a26bf9a3d0fac556 100644
+index e370672fa633f76942f884ed3ea8411553765d53..c666f18f3e57c8addcb9da9e1d58c3d2119191bf 100644
 --- a/common/init.go
 +++ b/common/init.go
-@@ -115,6 +115,8 @@ func InitEnv() {
- 	RelayIdleConnTimeout = GetEnvOrDefault("RELAY_IDLE_CONN_TIMEOUT", 90)
+@@ -117,6 +117,8 @@ func InitEnv() {
+ 	RelayHTTP2PingTimeout = GetEnvOrDefault("RELAY_HTTP2_PING_TIMEOUT", 15)
  	RelayResponseHeaderTimeout = GetEnvOrDefault("RELAY_RESPONSE_HEADER_TIMEOUT", 1800)
  	RelayNonStreamTimeout = GetEnvOrDefault("RELAY_NON_STREAM_TIMEOUT", -1)
 +	RelayTimingLogEnabled = GetEnvOrDefaultBool("RELAY_TIMING_LOG_ENABLED", false)
