@@ -1,8 +1,8 @@
 diff --git a/common/constants.go b/common/constants.go
-index c7aff5c40..e5b434c31 100644
+index 1f5a75299cfa0080c4f0ff768254c3ab6554250d..531a6d8577ead9be407b67cea7f579d7f8ba23e5 100644
 --- a/common/constants.go
 +++ b/common/constants.go
-@@ -187,6 +187,13 @@ var RelayIdleConnTimeout int // unit is second
+@@ -191,6 +191,13 @@ var RelayHTTP2PingTimeout int     // seconds to wait for a PING acknowledgement
  var RelayResponseHeaderTimeout int // unit is second
  var RelayMaxIdleConns int
  var RelayMaxIdleConnsPerHost int
@@ -17,10 +17,10 @@ index c7aff5c40..e5b434c31 100644
  var GeminiSafetySetting string
  
 diff --git a/common/init.go b/common/init.go
-index 9f7b91856..a5589f2fe 100644
+index e0ab676d120fd3ece7a88829a6c9c80d857e72e8..8cbaf599231b354ed657bc33f75e4ea2e370005d 100644
 --- a/common/init.go
 +++ b/common/init.go
-@@ -116,6 +116,16 @@ func InitEnv() {
+@@ -118,6 +118,16 @@ func InitEnv() {
  	RelayResponseHeaderTimeout = GetEnvOrDefault("RELAY_RESPONSE_HEADER_TIMEOUT", 1800)
  	RelayMaxIdleConns = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS", 500)
  	RelayMaxIdleConnsPerHost = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS_PER_HOST", 100)
@@ -37,7 +37,7 @@ index 9f7b91856..a5589f2fe 100644
  
  	// Initialize string variables with GetEnvOrDefaultString
  	GeminiSafetySetting = GetEnvOrDefaultString("GEMINI_SAFETY_SETTING", "BLOCK_NONE")
-@@ -147,6 +157,20 @@ func InitEnv() {
+@@ -149,6 +159,20 @@ func InitEnv() {
  	initConstantEnv()
  }
  
@@ -60,7 +60,7 @@ index 9f7b91856..a5589f2fe 100644
  	UserSessionIssuanceLimit = positiveUserSessionEnv("USER_SESSION_ISSUANCE_LIMIT", DefaultUserSessionIssuanceLimit)
 diff --git a/common/relay_network_family_test.go b/common/relay_network_family_test.go
 new file mode 100644
-index 000000000..856a5b52c
+index 0000000000000000000000000000000000000000..856a5b52cf6906effeff75fc34c1d7855dd818f1
 --- /dev/null
 +++ b/common/relay_network_family_test.go
 @@ -0,0 +1,28 @@
@@ -93,10 +93,10 @@ index 000000000..856a5b52c
 +	}
 +}
 diff --git a/service/http_client.go b/service/http_client.go
-index 5f50863c4..eaed751f0 100644
+index 44bd316d5e6eb923334d68dae9fb81973bf88e88..fa4241e959f4f80ec80ec7764d91a42e7f293b5e 100644
 --- a/service/http_client.go
 +++ b/service/http_client.go
-@@ -310,6 +310,27 @@ func configureProxyTransport(transport *http.Transport, proxyURL *url.URL) error
+@@ -318,6 +318,27 @@ func configureProxyTransport(transport *http.Transport, proxyURL *url.URL) error
  	}
  }
  
@@ -124,7 +124,7 @@ index 5f50863c4..eaed751f0 100644
  func newTransportFactory(proxyURL *url.URL, tlsConfig *tls.Config) (func() *http.Transport, error) {
  	// Validate proxy configuration once before creating shard transports.
  	if proxyURL != nil {
-@@ -324,6 +345,7 @@ func newTransportFactory(proxyURL *url.URL, tlsConfig *tls.Config) (func() *http
+@@ -332,6 +353,7 @@ func newTransportFactory(proxyURL *url.URL, tlsConfig *tls.Config) (func() *http
  			_ = configureProxyTransport(transport, proxyURL)
  		} else {
  			transport.Proxy = http.ProxyFromEnvironment
@@ -133,14 +133,10 @@ index 5f50863c4..eaed751f0 100644
  		if tlsConfig != nil {
  			transport.TLSClientConfig = tlsConfig.Clone()
 diff --git a/service/http_client_transport_test.go b/service/http_client_transport_test.go
-index d274c56a4..b390bb2a5 100644
+index 305a9d741d012e4f0b359646dac3a3bd09854a76..8b7238951a701a18019111958f43d87da609dc63 100644
 --- a/service/http_client_transport_test.go
 +++ b/service/http_client_transport_test.go
-@@ -1,14 +1,17 @@
- package service
- 
- import (
-+	"context"
+@@ -6,11 +6,13 @@ import (
  	"crypto/tls"
  	"crypto/x509"
  	"encoding/pem"
@@ -154,7 +150,7 @@ index d274c56a4..b390bb2a5 100644
  	"sync"
  	"sync/atomic"
  	"testing"
-@@ -47,6 +50,177 @@ func initDefaultHTTPClientFixture(t *testing.T) *http.Client {
+@@ -55,6 +57,177 @@ func initDefaultHTTPClientFixture(t *testing.T) *http.Client {
  	return httpClient
  }
  
