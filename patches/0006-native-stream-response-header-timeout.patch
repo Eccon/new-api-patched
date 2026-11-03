@@ -1,8 +1,8 @@
 diff --git a/common/constants.go b/common/constants.go
-index 6799fdc5e..7d8ce8504 100644
+index 531a6d8577ead9be407b67cea7f579d7f8ba23e5..8029ef56947129e3b3e6198a8398ad1524fd402a 100644
 --- a/common/constants.go
 +++ b/common/constants.go
-@@ -186,6 +186,7 @@ var RelayIdleConnTimeout int // unit is second
+@@ -189,6 +189,7 @@ var RelayHTTP2PingTimeout int     // seconds to wait for a PING acknowledgement
  // ResponseHeaderTimeout only bounds the wait for the response headers; once the
  // headers arrive, streaming is unaffected.
  var RelayResponseHeaderTimeout int // unit is second
@@ -11,22 +11,22 @@ index 6799fdc5e..7d8ce8504 100644
  var RelayMaxIdleConnsPerHost int
  var RelayDirectNetworkFamily = RelayDirectNetworkFamilyAuto
 diff --git a/common/init.go b/common/init.go
-index a5589f2fe..59fe443b3 100644
+index 8cbaf599231b354ed657bc33f75e4ea2e370005d..e370672fa633f76942f884ed3ea8411553765d53 100644
 --- a/common/init.go
 +++ b/common/init.go
-@@ -114,6 +114,7 @@ func InitEnv() {
- 	RelayTimeout = GetEnvOrDefault("RELAY_TIMEOUT", 0)
- 	RelayIdleConnTimeout = GetEnvOrDefault("RELAY_IDLE_CONN_TIMEOUT", 90)
+@@ -116,6 +116,7 @@ func InitEnv() {
+ 	RelayHTTP2PingIdleTimeout = GetEnvOrDefault("RELAY_HTTP2_PING_IDLE_TIMEOUT", 0)
+ 	RelayHTTP2PingTimeout = GetEnvOrDefault("RELAY_HTTP2_PING_TIMEOUT", 15)
  	RelayResponseHeaderTimeout = GetEnvOrDefault("RELAY_RESPONSE_HEADER_TIMEOUT", 1800)
 +	RelayNonStreamTimeout = GetEnvOrDefault("RELAY_NON_STREAM_TIMEOUT", -1)
  	RelayMaxIdleConns = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS", 500)
  	RelayMaxIdleConnsPerHost = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS_PER_HOST", 100)
  	relayDirectNetworkFamilyRaw := GetEnvOrDefaultString("RELAY_DIRECT_NETWORK_FAMILY", RelayDirectNetworkFamilyAuto)
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index fc4abefdb..69558ff31 100644
+index b35a232c9454e0ef55c9482dea5ff299b9a5a666..cdd16d533f091aa275e7dc7dc3efed43128706c1 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
-@@ -531,7 +531,7 @@ func keepUpstreamRedirectResponse(_ *http.Request, _ []*http.Request) error {
+@@ -460,7 +460,7 @@ func keepUpstreamRedirectResponse(_ *http.Request, _ []*http.Request) error {
  }
  
  func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
@@ -35,7 +35,7 @@ index fc4abefdb..69558ff31 100644
  	if err != nil {
  		return nil, fmt.Errorf("new proxy http client failed: %w", err)
  	}
-@@ -575,6 +575,14 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -495,6 +495,14 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  	logUpstreamUserAgent(c, req)
  	resp, err := relayClient.Do(req)
  	if err != nil {
@@ -50,7 +50,7 @@ index fc4abefdb..69558ff31 100644
  		logger.LogError(c, common2.LogText("do request failed: %s", err.Error()))
  		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
  	}
-@@ -600,6 +608,15 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -520,6 +528,15 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  	return resp, nil
  }
  
@@ -67,7 +67,7 @@ index fc4abefdb..69558ff31 100644
  	fullRequestURL, err := a.BuildRequestURL(info)
  	if err != nil {
 diff --git a/relay/channel/api_request_test.go b/relay/channel/api_request_test.go
-index 8662c9db1..7721d4580 100644
+index 8662c9db1ed3f8110512170b0469c957e6413865..7721d4580ea4fe0803924d5cec561bef198fc871 100644
 --- a/relay/channel/api_request_test.go
 +++ b/relay/channel/api_request_test.go
 @@ -2,6 +2,8 @@ package channel
@@ -105,10 +105,10 @@ index 8662c9db1..7721d4580 100644
 +	}
 +}
 diff --git a/relay/channel/aws/relay-aws.go b/relay/channel/aws/relay-aws.go
-index cfded9af4..debfec70a 100644
+index 49f0fc982070981babb21e1be8bb97cbbe4c7d80..2d51c8673bbf81556dcbe7e6a60ad54e5e692219 100644
 --- a/relay/channel/aws/relay-aws.go
 +++ b/relay/channel/aws/relay-aws.go
-@@ -23,6 +23,7 @@ import (
+@@ -24,6 +24,7 @@ import (
  
  	"github.com/QuantumNous/new-api/setting/model_setting"
  	"github.com/aws/aws-sdk-go-v2/aws"
@@ -116,7 +116,7 @@ index cfded9af4..debfec70a 100644
  	"github.com/aws/aws-sdk-go-v2/credentials"
  	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
  	bedrockruntimeTypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
-@@ -40,6 +41,8 @@ func getAwsErrorStatusCode(err error) int {
+@@ -41,6 +42,8 @@ func getAwsErrorStatusCode(err error) int {
  	return http.StatusInternalServerError
  }
  
@@ -125,7 +125,7 @@ index cfded9af4..debfec70a 100644
  func newAwsInvokeContext(parent context.Context) (context.Context, context.CancelFunc) {
  	if common.RelayTimeout <= 0 {
  		return context.WithCancel(parent)
-@@ -60,11 +63,30 @@ func newAwsInvokeError(requestContext context.Context, err error, operation stri
+@@ -61,11 +64,30 @@ func newAwsInvokeError(requestContext context.Context, err error, operation stri
  	)
  }
  
@@ -157,7 +157,7 @@ index cfded9af4..debfec70a 100644
  
  	awsSecret := strings.Split(info.ApiKey, "|")
  	var client *bedrockruntime.Client
-@@ -76,6 +98,7 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
+@@ -77,6 +99,7 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
  			Region:                  region,
  			BearerAuthTokenProvider: bearer.StaticTokenProvider{Token: bearer.Token{Value: apiKey}},
  			HTTPClient:              httpClient,
@@ -165,7 +165,7 @@ index cfded9af4..debfec70a 100644
  		})
  	case 3:
  		ak := awsSecret[0]
-@@ -85,6 +108,7 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
+@@ -86,6 +109,7 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
  			Region:      region,
  			Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(ak, sk, "")),
  			HTTPClient:  httpClient,
@@ -174,10 +174,10 @@ index cfded9af4..debfec70a 100644
  	default:
  		return nil, errors.New("invalid aws secret key")
 diff --git a/relay/channel/aws/relay_aws_test.go b/relay/channel/aws/relay_aws_test.go
-index 859443693..2a16f593b 100644
+index d9680c18e4a2dc5c645931c39ac2ee3110a06d4d..b6b8792b3b503d8f6b545840253f25312a6cdfab 100644
 --- a/relay/channel/aws/relay_aws_test.go
 +++ b/relay/channel/aws/relay_aws_test.go
-@@ -22,18 +22,70 @@ import (
+@@ -22,6 +22,7 @@ import (
  	relaycommon "github.com/QuantumNous/new-api/relay/common"
  	"github.com/QuantumNous/new-api/relaykit/dto"
  	relaytypes "github.com/QuantumNous/new-api/relaykit/types"
@@ -185,7 +185,7 @@ index 859443693..2a16f593b 100644
  	"github.com/QuantumNous/new-api/setting/model_setting"
  	"github.com/aws/aws-sdk-go-v2/aws"
  	"github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream"
- 	"github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream/eventstreamapi"
+@@ -29,11 +30,62 @@ import (
  	"github.com/aws/aws-sdk-go-v2/aws/signer/v4"
  	"github.com/aws/aws-sdk-go-v2/credentials"
  	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
@@ -248,7 +248,7 @@ index 859443693..2a16f593b 100644
  const awsTestModel = "anthropic.claude-3-5-sonnet-20240620-v1:0"
  
  type awsHTTPClientFunc func(*http.Request) (*http.Response, error)
-@@ -149,6 +201,43 @@ func newAwsStreamResponse(request *http.Request, body io.ReadCloser) *http.Respo
+@@ -150,6 +202,43 @@ func newAwsStreamResponse(request *http.Request, body io.ReadCloser) *http.Respo
  	}
  }
  
@@ -293,10 +293,10 @@ index 859443693..2a16f593b 100644
  	t.Parallel()
  
 diff --git a/service/http_client.go b/service/http_client.go
-index eaed751f0..a90558b14 100644
+index fa4241e959f4f80ec80ec7764d91a42e7f293b5e..77dcc7d195ec97a1c0e35876e5941f7aa14b5575 100644
 --- a/service/http_client.go
 +++ b/service/http_client.go
-@@ -436,6 +436,40 @@ func GetHttpClientWithProxySettings(rawProxyURL string, settings dto.ChannelSett
+@@ -444,6 +444,40 @@ func GetHttpClientWithProxySettings(rawProxyURL string, settings dto.ChannelSett
  	})
  }
  
@@ -338,18 +338,10 @@ index eaed751f0..a90558b14 100644
  	defaultPolicy := defaultHTTPTransportPolicy()
  	if policy == defaultPolicy {
 diff --git a/service/http_client_transport_test.go b/service/http_client_transport_test.go
-index b390bb2a5..00e3b47a8 100644
+index 8b7238951a701a18019111958f43d87da609dc63..87dfe058127997337d89ecbe6ac1241104c761a5 100644
 --- a/service/http_client_transport_test.go
 +++ b/service/http_client_transport_test.go
-@@ -15,6 +15,7 @@ import (
- 	"sync"
- 	"sync/atomic"
- 	"testing"
-+	"time"
- 
- 	"github.com/QuantumNous/new-api/common"
- 	"github.com/QuantumNous/new-api/relaykit/dto"
-@@ -543,6 +544,67 @@ func TestChannelTLSInsecureSkipVerifyAcceptsUntrustedUpstream(t *testing.T) {
+@@ -550,6 +550,67 @@ func TestChannelTLSInsecureSkipVerifyAcceptsUntrustedUpstream(t *testing.T) {
  	}
  }
  
