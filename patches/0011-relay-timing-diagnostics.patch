@@ -1,3 +1,59 @@
+diff --git a/common/body_storage_test.go b/common/body_storage_test.go
+index 75f007c8d8b0397c91fbad5c8e01fe97b7d40d07..318d85b68af4ccd43ae13cb2bae5f0808847ae61 100644
+--- a/common/body_storage_test.go
++++ b/common/body_storage_test.go
+@@ -3,6 +3,7 @@ package common
+ import (
+ 	"bytes"
+ 	"encoding/json"
++	"errors"
+ 	"io"
+ 	"mime/multipart"
+ 	"net/http"
+@@ -68,7 +69,18 @@ func TestReplayableBodiesOverOneStorageKeepOwnCursors(t *testing.T) {
+ 	}
+ }
+ 
++type timingReaderBodyStorage struct {
++	BodyStorage
++}
++
++func (timingReaderBodyStorage) Bytes() ([]byte, error) {
++	return nil, errors.New("disk decode with timing must use readers")
++}
++
+ func TestUnmarshalBodyReusableNoCopySurvivesBodyReplacement(t *testing.T) {
++	previousTiming := RelayTimingLogEnabled
++	RelayTimingLogEnabled = true
++	t.Cleanup(func() { RelayTimingLogEnabled = previousTiming })
+ 	previous := GetDiskCacheConfig()
+ 	t.Cleanup(func() { SetDiskCacheConfig(previous) })
+ 	input := strings.Repeat("image-data", 32<<10)
+@@ -87,13 +99,23 @@ func TestUnmarshalBodyReusableNoCopySurvivesBodyReplacement(t *testing.T) {
+ 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+ 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(payload))
+ 			c.Request.Header.Set("Content-Type", "application/json")
+-			c.Set(KeyBodyStorage, storage)
++			if disk {
++				c.Set(KeyBodyStorage, timingReaderBodyStorage{storage})
++			} else {
++				c.Set(KeyBodyStorage, storage)
++			}
+ 			var decoded struct {
+ 				Model    string          `json:"model"`
+ 				Input    string          `json:"input"`
+ 				Metadata json.RawMessage `json:"metadata"`
+ 			}
+ 			require.NoError(t, UnmarshalBodyReusableNoCopy(c, &decoded))
++			for _, key := range []string{"relay_timing_body_storage_ready_at", "relay_timing_body_decode_done_at", "relay_timing_body_reset_done_at"} {
++				require.Contains(t, c.Keys, key)
++			}
++			_, bytesReady := c.Get("relay_timing_body_bytes_ready_at")
++			assert.Equal(t, !disk, bytesReady)
++			assert.Equal(t, int64(len(payload)), c.GetInt64("relay_timing_body_size_bytes"))
+ 			assert.Equal(t, "first", decoded.Model)
+ 			assert.Equal(t, input, decoded.Input)
+ 			assert.Equal(t, `{"count":0,"enabled":false}`, string(decoded.Metadata))
 diff --git a/common/constants.go b/common/constants.go
 index 8029ef56947129e3b3e6198a8398ad1524fd402a..01c1a34dd7fe51e5e112fc099bed92a192ac6538 100644
 --- a/common/constants.go
@@ -12,10 +68,10 @@ index 8029ef56947129e3b3e6198a8398ad1524fd402a..01c1a34dd7fe51e5e112fc099bed92a1
  var RelayMaxIdleConnsPerHost int
  var RelayDirectNetworkFamily = RelayDirectNetworkFamilyAuto
 diff --git a/common/gin.go b/common/gin.go
-index de692e1ef6446fc84f1f02c7885de8d82b1bd30d..b08c28c60ea27ebcf9eb92ca46b9e63391074321 100644
+index a1edacb1be25a470c79e907450e9f477e947216b..64a4ee7ea90abb18977720e9c517e6568f3ac780 100644
 --- a/common/gin.go
 +++ b/common/gin.go
-@@ -27,6 +27,46 @@ const keyBodyReadError = "key_body_read_error"
+@@ -26,6 +26,46 @@ const keyBodyReadError = "key_body_read_error"
  
  var ErrRequestBodyTooLarge = errors.New("request body too large")
  
@@ -62,7 +118,7 @@ index de692e1ef6446fc84f1f02c7885de8d82b1bd30d..b08c28c60ea27ebcf9eb92ca46b9e633
  func IsRequestBodyTooLargeError(err error) bool {
  	if err == nil {
  		return false
-@@ -42,9 +82,11 @@ func GetRequestBody(c *gin.Context) (io.Seeker, error) {
+@@ -41,9 +81,11 @@ func GetRequestBody(c *gin.Context) (io.Seeker, error) {
  	// 首先检查是否有 BodyStorage 缓存
  	if storage, exists := c.Get(KeyBodyStorage); exists && storage != nil {
  		if bs, ok := storage.(BodyStorage); ok {
@@ -74,7 +130,7 @@ index de692e1ef6446fc84f1f02c7885de8d82b1bd30d..b08c28c60ea27ebcf9eb92ca46b9e633
  			return bs, nil
  		}
  	}
-@@ -58,6 +100,8 @@ func GetRequestBody(c *gin.Context) (io.Seeker, error) {
+@@ -57,6 +99,8 @@ func GetRequestBody(c *gin.Context) (io.Seeker, error) {
  				return nil, err
  			}
  			c.Set(KeyBodyStorage, bs)
@@ -83,7 +139,7 @@ index de692e1ef6446fc84f1f02c7885de8d82b1bd30d..b08c28c60ea27ebcf9eb92ca46b9e633
  			return bs, nil
  		}
  	}
-@@ -77,6 +121,7 @@ func GetRequestBody(c *gin.Context) (io.Seeker, error) {
+@@ -76,6 +120,7 @@ func GetRequestBody(c *gin.Context) (io.Seeker, error) {
  	contentLength := c.Request.ContentLength
  
  	// 使用新的存储系统
@@ -91,7 +147,7 @@ index de692e1ef6446fc84f1f02c7885de8d82b1bd30d..b08c28c60ea27ebcf9eb92ca46b9e633
  	storage, err := CreateBodyStorageFromReader(c.Request.Body, contentLength, maxBytes)
  	_ = c.Request.Body.Close()
  
-@@ -90,6 +135,7 @@ func GetRequestBody(c *gin.Context) (io.Seeker, error) {
+@@ -89,6 +134,7 @@ func GetRequestBody(c *gin.Context) (io.Seeker, error) {
  
  	// 缓存存储对象
  	c.Set(KeyBodyStorage, storage)
@@ -99,28 +155,25 @@ index de692e1ef6446fc84f1f02c7885de8d82b1bd30d..b08c28c60ea27ebcf9eb92ca46b9e633
  
  	return storage, nil
  }
-@@ -134,9 +180,11 @@ func UnmarshalBodyReusable(c *gin.Context, v any) error {
- 		if err := DecodeJson(storage, v); err != nil {
- 			return err
+@@ -149,6 +195,8 @@ func unmarshalBodyReusable(c *gin.Context, v any, noCopy bool) error {
+ 			if readErr != nil {
+ 				return readErr
+ 			}
++			setRelayTimingTimeOnce(c, "relay_timing_body_bytes_ready_at")
++			setRelayTimingInt64Once(c, "relay_timing_body_size_bytes", int64(len(requestBody)))
+ 			if noCopy {
+ 				err = UnmarshalNoCopy(requestBody, v)
+ 			} else {
+@@ -160,6 +208,8 @@ func unmarshalBodyReusable(c *gin.Context, v any, noCopy bool) error {
+ 		if readErr != nil {
+ 			return readErr
  		}
-+		setRelayTimingTimeOnce(c, "relay_timing_body_decode_done_at")
- 		if _, seekErr := storage.Seek(0, io.SeekStart); seekErr != nil {
- 			return seekErr
- 		}
-+		setRelayTimingTimeOnce(c, "relay_timing_body_reset_done_at")
- 		c.Request.Body = io.NopCloser(storage)
- 		return nil
- 	}
-@@ -145,6 +193,8 @@ func UnmarshalBodyReusable(c *gin.Context, v any) error {
- 	if err != nil {
- 		return err
- 	}
-+	setRelayTimingTimeOnce(c, "relay_timing_body_bytes_ready_at")
-+	setRelayTimingInt64Once(c, "relay_timing_body_size_bytes", int64(len(requestBody)))
- 	if strings.HasPrefix(contentType, "application/json") {
- 		err = Unmarshal(requestBody, v)
- 	} else if strings.Contains(contentType, gin.MIMEPOSTForm) {
-@@ -158,10 +208,12 @@ func UnmarshalBodyReusable(c *gin.Context, v any) error {
++		setRelayTimingTimeOnce(c, "relay_timing_body_bytes_ready_at")
++		setRelayTimingInt64Once(c, "relay_timing_body_size_bytes", int64(len(requestBody)))
+ 		err = parseFormData(requestBody, v)
+ 	case strings.Contains(contentType, gin.MIMEMultipartPOSTForm):
+ 		err = parseMultipartFormData(c, v)
+@@ -167,10 +217,12 @@ func unmarshalBodyReusable(c *gin.Context, v any, noCopy bool) error {
  	if err != nil {
  		return err
  	}
@@ -134,7 +187,7 @@ index de692e1ef6446fc84f1f02c7885de8d82b1bd30d..b08c28c60ea27ebcf9eb92ca46b9e633
  	return nil
  }
 diff --git a/common/init.go b/common/init.go
-index e370672fa633f76942f884ed3ea8411553765d53..c666f18f3e57c8addcb9da9e1d58c3d2119191bf 100644
+index 2c99ccf379f491a0e0d3c55dde84dacb308c0aee..eba6e8f84ad82a611df56fbfb48bfdd4edc8a87d 100644
 --- a/common/init.go
 +++ b/common/init.go
 @@ -117,6 +117,8 @@ func InitEnv() {
@@ -147,10 +200,10 @@ index e370672fa633f76942f884ed3ea8411553765d53..c666f18f3e57c8addcb9da9e1d58c3d2
  	RelayMaxIdleConnsPerHost = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS_PER_HOST", 100)
  	relayDirectNetworkFamilyRaw := GetEnvOrDefaultString("RELAY_DIRECT_NETWORK_FAMILY", RelayDirectNetworkFamilyAuto)
 diff --git a/common/sys_log.go b/common/sys_log.go
-index 0f46e662b0dd93c8c8b86f99b3d60f9b3b526d30..6e198900ea80008886ce7de6f6d218e347d01201 100644
+index c44b2b49b9f868d0445853e642a0eff12f563897..06bf087a74d83f38957208a34264478cd1ffc2cd 100644
 --- a/common/sys_log.go
 +++ b/common/sys_log.go
-@@ -40,21 +40,21 @@ func (w currentLogWriter) Write(p []byte) (int, error) {
+@@ -41,21 +41,21 @@ func (w currentLogWriter) Write(p []byte) (int, error) {
  func SysLog(s string) {
  	t := time.Now()
  	LogWriterMu.RLock()
@@ -176,10 +229,10 @@ index 0f46e662b0dd93c8c8b86f99b3d60f9b3b526d30..6e198900ea80008886ce7de6f6d218e3
  	os.Exit(1)
  }
 diff --git a/controller/relay.go b/controller/relay.go
-index bee5ca3aadd0cd1d6afc92fd968778028296f93d..3ef22df9918bc44c00ab7756ec53be6a4e46b502 100644
+index 88660c2d8acd68687e953d95ec591a82d258af92..a1410cf413678ba052f0b7260a7f0cdec59f55cd 100644
 --- a/controller/relay.go
 +++ b/controller/relay.go
-@@ -69,7 +69,130 @@ func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewA
+@@ -70,7 +70,130 @@ func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewA
  	return err
  }
  
@@ -293,7 +346,7 @@ index bee5ca3aadd0cd1d6afc92fd968778028296f93d..3ef22df9918bc44c00ab7756ec53be6a
 +		relayTimingDuration(t.RequestValidated, t.RelayInfoReady),
 +		relayTimingDuration(t.RelayInfoReady, t.TokenMetaReady),
 +		relayTimingDuration(t.TokenMetaReady, t.SensitiveChecked),
-+		relayTimingDuration(t.SensitiveChecked, t.TokensEstimated),
++		relayTimingDuration(t.TokenMetaReady, t.TokensEstimated),
 +		relayTimingDuration(t.TokensEstimated, t.PriceReady),
 +		relayTimingDuration(t.PriceReady, t.BillingReady),
 +		relayTimingDuration(start, end),
@@ -310,8 +363,8 @@ index bee5ca3aadd0cd1d6afc92fd968778028296f93d..3ef22df9918bc44c00ab7756ec53be6a
  
  	requestId := c.GetString(common.RequestIdKey)
  	//group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
-@@ -121,6 +244,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
- 	}()
+@@ -146,6 +269,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+ 	}
  
  	request, err := helper.GetAndValidateRequest(c, relayFormat)
 +	var requestValidated time.Time
@@ -321,7 +374,7 @@ index bee5ca3aadd0cd1d6afc92fd968778028296f93d..3ef22df9918bc44c00ab7756ec53be6a
  	if err != nil {
  		// Map "request body too large" to 413 so clients can handle it correctly
  		if common.IsRequestBodyTooLargeError(err) || errors.Is(err, common.ErrRequestBodyTooLarge) {
-@@ -136,6 +263,22 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+@@ -161,6 +288,22 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
  		newAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
  		return
  	}
@@ -341,10 +394,10 @@ index bee5ca3aadd0cd1d6afc92fd968778028296f93d..3ef22df9918bc44c00ab7756ec53be6a
 +		relayInfo.Timing.BodySizeBytes = c.GetInt64("relay_timing_body_size_bytes")
 +		relayInfo.Timing.BodyStorageType = c.GetString("relay_timing_body_storage_type")
 +	}
+ 	relayInfo.SetRequestPluginIngress(ingressSteps, ingressRecord)
  
  	defer func() {
- 		recovered := recover()
-@@ -160,6 +303,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+@@ -186,6 +329,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
  	if newAPIError = relay.PrepareRequestBilling(c, relayInfo); newAPIError != nil {
  		return
  	}
@@ -355,6 +408,65 @@ index bee5ca3aadd0cd1d6afc92fd968778028296f93d..3ef22df9918bc44c00ab7756ec53be6a
  	defer func() {
  		newAPIError = relay.RefundFailedRequestBilling(c, relayInfo, newAPIError)
  	}()
+diff --git a/controller/relay_timing_test.go b/controller/relay_timing_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..8c905856cba3da3789f17f3bfe2479d7986d45f9
+--- /dev/null
++++ b/controller/relay_timing_test.go
+@@ -0,0 +1,53 @@
++package controller
++
++import (
++	"bytes"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/QuantumNous/new-api/common"
++	relaycommon "github.com/QuantumNous/new-api/relay/common"
++	"github.com/QuantumNous/new-api/relaykit/types"
++	"github.com/gin-gonic/gin"
++	"github.com/stretchr/testify/require"
++)
++
++func TestRelayPreflightTimingWithoutSensitiveCheck(t *testing.T) {
++	previousTiming := common.RelayTimingLogEnabled
++	common.RelayTimingLogEnabled = true
++	t.Cleanup(func() { common.RelayTimingLogEnabled = previousTiming })
++
++	var output bytes.Buffer
++	common.LogWriterMu.Lock()
++	previousWriter := gin.DefaultWriter
++	gin.DefaultWriter = &output
++	common.LogWriterMu.Unlock()
++	t.Cleanup(func() {
++		common.LogWriterMu.Lock()
++		gin.DefaultWriter = previousWriter
++		common.LogWriterMu.Unlock()
++	})
++
++	c, _ := gin.CreateTestContext(httptest.NewRecorder())
++	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
++	start := time.Now()
++	info := &relaycommon.RelayInfo{
++		OriginModelName: "test-model",
++		Timing: relaycommon.RelayTimingInfo{
++			RequestReceivedAt: start,
++			TokenMetaReady:    start.Add(10 * time.Millisecond),
++			TokensEstimated:   start.Add(35 * time.Millisecond),
++			PriceReady:        start.Add(40 * time.Millisecond),
++			BillingReady:      start.Add(50 * time.Millisecond),
++		},
++	}
++	logRelayPreflightTiming(c, types.RelayFormatOpenAIResponses, info)
++	line := output.String()
++	require.Equal(t, 2, strings.Count(line, "sensitive_check=-"))
++	require.Contains(t, line, "token_estimate=25ms")
++	require.Contains(t, line, "billing=50ms")
++	require.True(t, info.Timing.SensitiveChecked.IsZero())
++}
 diff --git a/logger/logger.go b/logger/logger.go
 index 2a81f439d0272afc76d43fbe08cef08e176ca13a..1e68211311836b34dc30cef2e4e8396573603d9f 100644
 --- a/logger/logger.go
@@ -369,7 +481,7 @@ index 2a81f439d0272afc76d43fbe08cef08e176ca13a..1e68211311836b34dc30cef2e4e83965
  	logCount++ // we don't need accurate count, so no lock here
  	if logCount > maxLogCount && !setupLogWorking {
 diff --git a/middleware/distributor.go b/middleware/distributor.go
-index 8e2af0b81f3afd395229c57ba893aa2ecd5f762a..bfea6d080175254fe71e68703ac10b3104721fc0 100644
+index a3fa975330b149f762b6537a7ed63b05050e6a5a..ba4999d1b8d03c546b2030dd6629908e380b438e 100644
 --- a/middleware/distributor.go
 +++ b/middleware/distributor.go
 @@ -33,6 +33,9 @@ type ModelRequest struct {
@@ -402,22 +514,22 @@ index 8e2af0b81f3afd395229c57ba893aa2ecd5f762a..bfea6d080175254fe71e68703ac10b31
  		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
  		c.Next()
  		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
-@@ -291,6 +300,14 @@ func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
- 	if err != nil {
- 		return nil, err
- 	}
-+	if common.RelayTimingLogEnabled {
-+		if _, exists := c.Get("relay_timing_body_bytes_ready_at"); !exists {
-+			c.Set("relay_timing_body_bytes_ready_at", time.Now())
+@@ -306,6 +315,14 @@ func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
+ 		if err != nil {
+ 			return nil, err
+ 		}
++		if common.RelayTimingLogEnabled {
++			if _, exists := c.Get("relay_timing_body_bytes_ready_at"); !exists {
++				c.Set("relay_timing_body_bytes_ready_at", time.Now())
++			}
++			if _, exists := c.Get("relay_timing_body_size_bytes"); !exists {
++				c.Set("relay_timing_body_size_bytes", int64(len(requestBody)))
++			}
 +		}
-+		if _, exists := c.Get("relay_timing_body_size_bytes"); !exists {
-+			c.Set("relay_timing_body_size_bytes", int64(len(requestBody)))
-+		}
-+	}
- 	if !ojson.ValidBytes(requestBody) {
- 		return nil, errors.New("invalid JSON request body")
- 	}
-@@ -307,10 +324,20 @@ func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
+ 		if !ojson.ValidBytes(requestBody) {
+ 			return nil, errors.New("invalid JSON request body")
+ 		}
+@@ -326,10 +343,20 @@ func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
  	if err != nil {
  		return nil, err
  	}
@@ -438,6 +550,33 @@ index 8e2af0b81f3afd395229c57ba893aa2ecd5f762a..bfea6d080175254fe71e68703ac10b31
  	c.Request.Body = io.NopCloser(storage)
  
  	return &ModelRequest{
+diff --git a/middleware/distributor_test.go b/middleware/distributor_test.go
+index 0d9b703fc8436abfb096290d11b3842dd749298f..2536cdb930c90b2e3132fa8427144229570b42ce 100644
+--- a/middleware/distributor_test.go
++++ b/middleware/distributor_test.go
+@@ -31,6 +31,9 @@ func (streamedBodyStorage) Bytes() ([]byte, error) {
+ }
+ 
+ func TestJSONModelRoutingUsesReadersForDiskBodies(t *testing.T) {
++	previousTiming := common.RelayTimingLogEnabled
++	common.RelayTimingLogEnabled = true
++	t.Cleanup(func() { common.RelayTimingLogEnabled = previousTiming })
+ 	previous := common.GetDiskCacheConfig()
+ 	t.Cleanup(func() { common.SetDiskCacheConfig(previous) })
+ 	large := strings.Repeat("image-data", 32<<10)
+@@ -79,6 +82,12 @@ func TestJSONModelRoutingUsesReadersForDiskBodies(t *testing.T) {
+ 					require.NoError(t, err)
+ 					assert.Equal(t, tt.model, request.Model)
+ 					assert.Equal(t, tt.group, request.Group)
++					for _, key := range []string{"relay_timing_body_storage_ready_at", "relay_timing_body_decode_done_at", "relay_timing_body_reset_done_at"} {
++						require.Contains(t, c.Keys, key)
++					}
++					_, bytesReady := c.Get("relay_timing_body_bytes_ready_at")
++					assert.Equal(t, !disk, bytesReady)
++					assert.Equal(t, int64(len(tt.body)), c.GetInt64("relay_timing_body_size_bytes"))
+ 					if tt.name == "large body" {
+ 						stream, background := jsonBodyBoolFlags(c)
+ 						assert.True(t, stream)
 diff --git a/middleware/logger.go b/middleware/logger.go
 index 098a267b31c4c86e9e522e094102492a92938e80..4d1ed5bfd54039c6401cf405547c426ef312adca 100644
 --- a/middleware/logger.go
@@ -533,7 +672,7 @@ index e1bf315a45e0ee409318275c7f3290d938a7b04e..c62680fe3dc545476c053cad12baea4c
  		c.Request = c.Request.WithContext(ctx)
  		c.Header(common.RequestIdKey, id)
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index cdd16d533f091aa275e7dc7dc3efed43128706c1..1168648c4d17f6dea710a853730848c2e307d751 100644
+index 33c82da464e8f835a68fe2e69f859586d2cbfe42..e1bed703bb0d4ca8ee67d7ef20f0045390ab864a 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
 @@ -1,10 +1,13 @@
@@ -548,9 +687,9 @@ index cdd16d533f091aa275e7dc7dc3efed43128706c1..1168648c4d17f6dea710a853730848c2
  	"net/http"
 +	"net/http/httptrace"
  	"net/url"
- 	"regexp"
+ 	"slices"
  	"strings"
-@@ -459,6 +462,150 @@ func keepUpstreamRedirectResponse(_ *http.Request, _ []*http.Request) error {
+@@ -541,6 +544,150 @@ func keepUpstreamRedirectResponse(_ *http.Request, _ []*http.Request) error {
  	return http.ErrUseLastResponse
  }
  
@@ -701,9 +840,9 @@ index cdd16d533f091aa275e7dc7dc3efed43128706c1..1168648c4d17f6dea710a853730848c2
  func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
  	client, err := service.GetHttpClientWithProxyForRelay(info.ChannelSetting.Proxy, info.ChannelSetting, info.IsStream)
  	if err != nil {
-@@ -493,7 +640,19 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -574,7 +721,19 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+ 
  	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestOrigin, req.URL.Scheme+"://"+req.URL.Host)
- 	applyDefaultUpstreamUserAgent(c, req, info)
  	logUpstreamUserAgent(c, req)
 +	var requestTrace *relayHTTPTrace
 +	if common2.RelayTimingLogEnabled {
@@ -721,7 +860,7 @@ index cdd16d533f091aa275e7dc7dc3efed43128706c1..1168648c4d17f6dea710a853730848c2
  	if err != nil {
  		if IsResponseHeaderTimeout(err) {
  			logger.LogError(c, "do request failed: response header timeout: "+err.Error())
-@@ -528,6 +687,54 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -618,6 +777,54 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  	return resp, nil
  }
  
@@ -985,10 +1124,10 @@ index 7721d4580ea4fe0803924d5cec561bef198fc871..6bdf80c54600e697d407e9a5d5f0c62f
 +	require.NotContains(t, logs.String(), "relay upstream request written")
 +}
 diff --git a/relay/common/relay_info.go b/relay/common/relay_info.go
-index 8129bdaa0fe4b50be0db1d4f71f792abf191b52c..8a8c5a0c3b31568f5abd92126954870d28843bad 100644
+index c750e7872b841c51204f14691f3ae1f7bf40b6fd..b1fa9c676fdd88cd6670cfb1135ce3aa8f74e0bc 100644
 --- a/relay/common/relay_info.go
 +++ b/relay/common/relay_info.go
-@@ -80,6 +80,101 @@ type TokenCountMeta struct {
+@@ -81,6 +81,101 @@ type TokenCountMeta struct {
  	estimatePromptTokens int
  }
  
@@ -1090,7 +1229,7 @@ index 8129bdaa0fe4b50be0db1d4f71f792abf191b52c..8a8c5a0c3b31568f5abd92126954870d
  type RelayInfo struct {
  	TokenId           int
  	TokenKey          string
-@@ -183,6 +278,7 @@ type RelayInfo struct {
+@@ -196,6 +291,7 @@ type RelayInfo struct {
  	ImageQuotaBeforeGroup float64
  
  	Request dto.Request
@@ -1098,7 +1237,7 @@ index 8129bdaa0fe4b50be0db1d4f71f792abf191b52c..8a8c5a0c3b31568f5abd92126954870d
  
  	// RequestConversionChain records request format conversions in order, e.g.
  	// ["openai", "openai_responses"] or ["openai", "claude"].
-@@ -998,8 +1094,12 @@ func (info *RelayInfo) ConvOptions() *convmeta.Options {
+@@ -1018,8 +1114,12 @@ func (info *RelayInfo) ConvOptions() *convmeta.Options {
  }
  
  func (info *RelayInfo) SetFirstResponseTime() {
@@ -1113,7 +1252,7 @@ index 8129bdaa0fe4b50be0db1d4f71f792abf191b52c..8a8c5a0c3b31568f5abd92126954870d
  	}
  }
 diff --git a/relay/helper/stream_scanner.go b/relay/helper/stream_scanner.go
-index 9ab6e4170b52bd78ce316a2f21773be0b65b0fd2..df651a35b86bc1bb73ee14996e96e7b3bf6924c9 100644
+index 61ef672e0bbd1319afd0ee88973f85b968751a42..08ce6043a627a5958cfcbba298d5726253a14e41 100644
 --- a/relay/helper/stream_scanner.go
 +++ b/relay/helper/stream_scanner.go
 @@ -36,6 +36,46 @@ const (
@@ -1236,35 +1375,25 @@ index 9ab6e4170b52bd78ce316a2f21773be0b65b0fd2..df651a35b86bc1bb73ee14996e96e7b3
 +	}
  }
 diff --git a/relay/request_billing.go b/relay/request_billing.go
-index d534ad528574d102ea9e34a7087661c8dcc85812..2daabd4aafa0d2cc216a0a0611d10665153f3a56 100644
+index ba7335bf3e56197b8ae970cd2221de998f54cbeb..28107c165c8f698bf807efc04854b5b2a1dd9eca 100644
 --- a/relay/request_billing.go
 +++ b/relay/request_billing.go
-@@ -5,6 +5,7 @@ import (
- 	"fmt"
+@@ -2,6 +2,7 @@ package relay
+ 
+ import (
  	"net/http"
- 	"strings"
 +	"time"
  
  	"github.com/QuantumNous/new-api/common"
  	"github.com/QuantumNous/new-api/constant"
-@@ -40,6 +41,9 @@ func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.N
- 			meta = request.GetTokenCountMeta()
+@@ -36,16 +37,26 @@ func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.N
  		}
  	}
+ 
 +	if common.RelayTimingLogEnabled {
 +		info.Timing.TokenMetaReady = time.Now()
 +	}
- 
- 	if needSensitiveCheck && meta != nil {
- 		if contains, words := service.CheckSensitiveText(meta.CombineText); contains {
-@@ -49,17 +53,26 @@ func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.N
- 			return types.NewError(errors.New(message), types.ErrorCodeSensitiveWordsDetected)
- 		}
- 	}
-+	if common.RelayTimingLogEnabled {
-+		info.Timing.SensitiveChecked = time.Now()
-+	}
- 
++
  	tokens, err := service.EstimateRequestToken(c, meta, info)
  	if err != nil {
  		return types.NewError(err, types.ErrorCodeCountTokenFailed)

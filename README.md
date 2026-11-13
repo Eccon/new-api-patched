@@ -126,6 +126,7 @@ No Docker image is built.
   - Reads late HTTP trace callbacks through a synchronized snapshot so stream probes and the final timing summary can use the newest available attempt data.
   - Splits preflight `model_request` timing into request body storage, body bytes access, body decode, and body reset phases.
   - Logs request body size and whether body storage is memory-backed or disk-backed when timing diagnostics are enabled.
+  - Reports timing stages that a request does not execute as `-`, including `sensitive_check` when no separate check runs and `body_bytes` when a disk body is decoded through a reader.
   - Adds optional early SSE line probes controlled by `RELAY_TIMING_LOG_STREAM_PROBE_COUNT`.
   - Keeps `relay request received` always on for the narrowed relay paths so request arrival can be correlated even when timing diagnostics are disabled.
   - Logs failed upstream attempt timing before relay retry overwrites the final attempt timing.
