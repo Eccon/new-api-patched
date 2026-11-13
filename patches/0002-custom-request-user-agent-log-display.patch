@@ -1,5 +1,5 @@
 diff --git a/model/log.go b/model/log.go
-index c67fa0512..212273e7f 100644
+index 563a93cb05e84f631015f16e6bebb10b96e799c9..04f3567ff6b77ea88bfeeb35c291b656409bcdd1 100644
 --- a/model/log.go
 +++ b/model/log.go
 @@ -4,6 +4,7 @@ import (
@@ -9,8 +9,8 @@ index c67fa0512..212273e7f 100644
 +	"unicode/utf8"
  
  	"github.com/QuantumNous/new-api/common"
- 	"github.com/QuantumNous/new-api/logger"
-@@ -14,6 +15,8 @@ import (
+ 	"github.com/QuantumNous/new-api/constant"
+@@ -15,6 +16,8 @@ import (
  	"gorm.io/gorm"
  )
  
@@ -19,7 +19,7 @@ index c67fa0512..212273e7f 100644
  func applyExplicitLogTextFilter(tx *gorm.DB, column string, value string) (*gorm.DB, error) {
  	if value == "" {
  		return tx, nil
-@@ -281,6 +284,7 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
+@@ -282,6 +285,7 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
  	username := c.GetString("username")
  	requestId := c.GetString(common.RequestIdKey)
  	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
@@ -27,7 +27,7 @@ index c67fa0512..212273e7f 100644
  	otherStr := other.JSONString()
  	// 判断是否需要记录 IP
  	needRecordIp := false
-@@ -336,6 +340,36 @@ type RecordConsumeLogParams struct {
+@@ -337,6 +341,36 @@ type RecordConsumeLogParams struct {
  	Other            *LogOther         `json:"other"`
  }
  
@@ -62,9 +62,9 @@ index c67fa0512..212273e7f 100644
 +}
 +
  func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
- 	if !common.LogConsumeEnabled {
- 		return
-@@ -345,6 +379,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
+ 	// Request plugin report hooks read what the request settled, whether or
+ 	// not consume logs are kept.
+@@ -349,6 +383,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
  	requestId := c.GetString(common.RequestIdKey)
  	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
  	createdAt := common.GetTimestamp()
@@ -73,10 +73,10 @@ index c67fa0512..212273e7f 100644
  	content := other.setContent(params.Content)
  	otherStr := other.JSONString()
 diff --git a/web/src/features/usage-logs/components/dialogs/details-dialog.tsx b/web/src/features/usage-logs/components/dialogs/details-dialog.tsx
-index 733cddffe..5a60cedb5 100644
+index 01b4b579bdcbb7a27a234ea0ef0fe7dfab84f908..6d44b8ff046d3ed38967c7099edf699d466ff495 100644
 --- a/web/src/features/usage-logs/components/dialogs/details-dialog.tsx
 +++ b/web/src/features/usage-logs/components/dialogs/details-dialog.tsx
-@@ -505,6 +505,10 @@ export function DetailsDialog(props: DetailsDialogProps) {
+@@ -550,6 +550,10 @@ export function DetailsDialog(props: DetailsDialogProps) {
    const showTiming = isTimingLogType(props.log.type)
    const showAdminIp =
      !!props.log.ip && (showTiming || (props.isAdmin && isTopup))
@@ -87,7 +87,7 @@ index 733cddffe..5a60cedb5 100644
    const adminInfo = other?.admin_info
    const topupAuditFields =
      isTopup && props.isAdmin && adminInfo
-@@ -723,6 +727,22 @@ export function DetailsDialog(props: DetailsDialogProps) {
+@@ -768,6 +772,22 @@ export function DetailsDialog(props: DetailsDialogProps) {
              />
            )}
  
@@ -111,10 +111,10 @@ index 733cddffe..5a60cedb5 100644
              <DetailRow
                label={t('Response Time')}
 diff --git a/web/src/features/usage-logs/types.ts b/web/src/features/usage-logs/types.ts
-index ae6f91c81..56647745d 100644
+index dd4007d2b235563be3d77c6b4568ca24a474833f..f48d4caca8c8a4e7836f61ee757e6c9bb5baf71a 100644
 --- a/web/src/features/usage-logs/types.ts
 +++ b/web/src/features/usage-logs/types.ts
-@@ -177,6 +177,7 @@ export interface LogOtherData {
+@@ -263,6 +263,7 @@ export interface LogOtherData {
    // Login audit fields (type=7); visible to the log owner
    login_method?: string
    user_agent?: string
@@ -123,10 +123,10 @@ index ae6f91c81..56647745d 100644
    request_conversion?: string[]
    ws?: boolean
 diff --git a/web/src/i18n/locales/en.json b/web/src/i18n/locales/en.json
-index ad1ed53..caeecdf 100644
+index 81f9d4a26a628e17d0b8314acebbfca3665768aa..e02d916bf179f6dfd76eefa25861318c336772f5 100644
 --- a/web/src/i18n/locales/en.json
 +++ b/web/src/i18n/locales/en.json
-@@ -6996,6 +6996,7 @@
+@@ -7347,6 +7347,7 @@
      "User Subscription Management": "User Subscription Management",
      "User updated successfully": "User updated successfully",
      "User Verification": "User Verification",
@@ -135,10 +135,10 @@ index ad1ed53..caeecdf 100644
      "Username": "Username",
      "Username already exists or has been deleted": "Username already exists or has been deleted",
 diff --git a/web/src/i18n/locales/fr.json b/web/src/i18n/locales/fr.json
-index 347d231..cc25bd3 100644
+index 6831b25184a30d9284e57402210002194f9007fc..b3ac2ade91dab2276cc6ad29991e2697d391ffe2 100644
 --- a/web/src/i18n/locales/fr.json
 +++ b/web/src/i18n/locales/fr.json
-@@ -6996,6 +6996,7 @@
+@@ -7347,6 +7347,7 @@
      "User Subscription Management": "Gestion des abonnements utilisateur",
      "User updated successfully": "Utilisateur mis à jour avec succès",
      "User Verification": "Vérification de l'utilisateur",
@@ -147,10 +147,10 @@ index 347d231..cc25bd3 100644
      "Username": "Nom d'utilisateur",
      "Username already exists or has been deleted": "Ce nom d’utilisateur existe déjà ou a été supprimé",
 diff --git a/web/src/i18n/locales/ja.json b/web/src/i18n/locales/ja.json
-index 944adc2..efe293f 100644
+index aa2975aa58bd19fa5e219f6143874c80ff3378c9..bdf71fb8cf976d1be880c2db4131f72be0bd3425 100644
 --- a/web/src/i18n/locales/ja.json
 +++ b/web/src/i18n/locales/ja.json
-@@ -6996,6 +6996,7 @@
+@@ -7347,6 +7347,7 @@
      "User Subscription Management": "ユーザーサブスクリプション管理",
      "User updated successfully": "ユーザーの更新に成功しました",
      "User Verification": "ユーザー認証",
@@ -159,10 +159,10 @@ index 944adc2..efe293f 100644
      "Username": "ユーザー名",
      "Username already exists or has been deleted": "このユーザー名は既に存在するか、削除済みです",
 diff --git a/web/src/i18n/locales/ru.json b/web/src/i18n/locales/ru.json
-index c2d954e..48801eb 100644
+index 6a3483387791007122c06aa32e99877e0fcd4efe..a1d1240ac4fece3cefdfe0238de79f3de9fd56b3 100644
 --- a/web/src/i18n/locales/ru.json
 +++ b/web/src/i18n/locales/ru.json
-@@ -6996,6 +6996,7 @@
+@@ -7347,6 +7347,7 @@
      "User Subscription Management": "Управление подписками пользователя",
      "User updated successfully": "Пользователь успешно обновлен",
      "User Verification": "Проверка пользователя",
@@ -171,10 +171,10 @@ index c2d954e..48801eb 100644
      "Username": "Имя пользователя",
      "Username already exists or has been deleted": "Имя пользователя уже занято или было удалено",
 diff --git a/web/src/i18n/locales/vi.json b/web/src/i18n/locales/vi.json
-index 9f9f8cf..2750eb2 100644
+index 2d24b5ddc1116de5510993c638c736f276cc5717..6fd797aa945ee53cdaf58846bfc22376847a2190 100644
 --- a/web/src/i18n/locales/vi.json
 +++ b/web/src/i18n/locales/vi.json
-@@ -6996,6 +6996,7 @@
+@@ -7347,6 +7347,7 @@
      "User Subscription Management": "Quản lý đăng ký người dùng",
      "User updated successfully": "Cập nhật người dùng thành công",
      "User Verification": "Xác minh người dùng",
@@ -183,10 +183,10 @@ index 9f9f8cf..2750eb2 100644
      "Username": "Tên người dùng",
      "Username already exists or has been deleted": "Tên người dùng đã tồn tại hoặc đã bị xóa",
 diff --git a/web/src/i18n/locales/zh.json b/web/src/i18n/locales/zh.json
-index ffc3432..accedfa 100644
+index 6a8ff6e6dea281af93f1507204a3289075d5dc89..c127306aa9cbb394c1eeb8f394e3b60e7f1c953b 100644
 --- a/web/src/i18n/locales/zh.json
 +++ b/web/src/i18n/locales/zh.json
-@@ -6996,6 +6996,7 @@
+@@ -7347,6 +7347,7 @@
      "User Subscription Management": "用户订阅管理",
      "User updated successfully": "用户更新成功",
      "User Verification": "用户验证",
