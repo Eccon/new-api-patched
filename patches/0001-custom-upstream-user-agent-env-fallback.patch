@@ -1,8 +1,8 @@
 diff --git a/common/constants.go b/common/constants.go
-index b450c67bb..c7aff5c40 100644
+index 2b16116..1f5a752 100644
 --- a/common/constants.go
 +++ b/common/constants.go
-@@ -168,6 +168,10 @@ var SyncFrequency int // unit is second
+@@ -169,6 +169,10 @@ var SyncFrequency int // unit is second
  var BatchUpdateEnabled = false
  var BatchUpdateInterval int
  
@@ -14,10 +14,10 @@ index b450c67bb..c7aff5c40 100644
  
  var RelayIdleConnTimeout int // unit is second
 diff --git a/common/init.go b/common/init.go
-index 8188102d7..9f7b91856 100644
+index ebca00f..46da09b 100644
 --- a/common/init.go
 +++ b/common/init.go
-@@ -120,6 +120,9 @@ func InitEnv() {
+@@ -122,6 +122,9 @@ func InitEnv() {
  	// Initialize string variables with GetEnvOrDefaultString
  	GeminiSafetySetting = GetEnvOrDefaultString("GEMINI_SAFETY_SETTING", "BLOCK_NONE")
  	CohereSafetySetting = GetEnvOrDefaultString("COHERE_SAFETY_SETTING", "NONE")
@@ -28,10 +28,10 @@ index 8188102d7..9f7b91856 100644
  	// Initialize rate limit variables
  	GlobalApiRateLimitEnable = GetEnvOrDefaultBool("GLOBAL_API_RATE_LIMIT_ENABLE", true)
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index ae72b034c..fc4abefdb 100644
+index 0780e51..8d2a753 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
-@@ -198,6 +198,7 @@ func applyHeaderOverridePlaceholders(template string, c *gin.Context, apiKey str
+@@ -197,6 +197,7 @@ func applyHeaderOverridePlaceholders(template string, c *gin.Context, apiKey str
  func processHeaderOverride(info *common.RelayInfo, c *gin.Context) (map[string]string, error) {
  	headerOverride := make(map[string]string)
  	if info == nil {
@@ -39,7 +39,7 @@ index ae72b034c..fc4abefdb 100644
  		return headerOverride, nil
  	}
  
-@@ -292,6 +293,7 @@ func processHeaderOverride(info *common.RelayInfo, c *gin.Context) (map[string]s
+@@ -290,6 +291,7 @@ func processHeaderOverride(info *common.RelayInfo, c *gin.Context) (map[string]s
  
  		headerOverride[key] = value
  	}
@@ -47,27 +47,106 @@ index ae72b034c..fc4abefdb 100644
  	return headerOverride, nil
  }
  
-@@ -402,6 +404,9 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
+@@ -395,14 +397,7 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
+ 	if err = ApplyHeaderOverride(info, c, req); err != nil {
+ 		return nil, err
+ 	}
+-	if err = signUpstreamRequest(a, c, info, req.Method, req.URL, req.Header); err != nil {
+-		return nil, err
+-	}
+-	resp, err := doRequest(c, req, info)
+-	if err != nil {
+-		return nil, fmt.Errorf("do request failed: %w", err)
+-	}
+-	return resp, nil
++	return DoRequestWithSigner(a, c, req, info)
+ }
+ 
+ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+@@ -428,14 +423,7 @@ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBod
+ 	if err = ApplyHeaderOverride(info, c, req); err != nil {
+ 		return nil, err
+ 	}
+-	if err = signUpstreamRequest(a, c, info, req.Method, req.URL, req.Header); err != nil {
+-		return nil, err
+-	}
+-	resp, err := doRequest(c, req, info)
+-	if err != nil {
+-		return nil, fmt.Errorf("do request failed: %w", err)
+-	}
+-	return resp, nil
++	return DoRequestWithSigner(a, c, req, info)
+ }
+ 
+ // WebSocketPreparer is an adaptor that prepares the request before its
+@@ -477,6 +465,8 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
  		targetHeader.Set(key, value)
  	}
  	targetHeader.Set("Content-Type", c.Request.Header.Get("Content-Type"))
 +	targetReq := &http.Request{Header: targetHeader}
 +	applyDefaultUpstreamUserAgent(c, targetReq, info)
+ 	if _, signs := a.(RequestSigner); signs {
+ 		targetURL, parseErr := url.Parse(fullRequestURL)
+ 		if parseErr != nil {
+@@ -487,6 +477,7 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
+ 		}
+ 		fullRequestURL = targetURL.String()
+ 	}
 +	logUpstreamUserAgent(c, targetReq)
  	dialer := *websocket.DefaultDialer
  	if info.ChannelSetting.Proxy != "" {
  		proxyURL, _, proxyErr := common2.ParseProxyURLRuntime(info.ChannelSetting.Proxy)
-@@ -566,6 +571,8 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -526,9 +517,24 @@ func toWebSocketURL(raw string) string {
+ }
+ 
+ func DoRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
++	applyDefaultUpstreamUserAgent(c, req, info)
+ 	return doRequest(c, req, info)
+ }
+ 
++// DoRequestWithSigner applies the default UA before signing a fully built
++// request. Send through doRequest directly so the UA cannot change after signing.
++func DoRequestWithSigner(adaptor any, c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
++	applyDefaultUpstreamUserAgent(c, req, info)
++	if err := signUpstreamRequest(adaptor, c, info, req.Method, req.URL, req.Header); err != nil {
++		return nil, err
++	}
++	resp, err := doRequest(c, req, info)
++	if err != nil {
++		return nil, fmt.Errorf("do request failed: %w", err)
++	}
++	return resp, nil
++}
++
+ // keepUpstreamRedirectResponse stops net/http from following redirects while
+ // returning the upstream 3xx response to the relay without an extra error.
+ func keepUpstreamRedirectResponse(_ *http.Request, _ []*http.Request) error {
+@@ -567,6 +573,7 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  	}
  
  	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestOrigin, req.URL.Scheme+"://"+req.URL.Host)
-+	applyDefaultUpstreamUserAgent(c, req, info)
 +	logUpstreamUserAgent(c, req)
  	resp, err := relayClient.Do(req)
  	if err != nil {
- 		logger.LogError(c, common2.LogText("do request failed: %s", err.Error()))
+ 		// A url.Error quotes the request URL, whose query may carry a
+@@ -629,14 +636,7 @@ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, req
+ 	if err = ApplyHeaderOverride(info, c, req); err != nil {
+ 		return nil, err
+ 	}
+-	if err = signUpstreamRequest(a, c, info, req.Method, req.URL, req.Header); err != nil {
+-		return nil, err
+-	}
+-	resp, err := doRequest(c, req, info)
+-	if err != nil {
+-		return nil, fmt.Errorf("do request failed: %w", err)
+-	}
+-	return resp, nil
++	return DoRequestWithSigner(a, c, req, info)
+ }
+ 
+ func newTaskAPIRequest(c *gin.Context, fullRequestURL string, requestBody io.Reader) (*http.Request, error) {
 diff --git a/relay/channel/api_request_test.go b/relay/channel/api_request_test.go
-index 1b64ac970..8662c9db1 100644
+index 1b64ac9..8662c9d 100644
 --- a/relay/channel/api_request_test.go
 +++ b/relay/channel/api_request_test.go
 @@ -6,7 +6,9 @@ import (
@@ -201,9 +280,124 @@ index 1b64ac970..8662c9db1 100644
 +		})
 +	}
 +}
+diff --git a/relay/channel/providerplugin/chain.go b/relay/channel/providerplugin/chain.go
+index ffa3973..891b2df 100644
+--- a/relay/channel/providerplugin/chain.go
++++ b/relay/channel/providerplugin/chain.go
+@@ -162,14 +162,7 @@ func (a *Adaptor) sendStep(c *gin.Context, info *relaycommon.RelayInfo, step jsp
+ 	if err = channel.ApplyHeaderOverride(info, c, req); err != nil {
+ 		return nil, err
+ 	}
+-	if err = a.sign(c.Request.Context(), info, req.Method, req.URL, req.Header); err != nil {
+-		return nil, fmt.Errorf("sign request failed: %w", err)
+-	}
+-	resp, err := channel.DoRequest(c, req, info)
+-	if err != nil {
+-		return nil, fmt.Errorf("do request failed: %w", err)
+-	}
+-	return resp, nil
++	return channel.DoRequestWithSigner(a, c, req, info)
+ }
+ 
+ // useTarget sends the next request to path or target, or to the route's
+diff --git a/relay/channel/providerplugin/upstream_user_agent_test.go b/relay/channel/providerplugin/upstream_user_agent_test.go
+new file mode 100644
+index 0000000..b5f4930
+--- /dev/null
++++ b/relay/channel/providerplugin/upstream_user_agent_test.go
+@@ -0,0 +1,89 @@
++package providerplugin
++
++import (
++	"crypto/sha256"
++	"fmt"
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"testing"
++
++	"github.com/QuantumNous/new-api/common"
++	"github.com/QuantumNous/new-api/constant"
++	"github.com/QuantumNous/new-api/pkg/jsplugin"
++	relaycommon "github.com/QuantumNous/new-api/relay/common"
++	"github.com/QuantumNous/new-api/relaykit/dto"
++	"github.com/QuantumNous/new-api/relaykit/types"
++	"github.com/gin-gonic/gin"
++	"github.com/stretchr/testify/require"
++)
++
++// Exercise the real JS signer and both steps of a converted provider request.
++func TestProviderChainSignsFinalUserAgent(t *testing.T) {
++	original := common.UpstreamUserAgentOpenAI
++	common.UpstreamUserAgentOpenAI = "env-ua"
++	t.Cleanup(func() { common.UpstreamUserAgentOpenAI = original })
++	plugin, err := jsplugin.NewRegistry().Register(`
++export const meta = {
++  apiVersion: 1, key: "ua-signing-chain", name: "UA signing", version: "1.0.0", author: {name: "Test"},
++  relay: [{incoming_path: "/v1/chat/completions", upstream_path: "/first", converter: "plugin"}],
++};
++let signatures = 0;
++export function convertRequest(ctx, req) { return {body: req.body}; }
++export function convertStreamEvent() { return {events: []}; }
++export function signRequest(ctx, req) {
++  signatures++;
++  return {headers: {
++    "X-Signed-UA": req.headers["User-Agent"] || "",
++    "X-Sign-Count": String(signatures),
++    "X-Body-Hash": req.bodySha256,
++  }};
++}
++export function convertResponse(ctx, res) {
++  if (JSON.parse(res.body).next) return {next: {path: "/next"}};
++  return {body: {done: true}};
++}
++`, jsplugin.Options{})
++	require.NoError(t, err)
++	seen := make(chan string, 2)
++	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		body, _ := io.ReadAll(r.Body)
++		seen <- r.Method + " " + r.URL.Path + " " + r.UserAgent() + " " + r.Header.Get("X-Sign-Count")
++		if r.UserAgent() != "env-ua" || r.Header.Get("X-Signed-UA") != r.UserAgent() || r.Header.Get("X-Body-Hash") != fmt.Sprintf("%x", sha256.Sum256(body)) {
++			w.WriteHeader(http.StatusUnauthorized)
++			_, _ = w.Write([]byte(`{}`))
++			return
++		}
++		w.Header().Set("Content-Type", "application/json")
++		if r.URL.Path == "/first" {
++			_, _ = w.Write([]byte(`{"next":true}`))
++			return
++		}
++		_, _ = w.Write([]byte(`{"done":true}`))
++	}))
++	t.Cleanup(upstream.Close)
++	c, _ := gin.CreateTestContext(httptest.NewRecorder())
++	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"test"}`))
++	c.Request.Header.Set("User-Agent", "client-ua")
++	info := &relaycommon.RelayInfo{
++		RelayFormat: types.RelayFormatOpenAI, RequestURLPath: "/v1/chat/completions",
++		ChannelMeta: &relaycommon.ChannelMeta{
++			ChannelType: constant.ChannelTypeTaskPlugin, ChannelBaseUrl: upstream.URL, ApiKey: "test-key",
++			ChannelOtherSettings: dto.ChannelOtherSettings{AdvancedCustom: plugin.Meta.ChannelRelayConfig(nil)},
++		},
++	}
++	a := &Adaptor{plugin: plugin}
++	a.Init(info)
++	response, err := a.runChain(c, info, jsplugin.ConvertedRequest{Body: []byte(`{"model":"test"}`)}, []byte(`{"model":"test"}`), "application/json", nil)
++	require.NoError(t, err)
++	resp := response.(*http.Response)
++	defer resp.Body.Close()
++	require.Equal(t, http.StatusOK, resp.StatusCode)
++	body, err := io.ReadAll(resp.Body)
++	require.NoError(t, err)
++	require.JSONEq(t, `{"done":true}`, string(body))
++	require.Len(t, seen, 2)
++	require.Equal(t, "POST /first env-ua 1", <-seen)
++	require.Equal(t, "GET /next env-ua 2", <-seen)
++}
 diff --git a/relay/channel/upstream_user_agent.go b/relay/channel/upstream_user_agent.go
 new file mode 100644
-index 000000000..4172b5d6f
+index 0000000..4172b5d
 --- /dev/null
 +++ b/relay/channel/upstream_user_agent.go
 @@ -0,0 +1,118 @@
@@ -324,4 +518,227 @@ index 000000000..4172b5d6f
 +		return
 +	}
 +	logger.LogInfo(c, fmt.Sprintf("user-agent passthrough: upstream=%q (same as request)", upstreamUA))
++}
+diff --git a/relay/channel/upstream_user_agent_test.go b/relay/channel/upstream_user_agent_test.go
+new file mode 100644
+index 0000000..81025f8
+--- /dev/null
++++ b/relay/channel/upstream_user_agent_test.go
+@@ -0,0 +1,217 @@
++package channel
++
++import (
++	"errors"
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"net/url"
++	"strings"
++	"sync/atomic"
++	"testing"
++
++	"github.com/QuantumNous/new-api/common"
++	relaycommon "github.com/QuantumNous/new-api/relay/common"
++	"github.com/QuantumNous/new-api/relaykit/types"
++	"github.com/gin-gonic/gin"
++	"github.com/gorilla/websocket"
++	"github.com/stretchr/testify/require"
++)
++
++type userAgentTestAdaptor struct {
++	Adaptor
++	target string
++	ua     string
++}
++
++func (a *userAgentTestAdaptor) GetRequestURL(*relaycommon.RelayInfo) (string, error) {
++	return a.target, nil
++}
++
++func (a *userAgentTestAdaptor) SetupRequestHeader(_ *gin.Context, header *http.Header, _ *relaycommon.RelayInfo) error {
++	if a.ua != "" {
++		header.Set("User-Agent", a.ua)
++	}
++	return nil
++}
++
++type userAgentSigningAdaptor struct {
++	*userAgentTestAdaptor
++	sign func(http.Header) error
++}
++
++func (a *userAgentSigningAdaptor) SignUpstreamRequest(_ *gin.Context, _ *relaycommon.RelayInfo, _ string, _ *url.URL, header http.Header) error {
++	return a.sign(header)
++}
++
++type userAgentTaskAdaptor struct {
++	TaskAdaptor
++	base *userAgentSigningAdaptor
++}
++
++func (a *userAgentTaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
++	return a.base.GetRequestURL(info)
++}
++
++func (a *userAgentTaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info *relaycommon.RelayInfo) error {
++	return a.base.SetupRequestHeader(c, &req.Header, info)
++}
++
++func (a *userAgentTaskAdaptor) SignUpstreamRequest(c *gin.Context, info *relaycommon.RelayInfo, method string, target *url.URL, header http.Header) error {
++	return a.base.SignUpstreamRequest(c, info, method, target, header)
++}
++
++func sendUserAgentTestRequest(kind string, a *userAgentSigningAdaptor, c *gin.Context, info *relaycommon.RelayInfo) error {
++	if kind == "websocket" {
++		conn, err := DoWssRequest(a, c, info, nil)
++		if conn != nil {
++			_ = conn.Close()
++		}
++		return err
++	}
++	var resp *http.Response
++	var err error
++	body := strings.NewReader(`{}`)
++	switch kind {
++	case "api":
++		resp, err = DoApiRequest(a, c, info, body)
++	case "form":
++		resp, err = DoFormRequest(a, c, info, body)
++	case "task":
++		resp, err = DoTaskApiRequest(&userAgentTaskAdaptor{base: a}, c, info, body)
++	}
++	if resp != nil {
++		_, _ = io.Copy(io.Discard, resp.Body)
++		_ = resp.Body.Close()
++		if resp.StatusCode != http.StatusOK {
++			return errors.New("upstream rejected the signed UA")
++		}
++	}
++	return err
++}
++
++// Each sender must sign the selected UA exactly once and send it unchanged,
++// even when the signer deliberately replaces it with the client's UA.
++func TestUpstreamUserAgentSigningOrder(t *testing.T) {
++	original := common.UpstreamUserAgentOpenAI
++	t.Cleanup(func() { common.UpstreamUserAgentOpenAI = original })
++	signErr := errors.New("test signing failure")
++	for _, kind := range []string{"api", "form", "task", "websocket"} {
++		t.Run(kind, func(t *testing.T) {
++			for _, tc := range []struct {
++				name       string
++				env        string
++				adaptorUA  string
++				override   map[string]any
++				wantBefore string
++				rewrite    bool
++				fail       bool
++			}{
++				{name: "environment", env: "env-ua", wantBefore: "env-ua"},
++				{name: "client fallback", wantBefore: "client-ua"},
++				{name: "adaptor UA", env: "env-ua", adaptorUA: "adaptor-ua", wantBefore: "adaptor-ua"},
++				{name: "channel override", env: "env-ua", override: map[string]any{"User-Agent": "channel-ua"}, wantBefore: "channel-ua"},
++				{name: "empty channel override is ignored", env: "env-ua", override: map[string]any{"User-Agent": ""}, wantBefore: "env-ua"},
++				{name: "signer rewrites UA", env: "env-ua", wantBefore: "env-ua", rewrite: true},
++				{name: "signing fails", env: "env-ua", wantBefore: "env-ua", fail: true},
++			} {
++				t.Run(tc.name, func(t *testing.T) {
++					common.UpstreamUserAgentOpenAI = tc.env
++					var requests atomic.Int32
++					seen := make(chan string, 1)
++					upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++						requests.Add(1)
++						seen <- r.UserAgent()
++						if r.Header.Get("X-Signed-UA") != r.UserAgent() {
++							w.WriteHeader(http.StatusUnauthorized)
++							return
++						}
++						if kind == "websocket" {
++							upgrader := websocket.Upgrader{}
++							conn, err := upgrader.Upgrade(w, r, nil)
++							if err == nil {
++								_ = conn.Close()
++							}
++							return
++						}
++						_, _ = w.Write([]byte(`{}`))
++					}))
++					t.Cleanup(upstream.Close)
++					c, _ := gin.CreateTestContext(httptest.NewRecorder())
++					c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{}`))
++					c.Request.Header.Set("User-Agent", "client-ua")
++					info := &relaycommon.RelayInfo{
++						RelayFormat: types.RelayFormatOpenAI,
++						ChannelMeta: &relaycommon.ChannelMeta{HeadersOverride: tc.override},
++					}
++					var before string
++					calls := 0
++					a := &userAgentSigningAdaptor{
++						userAgentTestAdaptor: &userAgentTestAdaptor{target: upstream.URL, ua: tc.adaptorUA},
++						sign: func(header http.Header) error {
++							calls++
++							before = header.Get("User-Agent")
++							if tc.fail {
++								return signErr
++							}
++							if tc.rewrite {
++								header.Set("User-Agent", "client-ua")
++							}
++							header.Set("X-Signed-UA", header.Get("User-Agent"))
++							return nil
++						},
++					}
++
++					err := sendUserAgentTestRequest(kind, a, c, info)
++					require.Equal(t, 1, calls)
++					require.Equal(t, tc.wantBefore, before)
++					if tc.fail {
++						require.ErrorIs(t, err, signErr)
++						require.Zero(t, requests.Load())
++						return
++					}
++					require.NoError(t, err)
++					want := tc.wantBefore
++					if tc.rewrite {
++						want = "client-ua"
++					}
++					require.Equal(t, int32(1), requests.Load())
++					require.Equal(t, want, <-seen)
++				})
++			}
++		})
++	}
++}
++
++func TestUpstreamUserAgentWithoutSigner(t *testing.T) {
++	original := common.UpstreamUserAgentOpenAI
++	common.UpstreamUserAgentOpenAI = "env-ua"
++	t.Cleanup(func() { common.UpstreamUserAgentOpenAI = original })
++	for _, direct := range []bool{false, true} {
++		t.Run(map[bool]string{false: "api", true: "direct"}[direct], func(t *testing.T) {
++			seen := make(chan string, 1)
++			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++				seen <- r.UserAgent()
++				_, _ = w.Write([]byte(`{}`))
++			}))
++			t.Cleanup(upstream.Close)
++			c, _ := gin.CreateTestContext(httptest.NewRecorder())
++			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{}`))
++			c.Request.Header.Set("User-Agent", "client-ua")
++			info := &relaycommon.RelayInfo{RelayFormat: types.RelayFormatOpenAI, ChannelMeta: &relaycommon.ChannelMeta{}}
++			var resp *http.Response
++			var err error
++			if direct {
++				var req *http.Request
++				req, err = http.NewRequest(http.MethodPost, upstream.URL, nil)
++				require.NoError(t, err)
++				resp, err = DoRequest(c, req, info)
++			} else {
++				resp, err = DoApiRequest(&userAgentTestAdaptor{target: upstream.URL}, c, info, nil)
++			}
++			require.NoError(t, err)
++			_ = resp.Body.Close()
++			require.Equal(t, "env-ua", <-seen)
++		})
++	}
 +}
