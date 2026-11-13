@@ -11,7 +11,7 @@ index 531a6d8577ead9be407b67cea7f579d7f8ba23e5..8029ef56947129e3b3e6198a8398ad15
  var RelayMaxIdleConnsPerHost int
  var RelayDirectNetworkFamily = RelayDirectNetworkFamilyAuto
 diff --git a/common/init.go b/common/init.go
-index 8cbaf599231b354ed657bc33f75e4ea2e370005d..e370672fa633f76942f884ed3ea8411553765d53 100644
+index 181a707a823eade69cc7026212fb2c8d92b84695..2c99ccf379f491a0e0d3c55dde84dacb308c0aee 100644
 --- a/common/init.go
 +++ b/common/init.go
 @@ -116,6 +116,7 @@ func InitEnv() {
@@ -23,10 +23,10 @@ index 8cbaf599231b354ed657bc33f75e4ea2e370005d..e370672fa633f76942f884ed3ea84115
  	RelayMaxIdleConnsPerHost = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS_PER_HOST", 100)
  	relayDirectNetworkFamilyRaw := GetEnvOrDefaultString("RELAY_DIRECT_NETWORK_FAMILY", RelayDirectNetworkFamilyAuto)
 diff --git a/relay/channel/api_request.go b/relay/channel/api_request.go
-index b35a232c9454e0ef55c9482dea5ff299b9a5a666..cdd16d533f091aa275e7dc7dc3efed43128706c1 100644
+index 8d2a75316ca067d0e9478000347c1303aa206ada..33c82da464e8f835a68fe2e69f859586d2cbfe42 100644
 --- a/relay/channel/api_request.go
 +++ b/relay/channel/api_request.go
-@@ -460,7 +460,7 @@ func keepUpstreamRedirectResponse(_ *http.Request, _ []*http.Request) error {
+@@ -542,7 +542,7 @@ func keepUpstreamRedirectResponse(_ *http.Request, _ []*http.Request) error {
  }
  
  func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
@@ -35,7 +35,7 @@ index b35a232c9454e0ef55c9482dea5ff299b9a5a666..cdd16d533f091aa275e7dc7dc3efed43
  	if err != nil {
  		return nil, fmt.Errorf("new proxy http client failed: %w", err)
  	}
-@@ -495,6 +495,14 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+@@ -576,6 +576,14 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  	logUpstreamUserAgent(c, req)
  	resp, err := relayClient.Do(req)
  	if err != nil {
@@ -47,10 +47,10 @@ index b35a232c9454e0ef55c9482dea5ff299b9a5a666..cdd16d533f091aa275e7dc7dc3efed43
 +				types.ErrOptionWithHideErrMsg("upstream error: response header timeout"),
 +			)
 +		}
- 		logger.LogError(c, common2.LogText("do request failed: %s", err.Error()))
- 		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
- 	}
-@@ -520,6 +528,15 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
+ 		// A url.Error quotes the request URL, whose query may carry a
+ 		// credential: log its operation, the host and the cause only.
+ 		reason := err.Error()
+@@ -610,6 +618,15 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
  	return resp, nil
  }
  
@@ -174,7 +174,7 @@ index 49f0fc982070981babb21e1be8bb97cbbe4c7d80..2d51c8673bbf81556dcbe7e6a60ad54e
  	default:
  		return nil, errors.New("invalid aws secret key")
 diff --git a/relay/channel/aws/relay_aws_test.go b/relay/channel/aws/relay_aws_test.go
-index d9680c18e4a2dc5c645931c39ac2ee3110a06d4d..b6b8792b3b503d8f6b545840253f25312a6cdfab 100644
+index 53e5dabc16610e9dbea2c8630479b43edb049442..cb40c587aaacac2c09d1220796f7bc0b75f9e699 100644
 --- a/relay/channel/aws/relay_aws_test.go
 +++ b/relay/channel/aws/relay_aws_test.go
 @@ -22,6 +22,7 @@ import (
